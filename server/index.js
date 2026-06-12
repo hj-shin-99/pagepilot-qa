@@ -3,6 +3,7 @@ import { chromium, request as playwrightRequest } from 'playwright'
 
 const PORT = Number(process.env.PORT || 3001)
 const MAX_LINKS_TO_CHECK = 30
+const MAX_DESIGN_ELEMENTS = 120
 const NAVIGATION_TIMEOUT_MS = 15000
 const LINK_TIMEOUT_MS = 7000
 
@@ -118,6 +119,7 @@ async function scanUrl(targetUrl) {
     uncheckedLinkCount: Math.max(snapshot.links.filter((link) => link.url).length - MAX_LINKS_TO_CHECK, 0),
     missingHrefLinks: snapshot.links.filter((link) => !link.href),
     images,
+    designElements: snapshot.designElements,
     consoleMessages,
     counts: snapshot.counts,
     mobile: safeMobileResult,
@@ -171,7 +173,7 @@ async function safeTitle(page) {
 
 async function safeDomSnapshot(page, targetUrl) {
   try {
-    return await page.evaluate((baseUrl) => {
+    return await page.evaluate(({ baseUrl, maxDesignElements }) => {
       const links = Array.from(document.querySelectorAll('a')).map((anchor, index) => {
         const href = anchor.getAttribute('href')?.trim() || ''
         const url = resolveInspectableUrl(href, baseUrl)
@@ -193,9 +195,34 @@ async function safeDomSnapshot(page, targetUrl) {
         naturalHeight: image.naturalHeight,
       }))
 
+      const designElements = Array.from(document.querySelectorAll('h1,h2,h3,p,a,button,img')).slice(0, maxDesignElements).map((element, index) => {
+        const rect = element.getBoundingClientRect()
+        const styles = window.getComputedStyle(element)
+        const text = element.tagName.toLowerCase() === 'img'
+          ? element.getAttribute('alt') || element.getAttribute('aria-label') || ''
+          : element.textContent?.trim().replace(/\s+/g, ' ') || element.getAttribute('aria-label') || ''
+
+        return {
+          index: index + 1,
+          tag: element.tagName.toLowerCase(),
+          text,
+          fontFamily: styles.fontFamily,
+          fontSize: styles.fontSize,
+          fontWeight: styles.fontWeight,
+          lineHeight: styles.lineHeight,
+          color: styles.color,
+          x: Math.round((rect.x + window.scrollX) * 100) / 100,
+          y: Math.round((rect.y + window.scrollY) * 100) / 100,
+          width: Math.round(rect.width * 100) / 100,
+          height: Math.round(rect.height * 100) / 100,
+          href: element.tagName.toLowerCase() === 'a' ? element.href : '',
+        }
+      })
+
       return {
         links,
         images,
+        designElements,
         counts: {
           anchors: links.length,
           buttons: document.querySelectorAll('button').length,
@@ -215,7 +242,7 @@ async function safeDomSnapshot(page, targetUrl) {
           return ''
         }
       }
-    }, targetUrl)
+    }, { baseUrl: targetUrl, maxDesignElements: MAX_DESIGN_ELEMENTS })
   } catch {
     return createEmptyDomSnapshot()
   }
@@ -433,6 +460,7 @@ function createEmptyDomSnapshot() {
   return {
     links: [],
     images: [],
+    designElements: [],
     counts: { anchors: 0, buttons: 0, missingHrefs: 0 },
   }
 }

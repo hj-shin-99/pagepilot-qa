@@ -10,6 +10,14 @@
         font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         background: var(--figma-color-bg, #ffffff);
         color: var(--figma-color-text, #172033);
+        --pagepilot-primary: #0f766e;
+        --pagepilot-primary-text: #ffffff;
+        --pagepilot-panel-bg: var(--figma-color-bg, #ffffff);
+        --pagepilot-panel-shadow: 0 16px 40px rgba(15, 23, 42, 0.08);
+        --pagepilot-accent-glow: rgba(52, 211, 153, 0.16);
+        --pagepilot-success-bg: rgba(20, 184, 166, 0.14);
+        --pagepilot-error-bg: rgba(239, 68, 68, 0.12);
+        --pagepilot-error-text: #b91c1c;
       }
 
       * {
@@ -20,7 +28,7 @@
         margin: 0;
         min-height: 100vh;
         background:
-          radial-gradient(circle at top left, rgba(52, 211, 153, 0.16), transparent 34%),
+          radial-gradient(circle at top left, var(--pagepilot-accent-glow), transparent 34%),
           var(--figma-color-bg, #ffffff);
       }
 
@@ -53,8 +61,8 @@
       .panel {
         border: 1px solid var(--figma-color-border, #d8dee8);
         border-radius: 16px;
-        background: color-mix(in srgb, var(--figma-color-bg, #ffffff) 92%, transparent);
-        box-shadow: 0 16px 40px rgba(15, 23, 42, 0.08);
+        background: var(--pagepilot-panel-bg);
+        box-shadow: var(--pagepilot-panel-shadow);
         padding: 14px;
       }
 
@@ -74,8 +82,8 @@
       }
 
       button.primary {
-        background: #0f766e;
-        color: #ffffff;
+        background: var(--pagepilot-primary);
+        color: var(--pagepilot-primary-text);
       }
 
       button.secondary {
@@ -98,13 +106,13 @@
       }
 
       .status.success {
-        background: rgba(20, 184, 166, 0.14);
-        color: #0f766e;
+        background: var(--pagepilot-success-bg);
+        color: var(--pagepilot-primary);
       }
 
       .status.error {
-        background: rgba(239, 68, 68, 0.12);
-        color: #b91c1c;
+        background: var(--pagepilot-error-bg);
+        color: var(--pagepilot-error-text);
       }
 
       textarea {
@@ -148,7 +156,7 @@
 
       <div class="status" id="status" role="status">Figma에서 프레임 또는 섹션을 선택하고 Export JSON을 누르세요.</div>
 
-      <textarea id="jsonOutput" spellcheck="false" placeholder="Export JSON 결과가 여기에 표시됩니다."></textarea>
+      <textarea id="jsonOutput" spellcheck="false" aria-label="Export JSON 결과"></textarea>
 
       <section class="note">
         <p><strong>보안:</strong> 이 플러그인은 <code>fetch</code>, 외부 AI API, Figma API 토큰, 외부 DB를 사용하지 않습니다.</p>
@@ -157,53 +165,59 @@
     </main>
 
     <script>
-      const exportButton = document.getElementById('exportButton')
-      const copyButton = document.getElementById('copyButton')
-      const downloadButton = document.getElementById('downloadButton')
-      const jsonOutput = document.getElementById('jsonOutput')
-      const statusBox = document.getElementById('status')
+      var exportButton = document.getElementById('exportButton')
+      var copyButton = document.getElementById('copyButton')
+      var downloadButton = document.getElementById('downloadButton')
+      var jsonOutput = document.getElementById('jsonOutput')
+      var statusBox = document.getElementById('status')
 
-      let latestJson = ''
+      var latestJson = ''
 
-      exportButton.addEventListener('click', () => {
-        setStatus('선택한 노드를 로컬에서 읽는 중입니다...', 'info')
+      exportButton.addEventListener('click', function () {
+        setStatus('선택한 노드를 로컬에서 읽는 중입니다', 'info')
         parent.postMessage({ pluginMessage: { type: 'export-json' } }, '*')
       })
 
-      copyButton.addEventListener('click', async () => {
-        if (!latestJson) return
-
-        try {
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            await navigator.clipboard.writeText(latestJson)
-          } else {
-            jsonOutput.select()
-            document.execCommand('copy')
-          }
-          setStatus('JSON을 클립보드에 복사했습니다.', 'success')
-        } catch (error) {
-          setStatus(`복사에 실패했습니다. textarea에서 직접 복사해 주세요. (${error.message})`, 'error')
+      copyButton.addEventListener('click', function () {
+        if (!latestJson) {
+          return
         }
+
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(latestJson).then(function () {
+            setStatus('JSON을 클립보드에 복사했습니다.', 'success')
+          }).catch(function () {
+            copyJsonWithSelectionFallback()
+          })
+          return
+        }
+
+        copyJsonWithSelectionFallback()
       })
 
-      downloadButton.addEventListener('click', () => {
-        if (!latestJson) return
+      downloadButton.addEventListener('click', function () {
+        if (!latestJson) {
+          return
+        }
 
-        const blob = new Blob([latestJson], { type: 'application/json;charset=utf-8' })
-        const url = URL.createObjectURL(blob)
-        const link = document.createElement('a')
+        var urlApi = window.URL || window.webkitURL
+        var blob = new Blob([latestJson], { type: 'application/json;charset=utf-8' })
+        var url = urlApi.createObjectURL(blob)
+        var link = document.createElement('a')
         link.href = url
-        link.download = `pagepilot-qa-figma-${new Date().toISOString().slice(0, 10)}.json`
+        link.download = 'pagepilot-qa-figma-' + new Date().toISOString().slice(0, 10) + '.json'
         document.body.appendChild(link)
         link.click()
-        link.remove()
-        URL.revokeObjectURL(url)
+        document.body.removeChild(link)
+        urlApi.revokeObjectURL(url)
         setStatus('JSON 파일 다운로드를 시작했습니다.', 'success')
       })
 
-      window.onmessage = (event) => {
-        const message = event.data.pluginMessage
-        if (!message || message.type !== 'export-result') return
+      window.onmessage = function (event) {
+        var message = event.data.pluginMessage
+        if (!message || message.type !== 'export-result') {
+          return
+        }
 
         if (!message.payload.ok) {
           latestJson = ''
@@ -219,16 +233,41 @@
         copyButton.disabled = false
         downloadButton.disabled = false
 
-        const summary = message.payload.data.summary
+        var summary = message.payload.data.summary
         setStatus(
-          `Export 완료: 텍스트 ${summary.textCount}개, CTA 후보 ${summary.ctaCandidateCount}개, 이미지/아이콘 후보 ${summary.imageCandidateCount}개`,
-          'success',
+          'Export 완료: 텍스트 ' + summary.textCount + '개, CTA 후보 ' + summary.ctaCandidateCount + '개, 이미지/아이콘 후보 ' + summary.imageCandidateCount + '개',
+          'success'
         )
+      }
+
+      function copyJsonWithSelectionFallback() {
+        var copied = false
+
+        try {
+          jsonOutput.focus()
+          jsonOutput.select()
+          if (jsonOutput.setSelectionRange) {
+            jsonOutput.setSelectionRange(0, jsonOutput.value.length)
+          }
+          copied = document.execCommand('copy')
+        } catch (error) {
+          copied = false
+        }
+
+        if (copied) {
+          setStatus('JSON을 클립보드에 복사했습니다.', 'success')
+        } else {
+          setStatus('복사에 실패했습니다. textarea에서 직접 복사해 주세요.', 'error')
+        }
       }
 
       function setStatus(message, type) {
         statusBox.textContent = message
-        statusBox.className = `status ${type === 'success' || type === 'error' ? type : ''}`.trim()
+        if (type === 'success' || type === 'error') {
+          statusBox.className = 'status ' + type
+        } else {
+          statusBox.className = 'status'
+        }
       }
     </script>
   </body>

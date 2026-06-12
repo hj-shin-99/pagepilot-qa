@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PagePilot QA Design Export</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: var(--figma-color-bg, #ffffff);
+        color: var(--figma-color-text, #172033);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at top left, rgba(52, 211, 153, 0.16), transparent 34%),
+          var(--figma-color-bg, #ffffff);
+      }
+
+      main {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        padding: 20px;
+      }
+
+      header {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 20px;
+        line-height: 1.25;
+      }
+
+      p {
+        margin: 0;
+        color: var(--figma-color-text-secondary, #5f6b7a);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+
+      .panel {
+        border: 1px solid var(--figma-color-border, #d8dee8);
+        border-radius: 16px;
+        background: color-mix(in srgb, var(--figma-color-bg, #ffffff) 92%, transparent);
+        box-shadow: 0 16px 40px rgba(15, 23, 42, 0.08);
+        padding: 14px;
+      }
+
+      .actions {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      button {
+        border: 0;
+        border-radius: 12px;
+        cursor: pointer;
+        font-weight: 700;
+        min-height: 40px;
+        padding: 10px 12px;
+      }
+
+      button.primary {
+        background: #0f766e;
+        color: #ffffff;
+      }
+
+      button.secondary {
+        background: var(--figma-color-bg-secondary, #eef2f7);
+        color: var(--figma-color-text, #172033);
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.48;
+      }
+
+      .status {
+        border-radius: 12px;
+        background: var(--figma-color-bg-secondary, #f4f7fb);
+        color: var(--figma-color-text-secondary, #5f6b7a);
+        font-size: 12px;
+        line-height: 1.5;
+        padding: 10px 12px;
+      }
+
+      .status.success {
+        background: rgba(20, 184, 166, 0.14);
+        color: #0f766e;
+      }
+
+      .status.error {
+        background: rgba(239, 68, 68, 0.12);
+        color: #b91c1c;
+      }
+
+      textarea {
+        width: 100%;
+        min-height: 330px;
+        resize: vertical;
+        border: 1px solid var(--figma-color-border, #d8dee8);
+        border-radius: 14px;
+        background: var(--figma-color-bg, #ffffff);
+        color: var(--figma-color-text, #172033);
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        font-size: 11px;
+        line-height: 1.5;
+        padding: 12px;
+      }
+
+      .note {
+        display: grid;
+        gap: 6px;
+      }
+
+      code {
+        border-radius: 6px;
+        background: var(--figma-color-bg-secondary, #eef2f7);
+        padding: 2px 5px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>PagePilot QA Design Export</h1>
+        <p>선택한 프레임/섹션의 텍스트, CTA 후보, 이미지/아이콘 후보를 외부 전송 없이 로컬 JSON으로 만듭니다.</p>
+      </header>
+
+      <section class="panel actions" aria-label="export actions">
+        <button class="primary" id="exportButton" type="button">Export JSON</button>
+        <button class="secondary" id="copyButton" type="button" disabled>Copy JSON</button>
+        <button class="secondary" id="downloadButton" type="button" disabled>Download JSON</button>
+      </section>
+
+      <div class="status" id="status" role="status">Figma에서 프레임 또는 섹션을 선택하고 Export JSON을 누르세요.</div>
+
+      <textarea id="jsonOutput" spellcheck="false" placeholder="Export JSON 결과가 여기에 표시됩니다."></textarea>
+
+      <section class="note">
+        <p><strong>보안:</strong> 이 플러그인은 <code>fetch</code>, 외부 AI API, Figma API 토큰, 외부 DB를 사용하지 않습니다.</p>
+        <p><strong>사용:</strong> JSON을 복사하거나 다운로드한 뒤 PagePilot QA의 Design QA Figma JSON 입력에 붙여 넣으세요.</p>
+      </section>
+    </main>
+
+    <script>
+      const exportButton = document.getElementById('exportButton')
+      const copyButton = document.getElementById('copyButton')
+      const downloadButton = document.getElementById('downloadButton')
+      const jsonOutput = document.getElementById('jsonOutput')
+      const statusBox = document.getElementById('status')
+
+      let latestJson = ''
+
+      exportButton.addEventListener('click', () => {
+        setStatus('선택한 노드를 로컬에서 읽는 중입니다...', 'info')
+        parent.postMessage({ pluginMessage: { type: 'export-json' } }, '*')
+      })
+
+      copyButton.addEventListener('click', async () => {
+        if (!latestJson) return
+
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(latestJson)
+          } else {
+            jsonOutput.select()
+            document.execCommand('copy')
+          }
+          setStatus('JSON을 클립보드에 복사했습니다.', 'success')
+        } catch (error) {
+          setStatus(`복사에 실패했습니다. textarea에서 직접 복사해 주세요. (${error.message})`, 'error')
+        }
+      })
+
+      downloadButton.addEventListener('click', () => {
+        if (!latestJson) return
+
+        const blob = new Blob([latestJson], { type: 'application/json;charset=utf-8' })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = `pagepilot-qa-figma-${new Date().toISOString().slice(0, 10)}.json`
+        document.body.appendChild(link)
+        link.click()
+        link.remove()
+        URL.revokeObjectURL(url)
+        setStatus('JSON 파일 다운로드를 시작했습니다.', 'success')
+      })
+
+      window.onmessage = (event) => {
+        const message = event.data.pluginMessage
+        if (!message || message.type !== 'export-result') return
+
+        if (!message.payload.ok) {
+          latestJson = ''
+          jsonOutput.value = ''
+          copyButton.disabled = true
+          downloadButton.disabled = true
+          setStatus(message.payload.error, 'error')
+          return
+        }
+
+        latestJson = JSON.stringify(message.payload.data, null, 2)
+        jsonOutput.value = latestJson
+        copyButton.disabled = false
+        downloadButton.disabled = false
+
+        const summary = message.payload.data.summary
+        setStatus(
+          `Export 완료: 텍스트 ${summary.textCount}개, CTA 후보 ${summary.ctaCandidateCount}개, 이미지/아이콘 후보 ${summary.imageCandidateCount}개`,
+          'success',
+        )
+      }
+
+      function setStatus(message, type) {
+        statusBox.textContent = message
+        statusBox.className = `status ${type === 'success' || type === 'error' ? type : ''}`.trim()
+      }
+    </script>
+  </body>
+</html>

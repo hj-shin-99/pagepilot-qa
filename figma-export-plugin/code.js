@@ -5,11 +5,46 @@ var CTA_KEYWORDS = [
   'btn',
   'cta',
   'link',
+  'action',
+  'submit',
+  'apply',
+  'contact',
+  'download',
+  'buy',
+  'purchase',
+  'reserve',
+  'booking',
+  'learn more',
+  'read more',
+  'view more',
   '더보기',
   '자세히',
+  '자세히 보기',
   '신청',
+  '신청하기',
   '구매',
+  '구매하기',
   '상담',
+  '상담하기',
+  '다운로드',
+  '예약',
+  '예약하기',
+  '문의',
+  '문의하기',
+  '가입',
+  '가입하기',
+  '시작',
+  '시작하기',
+  '확인',
+  '바로가기',
+  '알아보기',
+]
+
+var CTA_TEXT_PATTERNS = [
+  /\b(button|btn|cta|link|submit|apply|contact|download|buy|purchase|reserve|booking)\b/i,
+  /\b(learn|read|view|see|get|start|try|join|sign\s*up)\s+(more|now|today|free|in|up)\b/i,
+  /(신청|구매|상담|예약|문의|가입|시작|확인|다운로드|바로가기|알아보기)\s*하기/,
+  /자세히\s*보기|더\s*보기/,
 ]
 
 var IMAGE_KEYWORDS = [
@@ -165,7 +200,7 @@ function serializeNode(node, context, traversal) {
   var baseNode = createBaseNode(node, currentTraversal)
   var currentSection = currentTraversal.section
 
-  if (currentTraversal.depth === 1 && isSectionCandidate(node)) {
+  if ((currentTraversal.depth === 1 && isSectionCandidate(node)) || isSelectedSectionRoot(node, currentTraversal)) {
     currentSection = createSection(node, baseNode)
     context.sections.push(currentSection)
     currentTraversal.section = currentSection
@@ -181,7 +216,8 @@ function serializeNode(node, context, traversal) {
     }
 
     if (shouldExportText && (isCtaCandidate(node, textNode.text) || currentTraversal.buttonContainer)) {
-      var ctaKind = isCtaCandidate(node, textNode.text) ? 'TEXT_CTA' : 'BUTTON_TEXT_CTA'
+      var textMatchesCta = isCtaCandidate(node, textNode.text)
+      var ctaKind = textMatchesCta ? 'TEXT_CTA' : 'BUTTON_TEXT_CTA'
       var ctaCandidate = createCandidate(ctaKind, node, textNode.text, currentTraversal)
       if (currentTraversal.buttonContainer) {
         addUniqueMatch(ctaCandidate.matchedBy, 'button-container')
@@ -314,7 +350,7 @@ function createCandidate(kind, node, text, traversal) {
     name: node.name || '',
     type: node.type,
     text: candidateText,
-    normalizedText: normalizeText(candidateText),
+    normalizedText: normalizeText(candidateText || node.name || ''),
     matchedBy: getMatchedKeywords((node.name || '') + ' ' + candidateText, CTA_KEYWORDS),
     x: box.x,
     y: box.y,
@@ -432,6 +468,10 @@ function isSectionCandidate(node) {
   return isTypeInList(node.type, SECTION_LIKE_TYPES)
 }
 
+function isSelectedSectionRoot(node, traversal) {
+  return traversal.depth === 0 && node.type === 'SECTION'
+}
+
 function isButtonLikeContainer(node) {
   var box = getAbsoluteBoundingBox(node)
   if (!isContainerNode(node) || box.width < 24 || box.height < 12) {
@@ -473,11 +513,35 @@ function isExportableTextNode(textNode) {
     return false
   }
 
-  if (!hasMeaningfulTextCharacter(textNode.normalizedText) && textNode.normalizedText.length <= 2) {
+  if (isDecorativeTextNode(textNode)) {
     return false
   }
 
   return true
+}
+
+function isDecorativeTextNode(textNode) {
+  var normalizedText = textNode.normalizedText || ''
+  var rawText = textNode.text || textNode.characters || ''
+  var fontSize = readNumber(textNode.fontSize, 0)
+
+  if (!hasMeaningfulTextCharacter(normalizedText)) {
+    return normalizedText.length <= 3
+  }
+
+  if (isCtaCandidate(textNode, rawText)) {
+    return false
+  }
+
+  if (normalizedText.length <= 1 && fontSize > 0 && fontSize <= 10) {
+    return true
+  }
+
+  if (normalizedText.length <= 2 && fontSize > 0 && fontSize <= 8 && textNode.width <= 16 && textNode.height <= 16) {
+    return true
+  }
+
+  return false
 }
 
 function hasMeaningfulTextCharacter(value) {
@@ -485,7 +549,18 @@ function hasMeaningfulTextCharacter(value) {
 }
 
 function normalizeText(value) {
-  return String(value || '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '').toLowerCase()
+  var text = String(value || '')
+  if (text.normalize) {
+    text = text.normalize('NFKC')
+  }
+
+  return text
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/[\u00A0\u1680\u180E\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]/g, ' ')
+    .replace(/[.,，。ㆍ·:：;；!！?？"'“”‘’`´\-‐‑‒–—―_/\\()[\]{}<>《》]/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/^\s+|\s+$/g, '')
+    .replace(/[A-Z]/g, function (letter) { return letter.toLowerCase() })
 }
 
 function addUniqueMatch(matches, match) {
@@ -499,7 +574,23 @@ function addUniqueMatch(matches, match) {
 }
 
 function isCtaCandidate(node, text) {
-  return getMatchedKeywords((node.name || '') + ' ' + (text || ''), CTA_KEYWORDS).length > 0
+  var searchableText = (node.name || '') + ' ' + (text || '')
+  if (getMatchedKeywords(searchableText, CTA_KEYWORDS).length > 0) {
+    return true
+  }
+
+  return matchesAnyPattern(searchableText, CTA_TEXT_PATTERNS)
+}
+
+function matchesAnyPattern(value, patterns) {
+  var text = String(value || '')
+  for (var patternIndex = 0; patternIndex < patterns.length; patternIndex += 1) {
+    if (patterns[patternIndex].test(text)) {
+      return true
+    }
+  }
+
+  return false
 }
 
 function isImageCandidate(node) {
@@ -536,7 +627,7 @@ function hasImageFill(node) {
 }
 
 function getMatchedKeywords(value, keywords) {
-  var normalized = String(value || '').toLowerCase()
+  var normalized = normalizeText(value)
   var matches = []
 
   for (var keywordIndex = 0; keywordIndex < keywords.length; keywordIndex += 1) {

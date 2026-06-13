@@ -1,0 +1,120 @@
+- main [ref=e3] [box=0,0,1440,4451]:
+  - complementary [ref=e4] [box=0,0,320,1100]:
+    - generic [ref=e5] [box=28,28,138,32]: PagePilot QA
+    - heading "PagePilot QA v2" [level=1] [ref=e7] [box=28,104,263,36]
+    - paragraph [ref=e8] [box=28,154,263,48]: URL, Figma JSON, 시안 이미지를 한 화면에서 준비하고 로컬 Playwright 결과와 비교합니다.
+    - generic [ref=e9] [box=28,229,263,131]:
+      - generic [ref=e10] [box=28,229,263,15]: 테스트 URL
+      - textbox "테스트 URL" [ref=e11] [box=28,256,263,47]:
+        - /placeholder: https://staging.example.com/page
+        - text: http://127.0.0.1:5173
+      - button "검사 시작" [ref=e12] [cursor=pointer] [box=28,315,263,45]
+    - region "Figma JSON 입력" [ref=e13] [box=28,384,263,282]:
+      - generic [ref=e14] [box=28,407,263,18]:
+        - heading "Figma JSON" [level=3] [ref=e15] [box=28,407,83,18]
+        - generic [ref=e16] [box=188,409,103,15]: 붙여넣기 또는 .json
+      - 'textbox "{\"document\":{\"children\":[...]}}" [ref=e17] [box=28,451,263,161]': "{\"schema\":\"pagepilot-qa.design-export.v1\",\"sections\":[{\"id\":\"hero\",\"name\":\"Hero\",\"x\":0,\"y\":0,\"width\":1366,\"height\":620},{\"id\":\"footer\",\"name\":\"Footer Disclaimer\",\"x\":0,\"y\":1900,\"width\":1366,\"height\":300}],\"textNodes\":[{\"id\":\"t1\",\"type\":\"TEXT\",\"text\":\"PagePilot QA v2\",\"fontSize\":32,\"fontFamily\":\"Pretendard\",\"color\":\"#ffffff\",\"x\":28,\"y\":100,\"width\":250,\"height\":40,\"sectionId\":\"hero\",\"sectionName\":\"Hero\",\"layerPath\":[\"Home\",\"Hero\",\"Title\"],\"positionRatio\":0.08},{\"id\":\"t2\",\"type\":\"TEXT\",\"text\":\"검사 시작하기\",\"fontSize\":16,\"fontFamily\":\"Pretendard\",\"color\":\"#111827\",\"x\":28,\"y\":260,\"width\":160,\"height\":44,\"sectionId\":\"hero\",\"sectionName\":\"Hero\",\"layerPath\":[\"Home\",\"Hero\",\"CTA button\"],\"positionRatio\":0.24},{\"id\":\"t3\",\"type\":\"TEXT\",\"text\":\"이 문구는 아주 긴 디스클레이머입니다. 서비스 이용 전 반드시 안내사항과 약관을 확인해 주세요. 반복되는 설명을 접어두기 위한 테스트 문구입니다. 추가 설명이 이어집니다.\",\"fontSize\":12,\"fontFamily\":\"Pretendard\",\"color\":\"#64748b\",\"x\":28,\"y\":1960,\"width\":900,\"height\":90,\"sectionId\":\"footer\",\"sectionName\":\"Footer Disclaimer\",\"layerPath\":[\"Home\",\"Footer\",\"Disclaimer\"],\"positionRatio\":0.9}],\"ctaCandidates\":[{\"id\":\"t2\",\"text\":\"검사 시작하기\",\"layerPath\":[\"Home\",\"Hero\",\"CTA button\"]}]}"
+      - generic [ref=e18] [cursor=pointer] [box=28,624,263,42]: JSON 파일 선택
+    - region "Figma 시안 이미지 입력" [ref=e19] [box=28,690,263,235]:
+      - generic [ref=e20] [box=28,713,263,18]:
+        - heading "Figma 시안 이미지" [level=3] [ref=e21] [box=28,713,111,18]
+        - generic [ref=e22] [box=274,715,17,15]: 1개
+      - generic [ref=e23] [cursor=pointer] [box=28,757,263,42]: 시안 이미지 여러 장 선택
+      - figure "pagepilot-design-fixture.png" [ref=e39] [box=28,811,127,114]:
+        - img "pagepilot-design-fixture.png preview" [ref=e40] [box=29,812,125,82]
+        - generic [ref=e41] [box=29,894,125,30]: pagepilot-design-fixture.png
+  - generic [ref=e24] [box=320,0,1120,4451]:
+    - navigation "QA 결과 탭" [ref=e25] [box=348,28,278,49]:
+      - button "Tech QA" [ref=e26] [cursor=pointer] [box=355,35,80,35]
+      - button "시안 비교 QA" [active] [pressed] [ref=e27] [cursor=pointer] [box=441,34,98,35]
+      - button "History" [ref=e28] [cursor=pointer] [box=545,35,74,35]
+    - generic [ref=e58] [box=348,93,1064,247]:
+      - generic [ref=e59] [box=373,118,1014,92]:
+        - generic [ref=e60] [box=373,118,328,92]:
+          - paragraph [ref=e61] [box=373,118,328,14]: Playwright QA Report · 2026. 6. 13. 오후 3:23
+          - heading "PagePilot QA" [level=2] [ref=e62] [box=373,140,328,43]
+          - paragraph [ref=e63] [box=373,191,328,19]: http://127.0.0.1:5173
+        - button "결과 복사" [ref=e64] [cursor=pointer] [box=1298,118,89,41]
+      - generic [ref=e65] [box=373,228,1014,87]: PagePilot QA 페이지는 총 10개 QA 항목 중 정상 9건, 오류 없음, 확인 필요 1건으로 검사되었습니다. 배포 전 오류 항목과 확인 필요 항목을 우선 확인해 주세요.
+    - region "시안 비교 QA 결과" [ref=e66] [box=348,356,1064,4067]:
+      - region "시안 비교 QA 이슈 요약" [ref=e67] [box=348,372,1064,90]:
+        - article [ref=e68] [box=348,372,167,90]:
+          - paragraph [ref=e69] [box=365,389,133,14]: 전체
+          - paragraph [ref=e70] [box=365,411,133,34]: "13"
+        - article [ref=e71] [box=527,372,167,90]:
+          - paragraph [ref=e72] [box=544,389,133,14]: High
+          - paragraph [ref=e73] [box=544,411,133,34]: "10"
+        - article [ref=e74] [box=707,372,167,90]:
+          - paragraph [ref=e75] [box=724,389,133,14]: 텍스트
+          - paragraph [ref=e76] [box=724,411,133,34]: "12"
+        - article [ref=e77] [box=886,372,167,90]:
+          - paragraph [ref=e78] [box=903,389,133,14]: 스타일
+          - paragraph [ref=e79] [box=903,411,133,34]: "0"
+        - article [ref=e80] [box=1065,372,167,90]:
+          - paragraph [ref=e81] [box=1082,389,133,14]: 위치/크기
+          - paragraph [ref=e82] [box=1082,411,133,34]: "1"
+        - article [ref=e83] [box=1245,372,167,90]:
+          - paragraph [ref=e84] [box=1262,389,133,14]: CTA
+          - paragraph [ref=e85] [box=1262,411,133,34]: "5"
+      - article [ref=e86] [box=348,494,1064,171]:
+        - generic [ref=e87] [box=369,515,1022,21]:
+          - heading "섹션 요약" [level=3] [ref=e88] [box=369,515,65,21]
+          - generic [ref=e89] [box=1234,518,157,15]: 4개 섹션 · 상위 이슈 10개 추적
+        - generic [ref=e90] [box=369,562,1022,82]:
+          - article [ref=e91] [box=369,562,248,82]:
+            - strong [ref=e92] [box=382,575,222,16]: Hero/KV
+            - generic [ref=e93] [box=382,596,222,35]: 총 9 · High 8 · 텍스트 9 · 스타일 0 · 위치 0 · CTA 4
+          - article [ref=e94] [box=627,562,248,82]:
+            - strong [ref=e95] [box=640,575,222,16]: Hero
+            - generic [ref=e96] [box=640,596,222,35]: 총 2 · High 1 · 텍스트 1 · 스타일 0 · 위치 1 · CTA 1
+          - article [ref=e97] [box=885,562,248,82]:
+            - strong [ref=e98] [box=898,575,222,16]: Content Section
+            - generic [ref=e99] [box=898,596,222,35]: 총 1 · High 1 · 텍스트 1 · 스타일 0 · 위치 0 · CTA 0
+          - article [ref=e100] [box=1143,562,248,82]:
+            - strong [ref=e101] [box=1156,575,222,16]: Footer Disclaimer
+            - generic [ref=e102] [box=1156,596,222,35]: 총 1 · High 0 · 텍스트 1 · 스타일 0 · 위치 0 · CTA 0
+      - article [ref=e103] [box=348,681,1064,733]:
+        - generic [ref=e104] [box=369,702,1022,21]:
+          - heading "웹 화면 vs Figma 시안" [level=3] [ref=e105] [box=369,702,160,21]
+          - generic [ref=e106] [box=1168,705,223,15]: Figma 3개 · Web 11개 · pixel diff 미실행
+        - generic [ref=e107] [box=369,753,1022,573]:
+          - region "Web Screenshot" [ref=e108] [box=369,753,503,573]:
+            - generic [ref=e109] [box=369,753,503,44]
+            - paragraph [ref=e112] [box=369,806,503,62]: "선택 이슈: Hero · y 260 · 24% 지점"
+            - img "Playwright full-page web screenshot" [ref=e114] [box=370,879,501,354]
+          - region "Figma 시안 이미지" [ref=e115] [box=888,753,503,573]:
+            - generic [ref=e116] [box=888,753,503,16]
+            - paragraph [ref=e119] [box=888,779,503,34]: "선택 이슈: Hero · y 260 · 24% 지점"
+            - img "pagepilot-design-fixture.png preview" [ref=e121] [box=889,824,501,501]
+        - generic "Figma 시안 이미지 선택" [ref=e122] [box=369,1342,1022,51]:
+          - button "pagepilot-design-fixture.png 0 KB" [pressed] [ref=e123] [cursor=pointer] [box=369,1342,208,51]:
+            - generic [ref=e124] [box=382,1352,182,15]: pagepilot-design-fixture.png
+            - generic [ref=e125] [box=382,1370,182,13]: 0 KB
+      - article [ref=e126] [box=348,1430,1064,2848]:
+        - generic [ref=e127] [box=369,1451,1022,21]:
+          - heading "플래너용 그룹 이슈" [level=3] [ref=e128] [box=369,1451,129,21]
+          - generic [ref=e129] [box=1232,1454,159,15]: 우선순위 정렬 · 기본 50개 표시
+        - generic "시안 비교 이슈 필터" [ref=e130] [box=369,1500,1022,35]:
+          - button "전체" [pressed] [ref=e131] [cursor=pointer] [box=369,1500,50,35]
+          - button "텍스트" [ref=e132] [cursor=pointer] [box=427,1500,62,35]
+          - button "스타일" [ref=e133] [cursor=pointer] [box=497,1500,62,35]
+          - button "위치/크기" [ref=e134] [cursor=pointer] [box=567,1500,78,35]
+          - button "CTA" [ref=e135] [cursor=pointer] [box=653,1500,55,35]
+          - button "디스클레이머/푸터" [ref=e136] [cursor=pointer] [box=715,1500,123,35]
+        - generic [ref=e137] [box=369,1549,1022,2708]:
+          - group [ref=e138] [box=369,1549,1022,509]:
+            - generic "Hero 총 2 · High 1 · 텍스트 1 · 스타일 0 · 위치 1 · CTA 1 P1" [ref=e139] [cursor=pointer] [box=370,1550,1020,68]
+            - list [ref=e144] [box=370,1618,1020,439]
+          - group [ref=e171] [box=369,2070,1022,1824]:
+            - generic "Hero/KV 총 9 · High 8 · 텍스트 9 · 스타일 0 · 위치 0 · CTA 4 P2" [ref=e172] [cursor=pointer] [box=370,2071,1020,68]
+            - list [ref=e177] [box=370,2139,1020,1753]
+          - group [ref=e286] [box=369,3906,1022,269]:
+            - generic "Content Section 총 1 · High 1 · 텍스트 1 · 스타일 0 · 위치 0 · CTA 0 P2" [ref=e287] [cursor=pointer] [box=370,3907,1020,68]
+            - list [ref=e292] [box=370,3975,1020,198]
+          - group [ref=e305] [box=369,4186,1022,70]:
+            - generic "Footer Disclaimer 총 1 · High 0 · 텍스트 1 · 스타일 0 · 위치 0 · CTA 0 P5" [ref=e306] [cursor=pointer] [box=370,4187,1020,68]
+      - article [ref=e311] [box=348,4294,1064,129]:
+        - generic [ref=e312] [box=369,4315,1022,21]:
+          - heading "비교 기준" [level=3] [ref=e313] [box=369,4315,65,21]
+          - generic [ref=e314] [box=1142,4318,249,15]: 정확 매칭 후 0.8 이상 유사 문구만 확인 필요 처리
+        - paragraph [ref=e315] [box=369,4346,1022,44]: 텍스트는 줄바꿈, 특수 공백, 반복 공백, zero-width 문자, 일부 문장부호 차이, 영문 대소문자를 정규화해 먼저 정확 매칭합니다. 정확 매칭되지 않은 6자 이상 문구만 0.8 이상 유사도에서 확인 필요로 표시하며, 픽셀 diff는 실행하지 않습니다.

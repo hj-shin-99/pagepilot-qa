@@ -38,6 +38,15 @@ var IMAGE_LIKE_TYPES = [
   'VECTOR',
 ]
 
+var SECTION_LIKE_TYPES = [
+  'COMPONENT',
+  'COMPONENT_SET',
+  'FRAME',
+  'GROUP',
+  'INSTANCE',
+  'SECTION',
+]
+
 figma.showUI(__html__, { width: 520, height: 640, themeColors: true })
 
 figma.ui.onmessage = function (message) {
@@ -69,12 +78,23 @@ function createPagePilotExport() {
     textNodes: [],
     ctaCandidates: [],
     imageCandidates: [],
+    sections: [],
   }
 
   var selectedNodes = []
   for (var selectionIndex = 0; selectionIndex < selection.length; selectionIndex += 1) {
-    selectedNodes.push(serializeNode(selection[selectionIndex], context))
+    var selectedRoot = selection[selectionIndex]
+    var rootBox = getAbsoluteBoundingBox(selectedRoot)
+    selectedNodes.push(serializeNode(selectedRoot, context, {
+      rootBox: rootBox,
+      path: [],
+      depth: 0,
+      section: null,
+      buttonContainer: null,
+    }))
   }
+
+  sortExportCollections(context)
 
   return {
     ok: true,
@@ -97,6 +117,7 @@ function createPagePilotExport() {
         textCount: context.textNodes.length,
         ctaCandidateCount: context.ctaCandidates.length,
         imageCandidateCount: context.imageCandidates.length,
+        sectionCount: context.sections.length,
       },
       document: {
         id: figma.currentPage.id,
@@ -107,6 +128,7 @@ function createPagePilotExport() {
       textNodes: context.textNodes,
       ctaCandidates: context.ctaCandidates,
       imageCandidates: context.imageCandidates,
+      sections: context.sections,
     },
   }
 }
@@ -130,39 +152,80 @@ function isExportableRoot(node) {
   return Boolean(node && 'children' in node)
 }
 
-function serializeNode(node, context) {
-  var baseNode = createBaseNode(node)
+function serializeNode(node, context, traversal) {
+  var currentPath = traversal.path.slice(0)
+  currentPath.push(node.name || '')
+  var currentTraversal = {
+    rootBox: traversal.rootBox,
+    path: currentPath,
+    depth: traversal.depth,
+    section: traversal.section,
+    buttonContainer: traversal.buttonContainer,
+  }
+  var baseNode = createBaseNode(node, currentTraversal)
+  var currentSection = currentTraversal.section
+
+  if (currentTraversal.depth === 1 && isSectionCandidate(node)) {
+    currentSection = createSection(node, baseNode)
+    context.sections.push(currentSection)
+    currentTraversal.section = currentSection
+  }
 
   if (node.type === 'TEXT') {
     var textNode = createTextNode(node, baseNode)
-    context.textNodes.push(textNode)
+    var shouldExportText = isExportableTextNode(textNode)
 
-    if (isCtaCandidate(node, textNode.text)) {
-      context.ctaCandidates.push(createCandidate('TEXT_CTA', node, textNode.text))
+    if (shouldExportText) {
+      context.textNodes.push(textNode)
+      addToSection(currentSection, 'texts', textNode)
+    }
+
+    if (shouldExportText && (isCtaCandidate(node, textNode.text) || currentTraversal.buttonContainer)) {
+      var ctaKind = isCtaCandidate(node, textNode.text) ? 'TEXT_CTA' : 'BUTTON_TEXT_CTA'
+      var ctaCandidate = createCandidate(ctaKind, node, textNode.text, currentTraversal)
+      if (currentTraversal.buttonContainer) {
+        addUniqueMatch(ctaCandidate.matchedBy, 'button-container')
+      }
+      context.ctaCandidates.push(ctaCandidate)
+      addToSection(currentSection, 'ctas', ctaCandidate)
     }
 
     return textNode
   }
 
   if (isCtaCandidate(node, '')) {
-    context.ctaCandidates.push(createCandidate('NODE_CTA', node, ''))
+    var nodeCtaCandidate = createCandidate('NODE_CTA', node, '', currentTraversal)
+    context.ctaCandidates.push(nodeCtaCandidate)
+    addToSection(currentSection, 'ctas', nodeCtaCandidate)
   }
 
   if (isImageCandidate(node)) {
-    context.imageCandidates.push(createImageCandidate(node))
+    var imageCandidate = createImageCandidate(node, currentTraversal)
+    context.imageCandidates.push(imageCandidate)
+    addToSection(currentSection, 'images', imageCandidate)
+  }
+
+  if (isButtonLikeContainer(node)) {
+    currentTraversal.buttonContainer = node
   }
 
   if ('children' in node && Array.isArray(node.children)) {
     baseNode.children = []
     for (var childIndex = 0; childIndex < node.children.length; childIndex += 1) {
-      baseNode.children.push(serializeNode(node.children[childIndex], context))
+      baseNode.children.push(serializeNode(node.children[childIndex], context, {
+        rootBox: currentTraversal.rootBox,
+        path: currentPath,
+        depth: currentTraversal.depth + 1,
+        section: currentSection,
+        buttonContainer: currentTraversal.buttonContainer,
+      }))
     }
   }
 
   return baseNode
 }
 
-function createBaseNode(node) {
+function createBaseNode(node, traversal) {
   var box = getAbsoluteBoundingBox(node)
 
   return {
@@ -176,6 +239,8 @@ function createBaseNode(node) {
     width: box.width,
     height: box.height,
     absoluteBoundingBox: box,
+    layerPath: traversal.path.slice(0),
+    positionRatio: createPositionRatio(box, traversal.rootBox),
   }
 }
 
@@ -187,6 +252,7 @@ function createTextNode(node, baseNode) {
   textNode.tag = 'TEXT'
   textNode.text = node.characters || ''
   textNode.characters = node.characters || ''
+  textNode.normalizedText = normalizeText(textNode.text)
   textNode.fontFamily = textStyle.fontFamily
   textNode.fontStyle = textStyle.fontStyle
   textNode.fontSize = textStyle.fontSize
@@ -238,24 +304,28 @@ function createTextStyle(node) {
   }
 }
 
-function createCandidate(kind, node, text) {
+function createCandidate(kind, node, text, traversal) {
   var box = getAbsoluteBoundingBox(node)
+  var candidateText = text || ''
 
   return {
     kind: kind,
     id: node.id,
     name: node.name || '',
     type: node.type,
-    text: text || '',
-    matchedBy: getMatchedKeywords((node.name || '') + ' ' + (text || ''), CTA_KEYWORDS),
+    text: candidateText,
+    normalizedText: normalizeText(candidateText),
+    matchedBy: getMatchedKeywords((node.name || '') + ' ' + candidateText, CTA_KEYWORDS),
     x: box.x,
     y: box.y,
     width: box.width,
     height: box.height,
+    layerPath: traversal.path.slice(0),
+    positionRatio: createPositionRatio(box, traversal.rootBox),
   }
 }
 
-function createImageCandidate(node) {
+function createImageCandidate(node, traversal) {
   var box = getAbsoluteBoundingBox(node)
 
   return {
@@ -269,7 +339,163 @@ function createImageCandidate(node) {
     y: box.y,
     width: box.width,
     height: box.height,
+    layerPath: traversal.path.slice(0),
+    positionRatio: createPositionRatio(box, traversal.rootBox),
   }
+}
+
+function createSection(node, baseNode) {
+  return {
+    id: node.id,
+    name: node.name || '',
+    type: node.type,
+    x: baseNode.x,
+    y: baseNode.y,
+    width: baseNode.width,
+    height: baseNode.height,
+    order: 0,
+    layerPath: baseNode.layerPath.slice(0),
+    positionRatio: copyPositionRatio(baseNode.positionRatio),
+    texts: [],
+    ctas: [],
+    images: [],
+  }
+}
+
+function createPositionRatio(box, rootBox) {
+  var rootWidth = readNumber(rootBox.width, 0)
+  var rootHeight = readNumber(rootBox.height, 0)
+  var xRatio = 0
+  var yRatio = 0
+  var widthRatio = 0
+  var heightRatio = 0
+
+  if (rootWidth > 0) {
+    xRatio = (box.x - rootBox.x) / rootWidth
+    widthRatio = box.width / rootWidth
+  }
+
+  if (rootHeight > 0) {
+    yRatio = (box.y - rootBox.y) / rootHeight
+    heightRatio = box.height / rootHeight
+  }
+
+  return {
+    xRatio: roundRatio(xRatio),
+    yRatio: roundRatio(yRatio),
+    widthRatio: roundRatio(widthRatio),
+    heightRatio: roundRatio(heightRatio),
+  }
+}
+
+function copyPositionRatio(positionRatio) {
+  return {
+    xRatio: positionRatio.xRatio,
+    yRatio: positionRatio.yRatio,
+    widthRatio: positionRatio.widthRatio,
+    heightRatio: positionRatio.heightRatio,
+  }
+}
+
+function addToSection(section, key, item) {
+  if (!section || !Array.isArray(section[key])) {
+    return
+  }
+
+  section[key].push(item)
+}
+
+function sortExportCollections(context) {
+  sortByPosition(context.textNodes)
+  sortByPosition(context.ctaCandidates)
+  sortByPosition(context.imageCandidates)
+  sortByPosition(context.sections)
+
+  for (var sectionIndex = 0; sectionIndex < context.sections.length; sectionIndex += 1) {
+    var section = context.sections[sectionIndex]
+    section.order = sectionIndex + 1
+    sortByPosition(section.texts)
+    sortByPosition(section.ctas)
+    sortByPosition(section.images)
+  }
+}
+
+function sortByPosition(items) {
+  items.sort(function (left, right) {
+    if (left.y !== right.y) return left.y - right.y
+    if (left.x !== right.x) return left.x - right.x
+    return String(left.id || '').localeCompare(String(right.id || ''))
+  })
+}
+
+function isSectionCandidate(node) {
+  return isTypeInList(node.type, SECTION_LIKE_TYPES)
+}
+
+function isButtonLikeContainer(node) {
+  var box = getAbsoluteBoundingBox(node)
+  if (!isContainerNode(node) || box.width < 24 || box.height < 12) {
+    return false
+  }
+
+  if (box.width > 360 || box.height > 80 || box.width / box.height < 1.2) {
+    return false
+  }
+
+  return hasVisibleFill(node)
+}
+
+function isContainerNode(node) {
+  return node && (node.type === 'FRAME' || node.type === 'GROUP' || node.type === 'INSTANCE' || node.type === 'COMPONENT')
+}
+
+function hasVisibleFill(node) {
+  if (!Array.isArray(node.fills)) {
+    return false
+  }
+
+  for (var fillIndex = 0; fillIndex < node.fills.length; fillIndex += 1) {
+    var paint = node.fills[fillIndex]
+    if (paint && paint.visible !== false && paint.type !== 'IMAGE') {
+      return true
+    }
+  }
+
+  return false
+}
+
+function isExportableTextNode(textNode) {
+  if (!textNode || textNode.normalizedText === '') {
+    return false
+  }
+
+  if (textNode.width < 2 || textNode.height < 2) {
+    return false
+  }
+
+  if (!hasMeaningfulTextCharacter(textNode.normalizedText) && textNode.normalizedText.length <= 2) {
+    return false
+  }
+
+  return true
+}
+
+function hasMeaningfulTextCharacter(value) {
+  return /[A-Za-z0-9가-힣]/.test(value)
+}
+
+function normalizeText(value) {
+  return String(value || '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '').toLowerCase()
+}
+
+function addUniqueMatch(matches, match) {
+  for (var matchIndex = 0; matchIndex < matches.length; matchIndex += 1) {
+    if (matches[matchIndex] === match) {
+      return
+    }
+  }
+
+  matches.push(match)
 }
 
 function isCtaCandidate(node, text) {
@@ -281,8 +507,12 @@ function isImageCandidate(node) {
 }
 
 function isImageLikeType(type) {
-  for (var typeIndex = 0; typeIndex < IMAGE_LIKE_TYPES.length; typeIndex += 1) {
-    if (IMAGE_LIKE_TYPES[typeIndex] === type) {
+  return isTypeInList(type, IMAGE_LIKE_TYPES)
+}
+
+function isTypeInList(type, types) {
+  for (var typeIndex = 0; typeIndex < types.length; typeIndex += 1) {
+    if (types[typeIndex] === type) {
       return true
     }
   }
@@ -457,4 +687,8 @@ function toHex(value) {
 
 function roundNumber(value) {
   return Math.round(value * 100) / 100
+}
+
+function roundRatio(value) {
+  return Math.round(value * 10000) / 10000
 }

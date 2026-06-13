@@ -1,11 +1,16 @@
 const HISTORY_KEY = 'pagepilot-qa-history-v2'
 const MAX_HISTORY_ITEMS = 10
-const MAX_HISTORY_IMAGES = 50
-const MAX_HISTORY_CONSOLE_MESSAGES = 50
-const MAX_HISTORY_MISSING_HREFS = 50
-const MAX_HISTORY_FIGMA_ELEMENTS = 120
-const MAX_HISTORY_DESIGN_ELEMENTS = 120
-const EMPTY_STATUS_COUNTS = { normal: 0, error: 0, warn: 0 }
+const EMPTY_COUNTS = {
+  total: 0,
+  high: 0,
+  text: 0,
+  style: 0,
+  layout: 0,
+  cta: 0,
+  footer: 0,
+  techError: 0,
+  techWarn: 0,
+}
 
 export function loadHistoryItems() {
   try {
@@ -35,131 +40,65 @@ export function saveHistoryItem(item) {
 function sanitizeHistoryItem(item, index = 0) {
   if (!item || typeof item !== 'object') return null
 
-  const result = sanitizeResult(item.result)
-  const url = getString(item.url || result?.targetUrl)
-  if (!url || !result) return null
+  const url = getString(item.url || item.result?.targetUrl)
+  if (!url) return null
 
-  const scannedAt = getValidDate(item.scannedAt || result.scannedAt)
+  const scannedAt = getValidDate(item.scannedAt || item.result?.scannedAt)
+  const counts = sanitizeCounts(item.counts)
+  const topIssueSummaries = sanitizeTopIssueSummaries(item.topIssueSummaries, item.issueSummary)
+  const designImageFilenames = sanitizeDesignImageFilenames(item.designImageFilenames, item.inputs?.designImages)
 
   return {
     id: getString(item.id) || `${scannedAt}-${url}-${index}`,
     url,
     scannedAt,
-    counts: sanitizeStatusCounts(item.counts),
-    issueSummary: getString(item.issueSummary) || '저장된 QA 결과',
-    result: {
-      ...result,
-      targetUrl: url,
-      scannedAt,
-    },
-    inputs: sanitizeInputs(item.inputs),
+    totalIssueCount: getNumber(item.totalIssueCount) || counts.total,
+    counts,
+    topIssueSummaries,
+    designImageFilenames,
   }
 }
 
-function sanitizeResult(result) {
-  if (!result || typeof result !== 'object' || !Array.isArray(result.checks)) return null
+function sanitizeCounts(counts) {
+  const safeCounts = counts && typeof counts === 'object' ? counts : {}
+
+  if ('normal' in safeCounts || 'error' in safeCounts || 'warn' in safeCounts) {
+    const error = getNumber(safeCounts.error)
+    const warn = getNumber(safeCounts.warn)
+
+    return {
+      ...EMPTY_COUNTS,
+      total: error + warn,
+      high: error,
+      techError: error,
+      techWarn: warn,
+    }
+  }
 
   return {
-    targetUrl: getString(result.targetUrl),
-    scannedAt: getValidDate(result.scannedAt),
-    pageTitle: getString(result.pageTitle),
-    httpStatus: result.httpStatus ?? null,
-    accessible: Boolean(result.accessible),
-    navigationError: getString(result.navigationError),
-    checks: result.checks.filter(Boolean),
-    links: getArray(result.links),
-    uncheckedLinkCount: getNumber(result.uncheckedLinkCount),
-    missingHrefLinks: getArray(result.missingHrefLinks).slice(0, MAX_HISTORY_MISSING_HREFS),
-    images: getArray(result.images).slice(0, MAX_HISTORY_IMAGES),
-    designElements: getArray(result.designElements).slice(0, MAX_HISTORY_DESIGN_ELEMENTS),
-    webScreenshot: sanitizeWebScreenshot(result.webScreenshot),
-    consoleMessages: getArray(result.consoleMessages).slice(0, MAX_HISTORY_CONSOLE_MESSAGES),
-    counts: sanitizeDomCounts(result.counts),
-    mobile: sanitizeMobile(result.mobile),
+    total: getNumber(safeCounts.total),
+    high: getNumber(safeCounts.high),
+    text: getNumber(safeCounts.text),
+    style: getNumber(safeCounts.style),
+    layout: getNumber(safeCounts.layout),
+    cta: getNumber(safeCounts.cta),
+    footer: getNumber(safeCounts.footer),
+    techError: getNumber(safeCounts.techError),
+    techWarn: getNumber(safeCounts.techWarn),
   }
 }
 
-function sanitizeInputs(inputs) {
-  const safeInputs = inputs && typeof inputs === 'object' ? inputs : {}
+function sanitizeTopIssueSummaries(topIssueSummaries, legacyIssueSummary) {
+  const summaries = Array.isArray(topIssueSummaries) ? topIssueSummaries : [legacyIssueSummary]
+  const safeSummaries = summaries.map(getString).filter(Boolean).slice(0, 3)
 
-  return {
-    figmaJson: '',
-    figmaElements: getArray(safeInputs.figmaElements).slice(0, MAX_HISTORY_FIGMA_ELEMENTS),
-    designImages: getArray(safeInputs.designImages).map(sanitizeImageMetadata).filter(Boolean),
-  }
+  return safeSummaries.length > 0 ? safeSummaries : ['저장된 QA 결과']
 }
 
-function sanitizeImageMetadata(image, index) {
-  if (!image || typeof image !== 'object') return null
-  const name = getString(image.name) || `Design image ${index + 1}`
-
-  return {
-    id: getString(image.id) || `${name}-${index}`,
-    name,
-    size: getNumber(image.size),
-  }
-}
-
-function sanitizeWebScreenshot(webScreenshot) {
-  const safeScreenshot = webScreenshot && typeof webScreenshot === 'object' ? webScreenshot : {}
-
-  return {
-    mediaType: getString(safeScreenshot.mediaType) || 'image/png',
-    width: getNumber(safeScreenshot.width),
-    height: getNumber(safeScreenshot.height),
-    viewport: sanitizeViewport(safeScreenshot.viewport),
-    fullPage: Boolean(safeScreenshot.fullPage),
-    capturedAt: getValidDate(safeScreenshot.capturedAt),
-    error: getString(safeScreenshot.error),
-  }
-}
-
-function sanitizeViewport(viewport) {
-  const safeViewport = viewport && typeof viewport === 'object' ? viewport : {}
-
-  return {
-    width: getNumber(safeViewport.width) || 1366,
-    height: getNumber(safeViewport.height) || 900,
-  }
-}
-
-function sanitizeStatusCounts(counts) {
-  if (!counts || typeof counts !== 'object') return EMPTY_STATUS_COUNTS
-
-  return {
-    normal: getNumber(counts.normal),
-    error: getNumber(counts.error),
-    warn: getNumber(counts.warn),
-  }
-}
-
-function sanitizeDomCounts(counts) {
-  if (!counts || typeof counts !== 'object') return { anchors: 0, buttons: 0, missingHrefs: 0 }
-
-  return {
-    anchors: getNumber(counts.anchors),
-    buttons: getNumber(counts.buttons),
-    missingHrefs: getNumber(counts.missingHrefs),
-  }
-}
-
-function sanitizeMobile(mobile) {
-  const safeMobile = mobile && typeof mobile === 'object' ? mobile : {}
-  const viewport = safeMobile.viewport && typeof safeMobile.viewport === 'object' ? safeMobile.viewport : {}
-
-  return {
-    accessible: Boolean(safeMobile.accessible),
-    statusCode: safeMobile.statusCode ?? null,
-    viewport: {
-      width: getNumber(viewport.width) || 390,
-      height: getNumber(viewport.height) || 844,
-    },
-    note: getString(safeMobile.note) || '저장된 모바일 검사 결과입니다.',
-  }
-}
-
-function getArray(value) {
-  return Array.isArray(value) ? value.filter(Boolean) : []
+function sanitizeDesignImageFilenames(filenames, legacyImages) {
+  if (Array.isArray(filenames)) return filenames.map(getString).filter(Boolean)
+  if (!Array.isArray(legacyImages)) return []
+  return legacyImages.map((image) => getString(image?.name)).filter(Boolean)
 }
 
 function getString(value) {

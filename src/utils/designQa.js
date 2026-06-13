@@ -3,6 +3,9 @@ const SPECIAL_WHITESPACE = /[\u00A0\u1680\u180E\u2000-\u200A\u2028\u2029\u202F\u
 const REPEATED_WHITESPACE = /\s+/g
 const PUNCTUATION_VARIANTS = /[.,，。ㆍ·:：;；!！?？"'“”‘’`´\-‐‑‒–—―_/\\()[\]{}<>《》]/g
 const LAYOUT_TOLERANCE = 8
+const FUZZY_MATCH_THRESHOLD = 0.8
+const MIN_FUZZY_TEXT_LENGTH = 6
+const TOP_ISSUE_LIMIT = 10
 
 export function parseFigmaJsonInput(value) {
   const parsed = typeof value === 'string' ? JSON.parse(value) : value
@@ -10,40 +13,50 @@ export function parseFigmaJsonInput(value) {
 }
 
 export function extractFigmaElements(source) {
-  const roots = getFigmaRoots(source)
+  const normalizedSource = source?.data && typeof source.data === 'object' ? source.data : source
+  const sections = extractSections(normalizedSource)
   const elements = []
 
-  roots.forEach((root) => walkFigmaNode(root, elements))
-  return elements
+  if (Array.isArray(normalizedSource?.textNodes)) {
+    normalizedSource.textNodes.forEach((node, index) => {
+      const element = createFigmaElement(node, index + 1, {
+        layerPath: getLayerPath(node),
+        sections,
+      })
+      if (element) elements.push(element)
+    })
+  } else {
+    getFigmaRoots(normalizedSource).forEach((root) => walkFigmaNode(root, elements, {
+      layerPath: [],
+      section: null,
+      sections,
+    }))
+  }
+
+  return withPositionRatios(elements, sections)
 }
 
 export function compareDesignElements(figmaElements = [], webElements = []) {
-  if (figmaElements.length === 0) {
-    const issues = [createComparisonWaitingIssue(webElements.length)]
+  const normalizedFigmaElements = prepareComparableElements(figmaElements, 'figma')
+  const normalizedWebElements = prepareComparableElements(webElements, 'web')
+
+  if (normalizedFigmaElements.length === 0) {
+    const issues = [createComparisonWaitingIssue(normalizedWebElements.length)]
 
     return createComparisonResult(issues)
   }
 
-  const figmaGroups = groupByText(figmaElements)
-  const webGroups = groupByText(webElements)
+  const figmaGroups = groupByText(normalizedFigmaElements)
+  const webGroups = groupByText(normalizedWebElements)
   const issues = []
+  const unmatchedFigma = []
+  const unmatchedWeb = []
 
   figmaGroups.forEach((figmaGroup, textKey) => {
     const webGroup = webGroups.get(textKey)
 
     if (!webGroup) {
-      figmaGroup.items.forEach((figmaElement) => {
-        issues.push(createGroupedIssue({
-          status: 'error',
-          label: '웹 화면 누락 텍스트',
-          text: figmaElement.text,
-          detail: 'Figma에는 있지만 웹 화면에서 같은 문구를 찾지 못했습니다.',
-          categories: ['text'],
-          differences: [createDifference('text', '텍스트 누락', '웹 화면에서 동일 문구를 수집하지 못했습니다.')],
-          figmaElement,
-          webElement: null,
-        }))
-      })
+      unmatchedFigma.push(...figmaGroup.items)
       return
     }
 
@@ -52,54 +65,41 @@ export function compareDesignElements(figmaElements = [], webElements = []) {
     const pairCount = Math.min(figmaItems.length, webItems.length)
 
     for (let index = 0; index < pairCount; index += 1) {
-      issues.push(compareMatchedElements(figmaItems[index], webItems[index], index))
+      issues.push(compareMatchedElements(figmaItems[index], webItems[index], { matchIndex: index, matchType: 'exact' }))
     }
 
-    figmaItems.slice(pairCount).forEach((figmaElement) => {
-      issues.push(createGroupedIssue({
-        status: 'error',
-        label: '웹 화면 누락 텍스트',
-        text: figmaElement.text,
-        detail: '같은 문구가 반복되는 Figma 요소 중 일부가 웹 화면에서 매칭되지 않았습니다.',
-        categories: ['text'],
-        differences: [createDifference('text', '반복 문구 누락', 'Figma 반복 요소에 대응하는 웹 요소가 부족합니다.')],
-        figmaElement,
-        webElement: null,
-      }))
-    })
-
-    webItems.slice(pairCount).forEach((webElement) => {
-      issues.push(createGroupedIssue({
-        status: 'error',
-        label: '웹에만 있는 텍스트',
-        text: webElement.text,
-        detail: '같은 문구가 반복되는 웹 요소 중 일부가 Figma 기준에서 매칭되지 않았습니다.',
-        categories: ['text'],
-        differences: [createDifference('text', '반복 문구 초과', '웹 반복 요소에 대응하는 Figma 요소가 부족합니다.')],
-        figmaElement: null,
-        webElement,
-      }))
-    })
+    unmatchedFigma.push(...figmaItems.slice(pairCount))
+    unmatchedWeb.push(...webItems.slice(pairCount))
   })
 
   webGroups.forEach((webGroup, textKey) => {
     if (figmaGroups.has(textKey)) return
-
-    webGroup.items.forEach((webElement) => {
-      issues.push(createGroupedIssue({
-        status: 'error',
-        label: '웹에만 있는 텍스트',
-        text: webElement.text,
-        detail: '웹 화면에는 있지만 Figma JSON에서 같은 문구를 찾지 못했습니다.',
-        categories: ['text'],
-        differences: [createDifference('text', 'Figma 기준 누락', 'Figma JSON에서 동일 문구를 수집하지 못했습니다.')],
-        figmaElement: null,
-        webElement,
-      }))
-    })
+    unmatchedWeb.push(...webGroup.items)
   })
 
-  return createComparisonResult(sortIssuesByPosition(issues))
+  const fuzzyMatches = createFuzzyMatches(unmatchedFigma, unmatchedWeb)
+  const fuzzyFigma = new Set()
+  const fuzzyWeb = new Set()
+
+  fuzzyMatches.forEach((match) => {
+    fuzzyFigma.add(match.figmaElement)
+    fuzzyWeb.add(match.webElement)
+    issues.push(compareMatchedElements(match.figmaElement, match.webElement, {
+      matchIndex: 0,
+      matchType: 'fuzzy',
+      fuzzyScore: match.score,
+    }))
+  })
+
+  unmatchedFigma
+    .filter((figmaElement) => !fuzzyFigma.has(figmaElement))
+    .forEach((figmaElement) => issues.push(createMissingFigmaIssue(figmaElement)))
+
+  unmatchedWeb
+    .filter((webElement) => !fuzzyWeb.has(webElement))
+    .forEach((webElement) => issues.push(createWebOnlyIssue(webElement)))
+
+  return createComparisonResult(sortIssuesByPriority(issues))
 }
 
 export function normalizeDesignText(value) {
@@ -121,29 +121,85 @@ function getFigmaRoots(source) {
   return [source]
 }
 
-function walkFigmaNode(node, elements) {
+function extractSections(source) {
+  const sectionCandidates = []
+
+  if (Array.isArray(source?.sections)) {
+    sectionCandidates.push(...source.sections)
+  }
+
+  getFigmaRoots(source).forEach((root) => collectSections(root, sectionCandidates))
+
+  return sectionCandidates
+    .map((section, index) => {
+      const bounds = getNodeBounds(section)
+      const name = cleanText(section.name || section.title || section.label || `섹션 ${index + 1}`)
+
+      return {
+        id: getString(section.id) || `section-${index + 1}`,
+        name,
+        layerPath: getLayerPath(section) || name,
+        x: bounds.x,
+        y: bounds.y,
+        width: bounds.width,
+        height: bounds.height,
+        isFooterDisclaimer: isFooterDisclaimerText(`${name} ${getLayerPath(section)}`),
+      }
+    })
+    .filter((section) => section.name)
+}
+
+function collectSections(node, sections) {
+  if (!node || typeof node !== 'object') return
+  if (node.type === 'SECTION' || /section|섹션|footer|푸터|disclaimer|유의|고지|약관/i.test(node.name || '')) {
+    sections.push(node)
+  }
+  if (Array.isArray(node.children)) node.children.forEach((child) => collectSections(child, sections))
+}
+
+function walkFigmaNode(node, elements, context) {
   if (!node || typeof node !== 'object') return
 
-  const element = createFigmaElement(node, elements.length + 1)
+  const name = cleanText(node.name || node.title || '')
+  const layerPath = [...context.layerPath, name || node.type || 'Layer'].filter(Boolean)
+  const nodeSection = getNodeSection(node, context.section)
+  const element = createFigmaElement(node, elements.length + 1, {
+    layerPath: layerPath.join(' / '),
+    section: nodeSection,
+    sections: context.sections,
+  })
+
   if (element) elements.push(element)
 
   if (Array.isArray(node.children)) {
-    node.children.forEach((child) => walkFigmaNode(child, elements))
+    node.children.forEach((child) => walkFigmaNode(child, elements, {
+      ...context,
+      layerPath,
+      section: nodeSection,
+    }))
   }
 }
 
-function createFigmaElement(node, index) {
+function createFigmaElement(node, index, context = {}) {
   const rawText = getFigmaNodeText(node)
   const text = cleanText(rawText)
   if (!text) return null
 
   const style = node.style || {}
-  const bounds = node.absoluteBoundingBox || node.absoluteRenderBounds || node.bounds || {}
+  const bounds = getNodeBounds(node)
+  const matchedSection = context.section || findSectionForBounds(bounds, context.sections)
+  const layerPath = context.layerPath || getLayerPath(node)
+  const sectionName = getString(node.sectionName) || matchedSection?.name || getRegionLabel({ ...node, text, layerPath }, bounds.y)
 
   return {
     index,
     tag: node.type || node.tag || 'FIGMA',
     text,
+    normalizedText: normalizeDesignText(text),
+    layerPath,
+    sectionId: getString(node.sectionId) || matchedSection?.id || sectionName,
+    sectionName,
+    isFooterDisclaimer: Boolean(matchedSection?.isFooterDisclaimer) || isFooterDisclaimerText(`${text} ${layerPath} ${sectionName}`),
     fontFamily: style.fontFamily || node.fontFamily || '',
     fontStyle: style.fontStyle || node.fontStyle || '',
     fontSize: style.fontSize ?? node.fontSize ?? '',
@@ -152,17 +208,54 @@ function createFigmaElement(node, index) {
     letterSpacing: style.letterSpacing ?? node.letterSpacing ?? '',
     color: getFigmaColor(node.fills) || node.color || '',
     opacity: node.opacity ?? '',
-    x: bounds.x ?? node.x ?? '',
-    y: bounds.y ?? node.y ?? '',
-    width: bounds.width ?? node.width ?? '',
-    height: bounds.height ?? node.height ?? '',
-    href: '',
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+    href: node.href || '',
+    positionRatio: toRatio(node.positionRatio),
   }
+}
+
+function getNodeSection(node, fallbackSection) {
+  if (node.type !== 'SECTION') return fallbackSection
+  const bounds = getNodeBounds(node)
+  const name = cleanText(node.name || node.title || 'Section')
+
+  return {
+    id: getString(node.id) || name,
+    name,
+    layerPath: getLayerPath(node) || name,
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+    isFooterDisclaimer: isFooterDisclaimerText(name),
+  }
+}
+
+function getNodeBounds(node) {
+  const bounds = node.absoluteBoundingBox || node.absoluteRenderBounds || node.bounds || node.rect || {}
+
+  return {
+    x: firstNumber(bounds.x, node.x) ?? 0,
+    y: firstNumber(bounds.y, node.y) ?? 0,
+    width: firstNumber(bounds.width, node.width) ?? 0,
+    height: firstNumber(bounds.height, node.height) ?? 0,
+  }
+}
+
+function getLayerPath(node) {
+  if (Array.isArray(node?.layerPath)) return node.layerPath.filter(Boolean).join(' / ')
+  if (typeof node?.layerPath === 'string') return cleanText(node.layerPath)
+  if (Array.isArray(node?.path)) return node.path.filter(Boolean).join(' / ')
+  return cleanText(node?.name || '')
 }
 
 function getFigmaNodeText(node) {
   if (typeof node.characters === 'string') return node.characters
   if (typeof node.text === 'string') return node.text
+  if (typeof node.normalizedText === 'string') return node.normalizedText
   if (typeof node.name === 'string' && (node.type === 'TEXT' || node.fontSize || node.style)) return node.name
   return ''
 }
@@ -182,21 +275,70 @@ function getFigmaColor(fills) {
   return `#${toHex(red)}${toHex(green)}${toHex(blue)}`
 }
 
+function withPositionRatios(elements, sections) {
+  const maxBottom = getMaxBottom([...elements, ...sections]) || 1
+
+  return elements.map((element) => ({
+    ...element,
+    positionRatio: toRatio(element.positionRatio) ?? clampRatio((toNumber(element.y) ?? 0) / maxBottom),
+  }))
+}
+
+function prepareComparableElements(elements, source) {
+  const maxBottom = getMaxBottom(elements) || 1
+
+  return elements
+    .map((element, index) => {
+      const text = cleanText(element.text)
+      if (!text) return null
+
+      const y = firstNumber(element.y) ?? 0
+      const sectionName = getString(element.sectionName) || getRegionLabel(element, y)
+      const layerPath = getLayerPath(element)
+      const isFooterDisclaimer = Boolean(element.isFooterDisclaimer) || isFooterDisclaimerText(`${text} ${layerPath} ${sectionName}`)
+
+      return {
+        ...element,
+        index: element.index || index + 1,
+        source,
+        tag: element.tag || (source === 'figma' ? 'FIGMA' : 'element'),
+        text,
+        normalizedText: normalizeDesignText(text),
+        layerPath,
+        sectionId: getString(element.sectionId) || sectionName,
+        sectionName,
+        isFooterDisclaimer,
+        x: firstNumber(element.x) ?? 0,
+        y,
+        width: firstNumber(element.width) ?? 0,
+        height: firstNumber(element.height) ?? 0,
+        positionRatio: toRatio(element.positionRatio) ?? clampRatio(y / maxBottom),
+      }
+    })
+    .filter(Boolean)
+}
+
 function groupByText(elements) {
   return elements.reduce((groups, element) => {
-    const textKey = normalizeDesignText(element.text)
+    const textKey = element.normalizedText || normalizeDesignText(element.text)
     if (!textKey) return groups
 
     const group = groups.get(textKey) || { text: cleanText(element.text), items: [] }
-    group.items.push({ ...element, text: cleanText(element.text) })
+    group.items.push(element)
     groups.set(textKey, group)
     return groups
   }, new Map())
 }
 
-function compareMatchedElements(figmaElement, webElement, matchIndex) {
+function compareMatchedElements(figmaElement, webElement, options = {}) {
   const differences = []
   const styleLabels = []
+  const matchType = options.matchType || 'exact'
+
+  if (matchType === 'fuzzy') {
+    differences.push(createDifference('text', '유사 문구 확인', `정확히 일치하지 않지만 ${Math.round((options.fuzzyScore || 0) * 100)}% 유사합니다. 문구 의도를 확인하세요.`))
+  }
+
   const figmaFontSize = toNumber(figmaElement.fontSize)
   const webFontSize = toNumber(webElement.fontSize)
 
@@ -223,20 +365,21 @@ function compareMatchedElements(figmaElement, webElement, matchIndex) {
     differences.push(createDifference('layout', '위치/크기', `Figma (${formatRect(figmaElement)}) / Web (${formatRect(webElement)})`))
   }
 
-  if (isCtaElement(webElement)) {
-    differences.push(createDifference('cta', 'CTA 확인', getCtaDetail(webElement)))
+  if (isCtaElement(figmaElement) || isCtaElement(webElement)) {
+    differences.push(createDifference('cta', 'CTA 확인', getCtaDetail(figmaElement, webElement)))
   }
 
   if (differences.length === 0) {
     return createGroupedIssue({
       status: 'ok',
-      label: matchIndex > 0 ? '반복 요소 일치' : '텍스트와 주요 스타일 일치',
+      label: options.matchIndex > 0 ? '반복 요소 일치' : '텍스트와 주요 스타일 일치',
       text: figmaElement.text,
       detail: '문구, 폰트 크기, 폰트 패밀리, 컬러가 기준 범위 안에 있습니다.',
       categories: [],
       differences: [],
       figmaElement,
       webElement,
+      matchType,
     })
   }
 
@@ -252,24 +395,63 @@ function compareMatchedElements(figmaElement, webElement, matchIndex) {
     differences,
     figmaElement,
     webElement,
+    matchType,
   })
 }
 
-function createGroupedIssue({ status, label, text, detail, categories, differences, figmaElement, webElement }) {
+function createMissingFigmaIssue(figmaElement) {
+  return createGroupedIssue({
+    status: 'error',
+    label: isCtaElement(figmaElement) ? '웹 화면 누락 CTA' : '웹 화면 누락 텍스트',
+    text: figmaElement.text,
+    detail: 'Figma에는 있지만 웹 화면에서 같은 문구를 찾지 못했습니다.',
+    categories: isCtaElement(figmaElement) ? ['text', 'cta'] : ['text'],
+    differences: [createDifference('text', '텍스트 누락', '웹 화면에서 동일 문구를 수집하지 못했습니다.')],
+    figmaElement,
+    webElement: null,
+    matchType: 'missing-web',
+  })
+}
+
+function createWebOnlyIssue(webElement) {
+  return createGroupedIssue({
+    status: 'error',
+    label: isCtaElement(webElement) ? 'Figma 기준에 없는 CTA' : '웹에만 있는 텍스트',
+    text: webElement.text,
+    detail: '웹 화면에는 있지만 Figma JSON에서 같은 문구를 찾지 못했습니다.',
+    categories: isCtaElement(webElement) ? ['text', 'cta'] : ['text'],
+    differences: [createDifference('text', 'Figma 기준 누락', 'Figma JSON에서 동일 문구를 수집하지 못했습니다.')],
+    figmaElement: null,
+    webElement,
+    matchType: 'web-only',
+  })
+}
+
+function createGroupedIssue({ status, label, text, detail, categories, differences, figmaElement, webElement, matchType }) {
   const primaryElement = figmaElement || webElement
   const sort = getSortPosition(figmaElement, webElement)
-  const region = getRegionLabel(primaryElement, sort.y)
+  const sectionName = primaryElement?.sectionName || getRegionLabel(primaryElement, sort.y)
+  const isFooterDisclaimer = Boolean(figmaElement?.isFooterDisclaimer || webElement?.isFooterDisclaimer || isFooterDisclaimerText(`${text} ${sectionName}`))
+  const priority = getIssuePriority({ status, categories, figmaElement, webElement, isFooterDisclaimer })
 
   return {
-    id: `${status}-${label}-${normalizeDesignText(text)}-${sort.y}-${sort.x}-${figmaElement?.index || 'no-figma'}-${webElement?.index || 'no-web'}`,
+    id: `${status}-${label}-${normalizeDesignText(text)}-${sort.y}-${sort.x}-${figmaElement?.index || 'no-figma'}-${webElement?.index || 'no-web'}-${matchType || 'match'}`,
     status,
     label,
     text: text || '텍스트 없음',
+    normalizedText: normalizeDesignText(text),
     detail,
-    region,
+    region: sectionName,
+    sectionId: primaryElement?.sectionId || sectionName,
+    sectionName,
+    isFooterDisclaimer,
+    priority,
+    severity: priority <= 3 && status !== 'ok' ? 'high' : status,
     categories,
     differences,
-    anchor: { x: sort.x, y: sort.y },
+    matchType: matchType || 'exact',
+    layerPath: primaryElement?.layerPath || '',
+    anchor: { x: sort.x, y: sort.y, positionRatio: sort.positionRatio },
     figma: figmaElement ? pickEvidence(figmaElement) : null,
     web: webElement ? pickEvidence(webElement) : null,
   }
@@ -291,20 +473,30 @@ function createComparisonWaitingIssue(webElementCount) {
     differences: [createDifference('text', 'Figma 기준 없음', '비교할 Figma JSON이 아직 없습니다.')],
     figmaElement: null,
     webElement: null,
+    matchType: 'waiting',
   })
 }
 
 function createComparisonResult(issues) {
+  const sortedIssues = sortIssuesByPriority(issues)
+
   return {
-    counts: getDesignCounts(issues),
-    summaryCounts: getSummaryCounts(issues),
-    issues,
+    counts: getDesignCounts(sortedIssues),
+    summaryCounts: getSummaryCounts(sortedIssues),
+    sectionSummaries: getSectionSummaries(sortedIssues),
+    topIssues: sortedIssues.filter((issue) => issue.status !== 'ok').slice(0, TOP_ISSUE_LIMIT),
+    issues: sortedIssues,
   }
 }
 
 function pickEvidence(element) {
   return {
     tag: element.tag,
+    text: element.text,
+    normalizedText: element.normalizedText || normalizeDesignText(element.text),
+    layerPath: element.layerPath,
+    sectionName: element.sectionName,
+    isFooterDisclaimer: Boolean(element.isFooterDisclaimer),
     fontFamily: element.fontFamily,
     fontStyle: element.fontStyle,
     fontSize: element.fontSize,
@@ -318,6 +510,7 @@ function pickEvidence(element) {
     width: element.width,
     height: element.height,
     href: element.href,
+    positionRatio: element.positionRatio,
   }
 }
 
@@ -338,14 +531,54 @@ function getSummaryCounts(issues) {
 
       return {
         total: counts.total + 1,
+        high: counts.high + (issue.severity === 'high' ? 1 : 0),
         text: counts.text + (issue.categories.includes('text') ? 1 : 0),
         style: counts.style + (issue.categories.includes('style') ? 1 : 0),
         layout: counts.layout + (issue.categories.includes('layout') ? 1 : 0),
         cta: counts.cta + (issue.categories.includes('cta') ? 1 : 0),
+        footer: counts.footer + (issue.isFooterDisclaimer ? 1 : 0),
       }
     },
-    { total: 0, text: 0, style: 0, layout: 0, cta: 0 },
+    { total: 0, high: 0, text: 0, style: 0, layout: 0, cta: 0, footer: 0 },
   )
+}
+
+function getSectionSummaries(issues) {
+  const summaries = new Map()
+
+  issues.forEach((issue) => {
+    if (issue.status === 'ok') return
+
+    const key = issue.sectionId || issue.sectionName || '기타 섹션'
+    const summary = summaries.get(key) || {
+      id: key,
+      name: issue.sectionName || key,
+      total: 0,
+      high: 0,
+      text: 0,
+      style: 0,
+      layout: 0,
+      cta: 0,
+      footer: 0,
+      isFooterDisclaimer: Boolean(issue.isFooterDisclaimer),
+    }
+
+    summary.total += 1
+    summary.high += issue.severity === 'high' ? 1 : 0
+    summary.text += issue.categories.includes('text') ? 1 : 0
+    summary.style += issue.categories.includes('style') ? 1 : 0
+    summary.layout += issue.categories.includes('layout') ? 1 : 0
+    summary.cta += issue.categories.includes('cta') ? 1 : 0
+    summary.footer += issue.isFooterDisclaimer ? 1 : 0
+    summary.isFooterDisclaimer = summary.isFooterDisclaimer || issue.isFooterDisclaimer
+    summaries.set(key, summary)
+  })
+
+  return Array.from(summaries.values()).sort((first, second) => {
+    if (first.isFooterDisclaimer !== second.isFooterDisclaimer) return first.isFooterDisclaimer ? 1 : -1
+    if (first.high !== second.high) return second.high - first.high
+    return second.total - first.total
+  })
 }
 
 function hasLayoutDifference(figmaElement, webElement) {
@@ -356,27 +589,51 @@ function hasLayoutDifference(figmaElement, webElement) {
   })
 }
 
-function isCtaElement(webElement) {
-  return webElement.tag === 'a' || webElement.tag === 'button' || Boolean(webElement.href)
+function isCtaElement(element) {
+  if (!element) return false
+  return element.tag === 'a'
+    || element.tag === 'button'
+    || Boolean(element.href)
+    || /\b(button|btn|cta|link)\b|더보기|자세히|신청|구매|상담|가입|예약|문의/i.test(`${element.text || ''} ${element.layerPath || ''}`)
 }
 
-function getCtaDetail(webElement) {
-  if (webElement.href) return `웹 CTA가 ${webElement.href}로 이동합니다. 기획 의도와 맞는지 확인하세요.`
-  return '웹 버튼에 이동 URL이 없습니다. 클릭 액션 기획 확인이 필요합니다.'
+function isCoreText(element) {
+  if (!element || element.isFooterDisclaimer) return false
+  const normalizedText = element.normalizedText || normalizeDesignText(element.text)
+  return normalizedText.length >= MIN_FUZZY_TEXT_LENGTH || isCtaElement(element)
+}
+
+function getCtaDetail(figmaElement, webElement) {
+  const textChanged = figmaElement && webElement && figmaElement.normalizedText !== webElement.normalizedText
+  const hrefDetail = webElement?.href ? `웹 CTA가 ${webElement.href}로 이동합니다.` : '웹 버튼에 이동 URL이 없습니다.'
+  const textDetail = textChanged ? 'Figma와 웹 CTA 문구가 완전히 같지 않습니다.' : 'CTA 문구와 링크 목적지가 기획 의도와 맞는지 확인하세요.'
+  return `${hrefDetail} ${textDetail}`
 }
 
 function getGroupedLabel(categories, styleLabels) {
   const labels = []
+  if (categories.includes('text')) labels.push('텍스트 확인 필요')
   if (categories.includes('style')) labels.push(styleLabels.length > 0 ? `${styleLabels.join('/')} 차이` : '스타일 차이')
   if (categories.includes('layout')) labels.push('위치/크기 확인 필요')
   if (categories.includes('cta')) labels.push('CTA 확인 필요')
   return labels.join(' + ')
 }
 
+function getIssuePriority({ status, categories, figmaElement, webElement, isFooterDisclaimer }) {
+  if (status === 'ok') return 9
+  if (isFooterDisclaimer) return 5
+  if (!webElement && isCoreText(figmaElement)) return 1
+  if (!figmaElement && isCoreText(webElement)) return 2
+  if (categories.includes('cta')) return 3
+  if (categories.includes('style') || categories.includes('layout')) return 4
+  return 6
+}
+
 function getSortPosition(figmaElement, webElement) {
-  const y = firstNumber(figmaElement?.y, webElement?.y)
-  const x = firstNumber(figmaElement?.x, webElement?.x)
-  return { x: x ?? 0, y: y ?? 0 }
+  const y = firstNumber(figmaElement?.y, webElement?.y) ?? 0
+  const x = firstNumber(figmaElement?.x, webElement?.x) ?? 0
+  const positionRatio = firstNumber(figmaElement?.positionRatio, webElement?.positionRatio) ?? 0
+  return { x, y, positionRatio: clampRatio(positionRatio) }
 }
 
 function sortByPosition(elements) {
@@ -388,22 +645,115 @@ function sortByPosition(elements) {
   })
 }
 
-function sortIssuesByPosition(issues) {
+function sortIssuesByPriority(issues) {
   return [...issues].sort((first, second) => {
+    if (first.priority !== second.priority) return first.priority - second.priority
     if (first.anchor.y !== second.anchor.y) return first.anchor.y - second.anchor.y
     return first.anchor.x - second.anchor.x
   })
 }
 
+function createFuzzyMatches(figmaElements, webElements) {
+  const candidates = []
+
+  figmaElements.forEach((figmaElement) => {
+    if (!canFuzzyMatch(figmaElement)) return
+
+    webElements.forEach((webElement) => {
+      if (!canFuzzyMatch(webElement)) return
+      const score = getTextSimilarity(figmaElement.normalizedText, webElement.normalizedText)
+      if (score >= FUZZY_MATCH_THRESHOLD) candidates.push({ figmaElement, webElement, score })
+    })
+  })
+
+  const usedFigma = new Set()
+  const usedWeb = new Set()
+  const matches = []
+
+  candidates
+    .sort((first, second) => second.score - first.score)
+    .forEach((candidate) => {
+      if (usedFigma.has(candidate.figmaElement) || usedWeb.has(candidate.webElement)) return
+      usedFigma.add(candidate.figmaElement)
+      usedWeb.add(candidate.webElement)
+      matches.push(candidate)
+    })
+
+  return matches
+}
+
+function canFuzzyMatch(element) {
+  const normalizedText = element.normalizedText || normalizeDesignText(element.text)
+  return normalizedText.length >= MIN_FUZZY_TEXT_LENGTH
+}
+
+function getTextSimilarity(firstText, secondText) {
+  if (!firstText || !secondText) return 0
+  if (firstText === secondText) return 1
+
+  const maxLength = Math.max(firstText.length, secondText.length)
+  if (maxLength === 0) return 1
+  return 1 - (getEditDistance(firstText, secondText) / maxLength)
+}
+
+function getEditDistance(firstText, secondText) {
+  const previous = Array.from({ length: secondText.length + 1 }, (_, index) => index)
+
+  for (let firstIndex = 1; firstIndex <= firstText.length; firstIndex += 1) {
+    let previousDiagonal = previous[0]
+    previous[0] = firstIndex
+
+    for (let secondIndex = 1; secondIndex <= secondText.length; secondIndex += 1) {
+      const substitutionCost = firstText[firstIndex - 1] === secondText[secondIndex - 1] ? 0 : 1
+      const nextDiagonal = previous[secondIndex]
+      previous[secondIndex] = Math.min(
+        previous[secondIndex] + 1,
+        previous[secondIndex - 1] + 1,
+        previousDiagonal + substitutionCost,
+      )
+      previousDiagonal = nextDiagonal
+    }
+  }
+
+  return previous[secondText.length]
+}
+
 function getRegionLabel(element, y) {
   const text = cleanText(element?.text || '')
-  if (/hero|kv|히어로|키비주얼/i.test(text)) return 'Hero/KV'
-  if (/footer|푸터|disclaimer|유의|고지|약관/i.test(text)) return 'Footer/Disclaimer'
-  const sectionMatch = text.match(/(?:section|섹션)\s*([\w가-힣-]+)/i)
+  const layerPath = cleanText(element?.layerPath || '')
+  const searchableText = `${text} ${layerPath}`
+
+  if (/hero|kv|히어로|키비주얼/i.test(searchableText)) return 'Hero/KV'
+  if (isFooterDisclaimerText(searchableText)) return 'Footer/Disclaimer'
+  const sectionMatch = searchableText.match(/(?:section|섹션)\s*([\w가-힣-]+)/i)
   if (sectionMatch) return `섹션 ${sectionMatch[1]}`
   if (y < 700) return 'Hero/KV'
   if (y < 1800) return 'Content Section'
   return 'Footer/Disclaimer'
+}
+
+function findSectionForBounds(bounds, sections = []) {
+  if (!Array.isArray(sections) || sections.length === 0) return null
+
+  return sections.find((section) => {
+    if (!section.width || !section.height) return false
+    const insideX = bounds.x >= section.x && bounds.x <= section.x + section.width
+    const insideY = bounds.y >= section.y && bounds.y <= section.y + section.height
+    return insideX && insideY
+  }) || null
+}
+
+function isFooterDisclaimerText(value) {
+  return /footer|푸터|disclaimer|유의|고지|약관|저작권|copyright|주의|안내사항|면책/i.test(value || '')
+}
+
+function getMaxBottom(elements) {
+  return elements.reduce((maxBottom, element) => {
+    const y = toNumber(element?.y)
+    const height = toNumber(element?.height)
+    if (y === null) return maxBottom
+    return Math.max(maxBottom, y + (height ?? 0))
+  }, 0)
 }
 
 function cleanText(value) {
@@ -442,6 +792,20 @@ function toNumber(value) {
   if (value === '' || value === null || value === undefined) return null
   const number = Number.parseFloat(String(value))
   return Number.isFinite(number) ? number : null
+}
+
+function toRatio(value) {
+  const number = toNumber(value)
+  if (number === null) return null
+  return clampRatio(number > 1 ? number / 100 : number)
+}
+
+function clampRatio(value) {
+  return Math.max(0, Math.min(1, Number(value) || 0))
+}
+
+function getString(value) {
+  return typeof value === 'string' ? cleanText(value) : ''
 }
 
 function toRgbChannel(value) {

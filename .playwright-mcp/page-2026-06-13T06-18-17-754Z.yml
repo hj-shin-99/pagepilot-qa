@@ -1,0 +1,30 @@
+- main [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]: PagePilot QA
+    - heading "PagePilot QA v2" [level=1] [ref=e7]
+    - paragraph [ref=e8]: URL, Figma JSON, 시안 이미지를 한 화면에서 준비하고 로컬 Playwright 결과와 비교합니다.
+    - generic [ref=e9]:
+      - generic [ref=e10]: 테스트 URL
+      - textbox "테스트 URL" [ref=e11]:
+        - /placeholder: https://staging.example.com/page
+      - button "검사 시작" [ref=e12] [cursor=pointer]
+    - region "Figma JSON 입력" [ref=e13]:
+      - generic [ref=e14]:
+        - heading "Figma JSON" [level=3] [ref=e15]
+        - generic [ref=e16]: 붙여넣기 또는 .json
+      - 'textbox "{\"document\":{\"children\":[...]}}" [ref=e17]'
+      - generic [ref=e18] [cursor=pointer]: JSON 파일 선택
+    - region "Figma 시안 이미지 입력" [ref=e19]:
+      - generic [ref=e20]:
+        - heading "Figma 시안 이미지" [level=3] [ref=e21]
+        - generic [ref=e22]: 0개
+      - generic [ref=e23] [cursor=pointer]: 시안 이미지 여러 장 선택
+  - generic [ref=e24]:
+    - navigation "QA 결과 탭" [ref=e25]:
+      - button "Tech QA" [pressed] [ref=e26] [cursor=pointer]
+      - button "시안 비교 QA" [ref=e27] [cursor=pointer]
+      - button "History" [ref=e28] [cursor=pointer]
+    - generic [ref=e30]:
+      - paragraph [ref=e35]: 검사 전
+      - heading "테스트 URL을 입력하고 검사를 시작하세요." [level=2] [ref=e36]
+      - paragraph [ref=e37]: 로컬 API 서버가 입력 URL에만 접속하며, 결과는 저장하지 않습니다.

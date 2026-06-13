@@ -13,12 +13,6 @@ import MockupQaPanel from './components/MockupQaPanel'
 import SummaryCards from './components/SummaryCards'
 import WorkspaceTabs from './components/WorkspaceTabs'
 
-const MAX_HISTORY_IMAGES = 50
-const MAX_HISTORY_CONSOLE_MESSAGES = 50
-const MAX_HISTORY_MISSING_HREFS = 50
-const MAX_HISTORY_FIGMA_ELEMENTS = 120
-const MAX_HISTORY_DESIGN_ELEMENTS = 120
-
 function isValidHttpUrl(value) {
   try {
     const url = new URL(value)
@@ -120,10 +114,15 @@ function App() {
 
   const handleRestoreHistory = (item) => {
     setUrl(item.url)
+    if (!item.result) {
+      setActiveTab('history')
+      return
+    }
+
     setResult(item.result)
-    setFigmaJson(item.inputs?.figmaJson || '')
-    setFigmaElements(item.inputs?.figmaElements || [])
-    setDesignImages(item.inputs?.designImages || [])
+    setFigmaJson('')
+    setFigmaElements([])
+    setDesignImages([])
     setScanState('complete')
     setInputError('')
     setFigmaError('')
@@ -231,68 +230,38 @@ function App() {
 function createHistoryItem(result, figmaElements, designImages) {
   const techCounts = getStatusCounts(result.checks)
   const designQa = compareDesignElements(figmaElements, result.designElements || [])
+  const techIssueCount = techCounts.error + techCounts.warn
   const counts = {
-    normal: techCounts.ok + designQa.counts.ok,
-    error: techCounts.error + designQa.counts.error,
-    warn: techCounts.warn + designQa.counts.warn,
+    total: techIssueCount + designQa.summaryCounts.total,
+    high: techCounts.error + designQa.summaryCounts.high,
+    text: designQa.summaryCounts.text,
+    style: designQa.summaryCounts.style,
+    layout: designQa.summaryCounts.layout,
+    cta: designQa.summaryCounts.cta,
+    footer: designQa.summaryCounts.footer,
+    techError: techCounts.error,
+    techWarn: techCounts.warn,
   }
 
   return {
     id: `${result.scannedAt}-${result.targetUrl}`,
     url: result.targetUrl,
     scannedAt: result.scannedAt,
+    totalIssueCount: counts.total,
     counts,
-    issueSummary: createIssueSummary(result, designQa),
-    result: createHistoryResult(result),
-    inputs: {
-      figmaJson: '',
-      figmaElements: figmaElements.slice(0, MAX_HISTORY_FIGMA_ELEMENTS),
-      designImages: designImages.map(createHistoryImageMetadata),
-    },
+    topIssueSummaries: createTopIssueSummaries(result, designQa),
+    designImageFilenames: designImages.map((image) => image.name).filter(Boolean),
   }
 }
 
-function createHistoryResult(result) {
-  return {
-    ...result,
-    missingHrefLinks: result.missingHrefLinks.slice(0, MAX_HISTORY_MISSING_HREFS),
-    images: result.images.slice(0, MAX_HISTORY_IMAGES),
-    consoleMessages: result.consoleMessages.slice(0, MAX_HISTORY_CONSOLE_MESSAGES),
-    designElements: (result.designElements || []).slice(0, MAX_HISTORY_DESIGN_ELEMENTS),
-    webScreenshot: createHistoryScreenshotMetadata(result.webScreenshot),
-  }
-}
+function createTopIssueSummaries(result, designQa) {
+  const designSummaries = designQa.topIssues.map((issue) => `${issue.sectionName}: ${issue.label}`)
+  const techSummaries = result.checks
+    .filter((check) => check.status !== 'ok')
+    .map((check) => `Tech QA: ${check.title}`)
+  const summaries = [...designSummaries, ...techSummaries].slice(0, 3)
 
-function createHistoryScreenshotMetadata(webScreenshot) {
-  if (!webScreenshot || typeof webScreenshot !== 'object') return null
-
-  return {
-    mediaType: webScreenshot.mediaType || 'image/png',
-    width: webScreenshot.width || 0,
-    height: webScreenshot.height || 0,
-    viewport: webScreenshot.viewport || null,
-    fullPage: Boolean(webScreenshot.fullPage),
-    capturedAt: webScreenshot.capturedAt || '',
-    error: webScreenshot.error || '',
-  }
-}
-
-function createHistoryImageMetadata(image) {
-  return {
-    id: image.id,
-    name: image.name,
-    size: image.size,
-  }
-}
-
-function createIssueSummary(result, designQa) {
-  const techIssue = result.checks.find((check) => check.status !== 'ok')
-  const designIssue = designQa.issues.find((issue) => issue.status !== 'ok')
-
-  if (techIssue && designIssue) return `${techIssue.title} · ${designIssue.label}`
-  if (techIssue) return techIssue.title
-  if (designIssue) return designIssue.label
-  return 'Tech QA와 시안 비교 QA 주요 항목 정상'
+  return summaries.length > 0 ? summaries : ['Tech QA와 시안 비교 QA 주요 항목 정상']
 }
 
 function readFileAsText(file) {

@@ -5,13 +5,12 @@ import { compareDesignElements, parseFigmaJsonInput } from './utils/designQa'
 import { loadHistoryItems, saveHistoryItem } from './utils/history'
 import AuditHeader from './components/AuditHeader'
 import CheckList from './components/CheckList'
-import DesignQaPanel from './components/DesignQaPanel'
 import DetailPanel from './components/DetailPanel'
 import EmptyState from './components/EmptyState'
 import HistoryPanel from './components/HistoryPanel'
 import InputPanel from './components/InputPanel'
+import MockupQaPanel from './components/MockupQaPanel'
 import SummaryCards from './components/SummaryCards'
-import VisualQaPanel from './components/VisualQaPanel'
 import WorkspaceTabs from './components/WorkspaceTabs'
 
 const MAX_HISTORY_IMAGES = 50
@@ -111,6 +110,7 @@ function App() {
 
       setResult(payload)
       setScanState('complete')
+      setActiveTab('mockup')
       setHistoryItems(saveHistoryItem(createHistoryItem(payload, figmaElements, designImages)))
     } catch (error) {
       setScanError(error instanceof Error ? error.message : '검사 중 오류가 발생했습니다.')
@@ -129,7 +129,7 @@ function App() {
     setFigmaError('')
     setScanError('')
     setCopyStatus('')
-    setActiveTab('tech')
+    setActiveTab('mockup')
   }
 
   const handleCopyReport = async () => {
@@ -210,11 +210,14 @@ function App() {
                 <DetailPanel result={result} />
               </>
             ) : null}
-            {activeTab === 'design' ? (
-              <DesignQaPanel designQa={designQa} figmaElements={figmaElements} webElements={webElements} />
-            ) : null}
-            {activeTab === 'visual' ? (
-              <VisualQaPanel designImages={designImages} result={result} />
+            {activeTab === 'mockup' ? (
+              <MockupQaPanel
+                designImages={designImages}
+                designQa={designQa}
+                figmaElements={figmaElements}
+                result={result}
+                webElements={webElements}
+              />
             ) : null}
           </>
         ) : (
@@ -256,6 +259,21 @@ function createHistoryResult(result) {
     images: result.images.slice(0, MAX_HISTORY_IMAGES),
     consoleMessages: result.consoleMessages.slice(0, MAX_HISTORY_CONSOLE_MESSAGES),
     designElements: (result.designElements || []).slice(0, MAX_HISTORY_DESIGN_ELEMENTS),
+    webScreenshot: createHistoryScreenshotMetadata(result.webScreenshot),
+  }
+}
+
+function createHistoryScreenshotMetadata(webScreenshot) {
+  if (!webScreenshot || typeof webScreenshot !== 'object') return null
+
+  return {
+    mediaType: webScreenshot.mediaType || 'image/png',
+    width: webScreenshot.width || 0,
+    height: webScreenshot.height || 0,
+    viewport: webScreenshot.viewport || null,
+    fullPage: Boolean(webScreenshot.fullPage),
+    capturedAt: webScreenshot.capturedAt || '',
+    error: webScreenshot.error || '',
   }
 }
 
@@ -274,7 +292,7 @@ function createIssueSummary(result, designQa) {
   if (techIssue && designIssue) return `${techIssue.title} · ${designIssue.label}`
   if (techIssue) return techIssue.title
   if (designIssue) return designIssue.label
-  return 'Tech QA와 Design QA 주요 항목 정상'
+  return 'Tech QA와 시안 비교 QA 주요 항목 정상'
 }
 
 function readFileAsText(file) {

@@ -14,6 +14,7 @@ function HistoryPanel({ historyItems, onRestoreHistory }) {
             <button type="button" onClick={() => onRestoreHistory(item)}>
               <span className="history-url">{item.url}</span>
               <span className="history-meta">{formatScanTime(item.scannedAt)} · 정상 {item.counts.normal} · 오류 {item.counts.error} · 확인 {item.counts.warn}</span>
+              <span className="history-meta">시안 이미지: {formatDesignImageNames(item.inputs?.designImages)}</span>
               <span className="history-summary">{item.issueSummary}</span>
             </button>
             <div className="history-statuses" aria-label="히스토리 상태 요약">
@@ -24,6 +25,11 @@ function HistoryPanel({ historyItems, onRestoreHistory }) {
       </ul>
     </section>
   )
+}
+
+function formatDesignImageNames(designImages = []) {
+  if (designImages.length === 0) return '없음'
+  return designImages.map((image) => image.name).filter(Boolean).join(', ')
 }
 
 export default HistoryPanel

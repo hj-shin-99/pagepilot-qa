@@ -25,7 +25,7 @@ function InputPanel({
 
       <h1>PagePilot QA v2</h1>
       <p className="lead-text">
-        URL, Figma JSON, 디자인 이미지를 한 화면에서 준비하고 로컬 Playwright 결과와 비교합니다.
+        URL, Figma JSON, 시안 이미지를 한 화면에서 준비하고 로컬 Playwright 결과와 비교합니다.
       </p>
 
       <form className="scan-form" onSubmit={handleSubmit}>
@@ -65,13 +65,13 @@ function InputPanel({
         {figmaError ? <p className="input-error">{figmaError}</p> : null}
       </section>
 
-      <section className="panel-section" aria-label="Visual QA 디자인 이미지 입력">
+      <section className="panel-section" aria-label="Figma 시안 이미지 입력">
         <div className="section-title-row compact-title-row">
-          <h3>Visual QA 이미지</h3>
+          <h3>Figma 시안 이미지</h3>
           <span>{designImages.length}개</span>
         </div>
         <label className="file-drop-label" htmlFor="design-image-files">
-          이미지 여러 장 선택
+          시안 이미지 여러 장 선택
           <input id="design-image-files" type="file" accept="image/*" multiple onChange={onDesignImagesSelect} />
         </label>
         {designImages.length > 0 ? (

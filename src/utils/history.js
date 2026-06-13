@@ -72,6 +72,7 @@ function sanitizeResult(result) {
     missingHrefLinks: getArray(result.missingHrefLinks).slice(0, MAX_HISTORY_MISSING_HREFS),
     images: getArray(result.images).slice(0, MAX_HISTORY_IMAGES),
     designElements: getArray(result.designElements).slice(0, MAX_HISTORY_DESIGN_ELEMENTS),
+    webScreenshot: sanitizeWebScreenshot(result.webScreenshot),
     consoleMessages: getArray(result.consoleMessages).slice(0, MAX_HISTORY_CONSOLE_MESSAGES),
     counts: sanitizeDomCounts(result.counts),
     mobile: sanitizeMobile(result.mobile),
@@ -96,6 +97,29 @@ function sanitizeImageMetadata(image, index) {
     id: getString(image.id) || `${name}-${index}`,
     name,
     size: getNumber(image.size),
+  }
+}
+
+function sanitizeWebScreenshot(webScreenshot) {
+  const safeScreenshot = webScreenshot && typeof webScreenshot === 'object' ? webScreenshot : {}
+
+  return {
+    mediaType: getString(safeScreenshot.mediaType) || 'image/png',
+    width: getNumber(safeScreenshot.width),
+    height: getNumber(safeScreenshot.height),
+    viewport: sanitizeViewport(safeScreenshot.viewport),
+    fullPage: Boolean(safeScreenshot.fullPage),
+    capturedAt: getValidDate(safeScreenshot.capturedAt),
+    error: getString(safeScreenshot.error),
+  }
+}
+
+function sanitizeViewport(viewport) {
+  const safeViewport = viewport && typeof viewport === 'object' ? viewport : {}
+
+  return {
+    width: getNumber(safeViewport.width) || 1366,
+    height: getNumber(safeViewport.height) || 900,
   }
 }
 

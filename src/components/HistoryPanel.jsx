@@ -14,7 +14,7 @@ function HistoryPanel({ historyItems, onRestoreHistory }) {
             <button type="button" onClick={() => onRestoreHistory(item)}>
               <span className="history-url">{item.url}</span>
               <span className="history-meta">
-                {formatScanTime(item.scannedAt)} · 전체 {item.totalIssueCount} · High {item.counts.high} · 텍스트 {item.counts.text} · 스타일 {item.counts.style} · 위치 {item.counts.layout} · CTA {item.counts.cta}
+                {formatScanTime(item.scannedAt)} · 전체 {item.totalIssueCount} · 확인 필요 {item.counts.high} · 문구 확인 {item.counts.text} · 디자인 확인 {item.counts.style + item.counts.layout} · 버튼 확인 {item.counts.cta}
               </span>
               <span className="history-meta">시안 이미지 파일명: {formatDesignImageNames(item.designImageFilenames)}</span>
               <span className="history-summary-list">

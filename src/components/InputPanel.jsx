@@ -9,6 +9,7 @@ function InputPanel({
   onFigmaTextChange,
   onFigmaFileSelect,
   onDesignImagesSelect,
+  onDesignImageDelete,
   onStartScan,
 }) {
   const handleSubmit = (event) => {
@@ -67,25 +68,26 @@ function InputPanel({
 
       <section className="panel-section" aria-label="Figma 시안 이미지 입력">
         <div className="section-title-row compact-title-row">
-          <h3>Figma 시안 이미지</h3>
-          <span>{designImages.length}개</span>
+          <h3>Figma 시안</h3>
+          <span>{designImages[0]?.name || '미선택'}</span>
         </div>
         <label className="file-drop-label" htmlFor="design-image-files">
-          시안 이미지 여러 장 선택
-          <input id="design-image-files" type="file" accept="image/*" multiple onChange={onDesignImagesSelect} />
+          시안 선택
+          <input id="design-image-files" type="file" accept="image/*" onChange={onDesignImagesSelect} />
         </label>
         {designImages.length > 0 ? (
-          <div className="image-preview-grid">
-            {designImages.map((image) => (
-              <figure className="image-preview-card" key={image.id}>
-                {image.previewUrl ? (
-                  <img src={image.previewUrl} alt={`${image.name} preview`} />
-                ) : (
-                  <div className="image-preview-placeholder">미리보기 없음</div>
-                )}
-                <figcaption>{image.name}</figcaption>
-              </figure>
-            ))}
+          <div className="single-design-preview">
+            <figure className="image-preview-card">
+              {designImages[0].previewUrl ? (
+                <img src={designImages[0].previewUrl} alt={`${designImages[0].name} preview`} />
+              ) : (
+                <div className="image-preview-placeholder">미리보기 없음</div>
+              )}
+              <figcaption>{designImages[0].name}</figcaption>
+            </figure>
+            <button className="secondary-button design-delete-button" type="button" onClick={onDesignImageDelete}>
+              시안 삭제
+            </button>
           </div>
         ) : null}
       </section>

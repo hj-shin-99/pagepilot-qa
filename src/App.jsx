@@ -61,16 +61,21 @@ function App() {
   }
 
   const handleDesignImagesSelect = async (event) => {
-    const files = Array.from(event.target.files || [])
-    if (files.length === 0) return
+    const file = event.target.files?.[0]
+    if (!file) return
 
-    const images = await Promise.all(files.map(async (file) => ({
+    const image = {
       id: `${file.name}-${file.size}-${file.lastModified}`,
       name: file.name,
       size: file.size,
       previewUrl: await readFileAsDataUrl(file),
-    })))
-    setDesignImages(images)
+    }
+    setDesignImages([image])
+    event.target.value = ''
+  }
+
+  const handleDesignImageDelete = () => {
+    setDesignImages([])
   }
 
   const handleStartScan = async () => {
@@ -183,6 +188,7 @@ function App() {
         isScanning={isScanning}
         url={url}
         onDesignImagesSelect={handleDesignImagesSelect}
+        onDesignImageDelete={handleDesignImageDelete}
         onFigmaFileSelect={handleFigmaFileSelect}
         onFigmaTextChange={handleFigmaTextChange}
         onStartScan={handleStartScan}

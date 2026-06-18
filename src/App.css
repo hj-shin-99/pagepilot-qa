@@ -230,6 +230,22 @@
   white-space: nowrap;
 }
 
+.single-design-preview {
+  display: grid;
+  gap: 10px;
+}
+
+.single-design-preview .image-preview-card img,
+.single-design-preview .image-preview-placeholder {
+  height: 120px;
+}
+
+.design-delete-button {
+  width: 100%;
+  color: #0f172a;
+  background: #e2e8f0;
+}
+
 .workspace-tabs {
   display: inline-flex;
   gap: 6px;
@@ -670,6 +686,46 @@
   gap: 16px;
 }
 
+.mockup-hero-card {
+  gap: 12px;
+}
+
+.mockup-simple-summary {
+  display: grid;
+  gap: 6px;
+  padding: 16px;
+  border: 1px solid var(--info-line);
+  border-radius: 16px;
+  background: var(--info-bg);
+}
+
+.mockup-simple-summary strong {
+  color: var(--ink);
+  font-size: clamp(20px, 2vw, 28px);
+  letter-spacing: -0.03em;
+}
+
+.mockup-simple-summary span {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.mockup-summary-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mockup-summary-pills span {
+  border-radius: 999px;
+  padding: 7px 10px;
+  color: var(--muted);
+  background: var(--surface);
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .mockup-metrics {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   margin: 0;
@@ -720,14 +776,22 @@
 
 .comparison-image-frame {
   position: relative;
-  min-height: 420px;
-  max-height: 680px;
+  min-height: 460px;
+  max-height: min(72vh, 760px);
   overflow: auto;
   border: 1px solid #e5edf6;
   border-radius: 18px;
   background: var(--surface);
   outline: none;
   scroll-behavior: smooth;
+}
+
+.comparison-image-stage {
+  position: relative;
+  width: 100%;
+  max-width: 960px;
+  min-height: 100%;
+  margin: 0 auto;
 }
 
 .comparison-image-frame:focus-visible {
@@ -742,9 +806,15 @@
   left: 0;
   width: 100%;
   height: 0;
-  border-top: 2px solid var(--accent);
-  box-shadow: 0 0 0 4px var(--focus-line);
+  border-top: 2px dashed rgba(14, 165, 233, 0.8);
+  opacity: 0.72;
   pointer-events: none;
+}
+
+.comparison-highlight-line.is-active {
+  border-top-style: solid;
+  opacity: 1;
+  box-shadow: 0 0 0 4px var(--focus-line);
 }
 
 .comparison-marker-badge {
@@ -767,7 +837,9 @@
 .comparison-image-frame img {
   display: block;
   width: 100%;
+  max-width: 100%;
   height: auto;
+  object-fit: contain;
 }
 
 .comparison-placeholder {
@@ -873,6 +945,10 @@
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.mockup-top-list {
+  gap: 12px;
 }
 
 .mockup-report-card {
@@ -1073,6 +1149,25 @@
   font-weight: 800;
   line-height: 1.55;
   overflow-wrap: anywhere;
+}
+
+.mockup-location-action {
+  display: inline-flex;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 8px 12px;
+  color: #07111f;
+  background: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.mockup-footer-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.6;
 }
 
 .mockup-issue-text {

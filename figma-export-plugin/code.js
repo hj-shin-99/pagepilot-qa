@@ -50,27 +50,32 @@ var CTA_TEXT_PATTERNS = [
 var IMAGE_KEYWORDS = [
   'image',
   'img',
-  'icon',
   'photo',
   'picture',
   'thumbnail',
-  'avatar',
-  'logo',
+  'visual',
+  'kv',
+  'banner',
+  'background',
   '이미지',
   '사진',
-  '아이콘',
-  '로고',
+  '배너',
 ]
 
+var DECORATIVE_LAYER_PATTERNS = /vector|path|shape|rectangle|line|divider|blende|blend|icon\s*frame|icon|arrow|chevron|logo/i
+var BLOCKED_QA_IMAGE_PATTERNS = /blende|blend|vector|icon\s*frame|icon|logo|mask|overlay|path|shape|line|divider|chevron|arrow/i
+var TECHNICAL_LAYER_NAME_PATTERNS = /^(con|bg|img|image\s*\d+|group\s*\d+|frame\s*\d+|content|wrapper|inner-wrapper|btn|button|banner|default\/blend\/left-center)$/i
+var SECTION_NAME_PATTERNS = /main|visual|hero|kv|con|content|section|footer|banner|smart|program|benefit|card|disclaimer|notice|guide|메인|비주얼|상단|본문|콘텐츠|푸터|배너|혜택|카드|유의|안내/i
+var NOTE_TEXT_PATTERNS = /※|disclaimer|footer|유의|고지|약관|저작권|copyright|주의|안내사항|면책/i
+var NAV_TEXT_PATTERNS = /gnb|nav|menu|navigation|header|메뉴|네비|내비|탭/i
+var BUTTON_LAYER_PATTERNS = /button|btn|cta|link-button|basic-button|primary|secondary|버튼/i
+var REAL_BUTTON_TEXT_PATTERNS = /^(프로모션\s*바로가기|구매상담\s*바로가기|바로가기|더\s*알아보기|상담\s*신청|자세히\s*보기|더\s*보기|신청하기|구매하기|문의하기|learn\s*more|read\s*more|view\s*more|contact\s*us|apply\s*now)$/i
+
 var IMAGE_LIKE_TYPES = [
-  'BOOLEAN_OPERATION',
-  'ELLIPSE',
-  'LINE',
-  'POLYGON',
+  'FRAME',
+  'GROUP',
+  'INSTANCE',
   'RECTANGLE',
-  'SLICE',
-  'STAR',
-  'VECTOR',
 ]
 
 var SECTION_LIKE_TYPES = [
@@ -126,10 +131,12 @@ function createPagePilotExport() {
       depth: 0,
       section: null,
       buttonContainer: null,
+      hidden: false,
     }))
   }
 
   sortExportCollections(context)
+  var qaModel = createQaModel(selection, context)
 
   return {
     ok: true,
@@ -164,6 +171,10 @@ function createPagePilotExport() {
       ctaCandidates: context.ctaCandidates,
       imageCandidates: context.imageCandidates,
       sections: context.sections,
+      texts: context.textNodes,
+      ctas: context.ctaCandidates,
+      images: context.imageCandidates,
+      qaModel: qaModel,
     },
   }
 }
@@ -196,11 +207,12 @@ function serializeNode(node, context, traversal) {
     depth: traversal.depth,
     section: traversal.section,
     buttonContainer: traversal.buttonContainer,
+    hidden: traversal.hidden || node.visible === false || readNumber(node.opacity, 1) < 0.1,
   }
   var baseNode = createBaseNode(node, currentTraversal)
   var currentSection = currentTraversal.section
 
-  if ((currentTraversal.depth === 1 && isSectionCandidate(node)) || isSelectedSectionRoot(node, currentTraversal)) {
+  if (isSectionCandidate(node, currentTraversal) || isSelectedSectionRoot(node, currentTraversal)) {
     currentSection = createSection(node, baseNode)
     context.sections.push(currentSection)
     currentTraversal.section = currentSection
@@ -254,6 +266,7 @@ function serializeNode(node, context, traversal) {
         depth: currentTraversal.depth + 1,
         section: currentSection,
         buttonContainer: currentTraversal.buttonContainer,
+        hidden: currentTraversal.hidden,
       }))
     }
   }
@@ -268,7 +281,7 @@ function createBaseNode(node, traversal) {
     id: node.id,
     name: node.name || '',
     type: node.type,
-    visible: node.visible !== false,
+    visible: traversal.hidden ? false : node.visible !== false,
     opacity: roundNumber(readNumber(node.opacity, 1)),
     x: box.x,
     y: box.y,
@@ -456,6 +469,542 @@ function sortExportCollections(context) {
   }
 }
 
+function createQaModel(selection, context) {
+  var pageBox = getSelectionBox(selection)
+  var qaSections = createQaSections(context.sections, pageBox)
+  var qaTexts = []
+  var qaButtons = []
+  var qaImages = []
+
+  for (var textIndex = 0; textIndex < context.textNodes.length; textIndex += 1) {
+    var qaText = createQaText(context.textNodes[textIndex], qaSections)
+    if (qaText) {
+      qaTexts.push(qaText)
+    }
+  }
+
+  for (var ctaIndex = 0; ctaIndex < context.ctaCandidates.length; ctaIndex += 1) {
+    var qaButton = createQaButton(context.ctaCandidates[ctaIndex], qaSections)
+    if (qaButton) {
+      qaButtons.push(qaButton)
+    }
+  }
+
+  for (var imageIndex = 0; imageIndex < context.imageCandidates.length; imageIndex += 1) {
+    var qaImage = createQaImage(context.imageCandidates[imageIndex], qaSections, pageBox)
+    if (qaImage) {
+      qaImages.push(qaImage)
+    }
+  }
+
+  dedupeQaTexts(qaTexts)
+  dedupeQaButtons(qaButtons)
+  qaImages = refineQaImages(qaImages, pageBox)
+  sortByPosition(qaTexts)
+  sortByPosition(qaButtons)
+  sortByPosition(qaImages)
+
+  for (var sectionIndex = 0; sectionIndex < qaSections.length; sectionIndex += 1) {
+    var section = qaSections[sectionIndex]
+    section.texts = filterItemsInSection(qaTexts, section)
+    section.buttons = filterItemsInSection(qaButtons, section)
+    section.keyImages = filterItemsInSection(qaImages, section)
+  }
+
+  return {
+    page: {
+      name: selection.length === 1 ? selection[0].name || figma.currentPage.name : figma.currentPage.name,
+      width: pageBox.width,
+      height: pageBox.height,
+    },
+    sections: qaSections,
+    texts: qaTexts,
+    buttons: qaButtons,
+    keyImages: qaImages,
+  }
+}
+
+function getSelectionBox(selection) {
+  if (!selection || selection.length === 0) {
+    return { x: 0, y: 0, width: 1920, height: 1 }
+  }
+
+  var minX = Infinity
+  var minY = Infinity
+  var maxX = -Infinity
+  var maxY = -Infinity
+
+  for (var index = 0; index < selection.length; index += 1) {
+    var box = getAbsoluteBoundingBox(selection[index])
+    minX = Math.min(minX, box.x)
+    minY = Math.min(minY, box.y)
+    maxX = Math.max(maxX, box.x + box.width)
+    maxY = Math.max(maxY, box.y + box.height)
+  }
+
+  return {
+    x: roundNumber(minX === Infinity ? 0 : minX),
+    y: roundNumber(minY === Infinity ? 0 : minY),
+    width: roundNumber(Math.max(1, maxX - minX)),
+    height: roundNumber(Math.max(1, maxY - minY)),
+  }
+}
+
+function createQaSections(sections, pageBox) {
+  var candidates = []
+
+  for (var index = 0; index < sections.length; index += 1) {
+    var section = sections[index]
+    if (!isUsefulQaSection(section, pageBox)) {
+      continue
+    }
+
+    candidates.push({
+      id: section.id,
+      label: getQaSectionLabel(section, pageBox, candidates.length + 1),
+      qaLabel: getQaSectionLabel(section, pageBox, candidates.length + 1),
+      sourceName: section.name || '',
+      order: 0,
+      x: section.x,
+      y: section.y,
+      width: section.width,
+      height: section.height,
+      layerPath: Array.isArray(section.layerPath) ? section.layerPath.slice(0) : [],
+      positionRatio: createPositionRatio(section, pageBox),
+      texts: [],
+      buttons: [],
+      keyImages: [],
+    })
+  }
+
+  sortByPosition(candidates)
+  dedupeQaSections(candidates)
+
+  for (var orderIndex = 0; orderIndex < candidates.length; orderIndex += 1) {
+    candidates[orderIndex].order = orderIndex + 1
+    candidates[orderIndex].label = getQaSectionLabel(candidates[orderIndex], pageBox, orderIndex + 1)
+    candidates[orderIndex].qaLabel = candidates[orderIndex].label
+  }
+
+  return candidates
+}
+
+function isUsefulQaSection(section, pageBox) {
+  if (!section || section.width <= 0 || section.height < 180) {
+    return false
+  }
+
+  var name = section.sourceName || section.name || ''
+  if (isTechnicalLayerName(name) && !hasSemanticSectionName(name)) {
+    return false
+  }
+
+  var widthRatio = pageBox.width > 0 ? section.width / pageBox.width : 0
+  return (section.height >= 250 && widthRatio >= 0.5) || hasSemanticSectionName(name) || SECTION_NAME_PATTERNS.test(name)
+}
+
+function getQaSectionLabel(section, pageBox, order) {
+  var searchableName = String((section.sourceName || section.name || '') + ' ' + getLayerPathText(section.layerPath)).toLowerCase()
+  var yRatio = pageBox.height > 0 ? (section.y - pageBox.y) / pageBox.height : 0
+
+  if (/footer|disclaimer|유의|고지|약관|푸터|풋터/i.test(searchableName) || yRatio >= 0.9) return '푸터/디스클레이머'
+  if (/하단\s*배너|bottom\s*banner/.test(searchableName)) return '하단 배너 영역'
+  if (/구비|서류|document|03[_\s-]*서류/.test(searchableName)) return '구비서류 영역'
+  if (/종류|type|program\s*type|프로그램\s*종류|02[_\s-]*프로그램/.test(searchableName)) return '상품 종류 영역'
+  if (/개요|overview|smart|program|프로그램|01[_\s-]*bmw/.test(searchableName)) return '상품 개요 영역'
+  if (/main|visual|hero|kv|메인|비주얼|상단/.test(searchableName) || yRatio <= 0.16) return 'Hero/KV 영역'
+  if (/banner|notice|guide|안내/.test(searchableName) || yRatio >= 0.78) return '하단 배너 영역'
+  if (yRatio < 0.42) return '상품 개요 영역'
+  if (yRatio < 0.64) return '상품 종류 영역'
+  if (yRatio < 0.78) return '구비서류 영역'
+  return '하단 배너 영역'
+}
+
+function createQaText(textNode, qaSections) {
+  if (!isUsefulQaText(textNode)) {
+    return null
+  }
+
+  var section = findQaSectionForItem(textNode, qaSections)
+  var importance = getTextImportance(textNode, section)
+
+  return {
+    id: textNode.id,
+    text: textNode.text,
+    characters: textNode.characters,
+    normalizedText: normalizeText(textNode.text),
+    importance: importance,
+    sectionLabel: section ? section.label : getLooseSectionLabel(textNode.positionRatio),
+    sectionId: section ? section.id : '',
+    tag: 'TEXT',
+    fontSize: textNode.fontSize,
+    fontWeight: textNode.fontWeight,
+    x: textNode.x,
+    y: textNode.y,
+    width: textNode.width,
+    height: textNode.height,
+    layerPath: textNode.layerPath,
+    positionRatio: copyPositionRatio(textNode.positionRatio),
+  }
+}
+
+function isUsefulQaText(textNode) {
+  if (!textNode || textNode.visible === false || readNumber(textNode.opacity, 1) < 0.1) return false
+  if (!textNode.text || normalizeText(textNode.text).length < 2) return false
+  if (readNumber(textNode.fontSize, 0) < 10) return false
+  if (isDecorativeLayerPath(textNode.layerPath)) return false
+  return true
+}
+
+function getTextImportance(textNode, section) {
+  var text = textNode.text || ''
+  var pathText = getLayerPathText(textNode.layerPath)
+  var fontSize = readNumber(textNode.fontSize, 0)
+
+  if (NOTE_TEXT_PATTERNS.test(text + ' ' + pathText)) return 'note'
+  if (NAV_TEXT_PATTERNS.test(pathText)) return 'nav'
+  if (isRealButtonText(text) && BUTTON_LAYER_PATTERNS.test(pathText)) return 'button'
+  if (fontSize >= 28) return 'title'
+  if (section && textNode.y <= section.y + Math.max(180, section.height * 0.22) && fontSize >= 20) return 'title'
+  return 'body'
+}
+
+function createQaButton(candidate, qaSections) {
+  if (!candidate || isDecorativeLayerPath(candidate.layerPath)) return null
+  var text = trimText(candidate.text || '')
+  if (!text || normalizeText(text).length < 2) return null
+  if (!isRealQaButtonCandidate(candidate, text)) return null
+
+  var section = findQaSectionForItem(candidate, qaSections)
+  return {
+    id: candidate.id,
+    label: text,
+    text: text,
+    normalizedText: normalizeText(text),
+    sectionLabel: section ? section.label : getLooseSectionLabel(candidate.positionRatio),
+    sectionId: section ? section.id : '',
+    importance: NAV_TEXT_PATTERNS.test(getLayerPathText(candidate.layerPath)) ? 'nav' : isPrimaryButtonText(text) ? 'primary' : 'secondary',
+    tag: 'button',
+    x: candidate.x,
+    y: candidate.y,
+    width: candidate.width,
+    height: candidate.height,
+    layerPath: candidate.layerPath,
+    positionRatio: copyPositionRatio(candidate.positionRatio),
+  }
+}
+
+function isPrimaryButtonText(text) {
+  return /(신청|상담|구매|견적|예약|문의|바로가기|확인|다음|apply|buy|contact|reserve|quote|submit)/i.test(text || '')
+}
+
+function createQaImage(imageNode, qaSections, pageBox) {
+  if (!imageNode || imageNode.visible === false || isDecorativeImageNode(imageNode)) return null
+
+  var kind = getQaImageKind(imageNode, pageBox)
+  if (kind === 'iconOrGraphic') return null
+
+  var section = findQaSectionForItem(imageNode, qaSections)
+  var displayName = getQaImageDisplayName(kind)
+  return {
+    id: imageNode.id,
+    name: displayName,
+    text: displayName,
+    sourceName: imageNode.name || '',
+    normalizedText: normalizeText(displayName),
+    kind: kind,
+    sectionLabel: section ? section.label : getLooseSectionLabel(imageNode.positionRatio),
+    sectionId: section ? section.id : '',
+    x: imageNode.x,
+    y: imageNode.y,
+    width: imageNode.width,
+    height: imageNode.height,
+    layerPath: imageNode.layerPath,
+    positionRatio: copyPositionRatio(imageNode.positionRatio),
+  }
+}
+
+function isDecorativeImageNode(imageNode) {
+  if (imageNode.width < 120 || imageNode.height < 80) return true
+  if (imageNode.type === 'VECTOR' || imageNode.type === 'LINE' || imageNode.type === 'BOOLEAN_OPERATION') return true
+  var layerText = getLayerPathText(imageNode.layerPath) + ' ' + (imageNode.name || '')
+  if (BLOCKED_QA_IMAGE_PATTERNS.test(layerText)) return true
+  if (!hasImageFill(imageNode) && isRawLayerLikeName(imageNode.name || '')) return true
+  return isDecorativeLayerPath(imageNode.layerPath) && !hasImageFill(imageNode)
+}
+
+function getQaImageKind(imageNode, pageBox) {
+  var name = String((imageNode.name || '') + ' ' + getLayerPathText(imageNode.layerPath)).toLowerCase()
+  var areaRatio = pageBox.width * pageBox.height > 0 ? (imageNode.width * imageNode.height) / (pageBox.width * pageBox.height) : 0
+  var yRatio = imageNode.positionRatio && typeof imageNode.positionRatio.yRatio === 'number' ? imageNode.positionRatio.yRatio : 0
+
+  if ((/hero|kv|visual|main|메인|비주얼/.test(name) || (yRatio <= 0.2 && areaRatio >= 0.08)) && hasImageFill(imageNode)) return 'heroImage'
+  if (/하단\s*배너|bottom\s*banner|banner|배너/.test(name)) return 'bannerImage'
+  if (hasImageFill(imageNode) || /image|img|photo|thumbnail|card|사진|이미지|썸네일|카드/.test(name)) return 'contentImage'
+  return 'iconOrGraphic'
+}
+
+function isLargeVisibleArea(item, pageBox, minRatio) {
+  var pageArea = pageBox.width * pageBox.height
+  if (pageArea <= 0) return false
+  return (item.width * item.height) / pageArea >= minRatio
+}
+
+function findQaSectionForItem(item, sections) {
+  var matchedSection = null
+  var matchedArea = Infinity
+  var itemCenterY = item.y + (item.height || 0) / 2
+  var itemCenterX = item.x + (item.width || 0) / 2
+
+  for (var index = 0; index < sections.length; index += 1) {
+    var section = sections[index]
+    var insideY = itemCenterY >= section.y && itemCenterY <= section.y + section.height
+    var insideX = itemCenterX >= section.x && itemCenterX <= section.x + section.width
+    if (insideY && insideX) {
+      var area = section.width * section.height
+      if (area < matchedArea) {
+        matchedSection = section
+        matchedArea = area
+      }
+    }
+  }
+
+  return matchedSection
+}
+
+function filterItemsInSection(items, section) {
+  var results = []
+  for (var index = 0; index < items.length; index += 1) {
+    if (items[index].sectionId === section.id) {
+      results.push(items[index])
+    }
+  }
+  return results
+}
+
+function dedupeQaSections(sections) {
+  for (var index = sections.length - 1; index >= 0; index -= 1) {
+    var section = sections[index]
+    var sourceName = section.sourceName || section.name || ''
+
+    if (isTechnicalLayerName(sourceName) && !hasSemanticSectionName(sourceName)) {
+      sections.splice(index, 1)
+      continue
+    }
+
+    for (var compareIndex = 0; compareIndex < index; compareIndex += 1) {
+      var other = sections[compareIndex]
+      if (section.label === other.label && isSimilarBox(section, other, 12)) {
+        sections.splice(index, 1)
+        break
+      }
+      if (section.label === other.label && isContainedBox(section, other)) {
+        sections.splice(index, 1)
+        break
+      }
+      if (section.label === other.label && isContainedBox(other, section)) {
+        sections.splice(compareIndex, 1)
+        index -= 1
+        break
+      }
+    }
+  }
+}
+
+function dedupeQaTexts(texts) {
+  var seen = {}
+  for (var index = texts.length - 1; index >= 0; index -= 1) {
+    var text = texts[index]
+    var key = text.importance + ':' + text.sectionLabel + ':' + text.normalizedText
+    if (seen[key]) {
+      texts.splice(index, 1)
+    } else {
+      seen[key] = true
+    }
+  }
+}
+
+function dedupeQaButtons(buttons) {
+  var seen = {}
+  for (var index = buttons.length - 1; index >= 0; index -= 1) {
+    var button = buttons[index]
+    var key = button.sectionLabel + ':' + button.normalizedText
+    if (seen[key]) {
+      buttons.splice(index, 1)
+    } else {
+      seen[key] = true
+    }
+  }
+}
+
+function refineQaImages(images, pageBox) {
+  var filteredImages = []
+  for (var index = 0; index < images.length; index += 1) {
+    var duplicateIndex = findDuplicateImageIndex(images[index], filteredImages)
+    if (duplicateIndex === -1) {
+      filteredImages.push(images[index])
+    } else if (getImageCandidateScore(images[index], pageBox) > getImageCandidateScore(filteredImages[duplicateIndex], pageBox)) {
+      filteredImages[duplicateIndex] = images[index]
+    }
+  }
+
+  var heroIndex = findBestHeroImageIndex(filteredImages, pageBox)
+  var refinedImages = []
+  for (var imageIndex = 0; imageIndex < filteredImages.length; imageIndex += 1) {
+    var image = filteredImages[imageIndex]
+    if (image.kind === 'heroImage' && imageIndex !== heroIndex) {
+      continue
+    }
+    refinedImages.push(image)
+  }
+
+  return refinedImages
+}
+
+function findDuplicateImageIndex(image, existingImages) {
+  for (var index = 0; index < existingImages.length; index += 1) {
+    var existing = existingImages[index]
+    if (isSimilarBox(image, existing, 10) || getBoxOverlapRatio(image, existing) >= 0.88) {
+      return index
+    }
+  }
+
+  return -1
+}
+
+function getImageCandidateScore(image, pageBox) {
+  var score = image.kind === 'heroImage' ? getHeroImageScore(image, pageBox) : 0
+  var sourceName = image.sourceName || image.name || ''
+  if (!isRawLayerLikeName(sourceName)) score += 2
+  if (image.x >= pageBox.x && image.y >= pageBox.y && image.x + image.width <= pageBox.x + pageBox.width && image.y + image.height <= pageBox.y + pageBox.height) score += 2
+  score += Math.min(3, (image.width * image.height) / Math.max(1, pageBox.width * pageBox.height) * 20)
+  return score
+}
+
+function findBestHeroImageIndex(images, pageBox) {
+  var bestIndex = -1
+  var bestScore = -Infinity
+
+  for (var index = 0; index < images.length; index += 1) {
+    if (images[index].kind !== 'heroImage') continue
+    var score = getHeroImageScore(images[index], pageBox)
+    if (score > bestScore) {
+      bestIndex = index
+      bestScore = score
+    }
+  }
+
+  return bestIndex
+}
+
+function getHeroImageScore(image, pageBox) {
+  var score = 0
+  var yRatio = image.positionRatio && typeof image.positionRatio.yRatio === 'number' ? image.positionRatio.yRatio : 1
+  var widthRatio = pageBox.width > 0 ? image.width / pageBox.width : 0
+  var sourceName = image.sourceName || image.name || ''
+
+  score += Math.max(0, 1 - yRatio) * 10
+  score += Math.min(1, widthRatio) * 4
+  if (/hero|kv|visual|main|메인|비주얼/i.test(sourceName + ' ' + getLayerPathText(image.layerPath))) score += 4
+  if (!isRawLayerLikeName(sourceName)) score += 1
+  if (image.x >= pageBox.x && image.y >= pageBox.y && image.x + image.width <= pageBox.x + pageBox.width && image.y + image.height <= pageBox.y + pageBox.height) score += 2
+  return score
+}
+
+function isSimilarBox(first, second, tolerance) {
+  return Math.abs(first.x - second.x) <= tolerance
+    && Math.abs(first.y - second.y) <= tolerance
+    && Math.abs(first.width - second.width) <= tolerance
+    && Math.abs(first.height - second.height) <= tolerance
+}
+
+function isContainedBox(inner, outer) {
+  return inner.x >= outer.x
+    && inner.y >= outer.y
+    && inner.x + inner.width <= outer.x + outer.width
+    && inner.y + inner.height <= outer.y + outer.height
+}
+
+function getBoxOverlapRatio(first, second) {
+  var left = Math.max(first.x, second.x)
+  var top = Math.max(first.y, second.y)
+  var right = Math.min(first.x + first.width, second.x + second.width)
+  var bottom = Math.min(first.y + first.height, second.y + second.height)
+  var overlapArea = Math.max(0, right - left) * Math.max(0, bottom - top)
+  var smallerArea = Math.min(first.width * first.height, second.width * second.height)
+  if (smallerArea <= 0) return 0
+  return overlapArea / smallerArea
+}
+
+function dedupeByIdAndText(items) {
+  var seen = {}
+  for (var index = items.length - 1; index >= 0; index -= 1) {
+    var key = items[index].id + ':' + items[index].normalizedText
+    if (seen[key]) {
+      items.splice(index, 1)
+    } else {
+      seen[key] = true
+    }
+  }
+}
+
+function getLooseSectionLabel(positionRatio) {
+  var yRatio = positionRatio && typeof positionRatio.yRatio === 'number' ? positionRatio.yRatio : 0
+  if (yRatio < 0.16) return 'Hero/KV 영역'
+  if (yRatio < 0.42) return '상품 개요 영역'
+  if (yRatio < 0.64) return '상품 종류 영역'
+  if (yRatio < 0.78) return '구비서류 영역'
+  if (yRatio < 0.9) return '하단 배너 영역'
+  return '푸터/디스클레이머'
+}
+
+function hasSemanticSectionName(name) {
+  return /hero|kv|main[_\s-]*visual|footer|disclaimer|하단\s*배너|구비|서류|종류|프로그램|개요|smart|메인|비주얼|푸터|풋터|유의/i.test(name || '')
+}
+
+function isTechnicalLayerName(name) {
+  return TECHNICAL_LAYER_NAME_PATTERNS.test(trimText(name || ''))
+}
+
+function isRawLayerLikeName(name) {
+  return /^(image|img|graphic|icon|logo|vector|path|shape|rectangle|group|frame|blend|blende)([_\s-]?\d*)?$/i.test(trimText(name || ''))
+}
+
+function isRealQaButtonCandidate(candidate, text) {
+  var layerText = getLayerPathText(candidate.layerPath)
+  var searchable = text + ' ' + layerText + ' ' + (candidate.name || '')
+
+  if (!isRealButtonText(text)) return false
+  if (text.length > 32 || /\n|\r|•|·|※|\*/.test(text)) return false
+  if (NAV_TEXT_PATTERNS.test(layerText)) return false
+  if (/footer|푸터|disclaimer|디스클라이머|약관|저작권/i.test(searchable)) return false
+  return BUTTON_LAYER_PATTERNS.test(layerText) || candidate.kind === 'BUTTON_TEXT_CTA'
+}
+
+function isRealButtonText(text) {
+  return REAL_BUTTON_TEXT_PATTERNS.test(trimText(text || ''))
+}
+
+function getQaImageDisplayName(kind) {
+  if (kind === 'heroImage') return 'Hero 대표 이미지'
+  if (kind === 'bannerImage') return '하단 배너 이미지'
+  return '주요 콘텐츠 이미지'
+}
+
+function trimText(value) {
+  return String(value || '').replace(/^\s+|\s+$/g, '')
+}
+
+function isDecorativeLayerPath(layerPath) {
+  var pathText = getLayerPathText(layerPath)
+  if (!pathText) return false
+  return DECORATIVE_LAYER_PATTERNS.test(pathText) && !/(image|img|photo|visual|kv|banner|thumbnail|background|이미지|사진|배너)/i.test(pathText)
+}
+
+function getLayerPathText(layerPath) {
+  return Array.isArray(layerPath) ? layerPath.join(' ') : String(layerPath || '')
+}
+
 function sortByPosition(items) {
   items.sort(function (left, right) {
     if (left.y !== right.y) return left.y - right.y
@@ -464,8 +1013,19 @@ function sortByPosition(items) {
   })
 }
 
-function isSectionCandidate(node) {
-  return isTypeInList(node.type, SECTION_LIKE_TYPES)
+function isSectionCandidate(node, traversal) {
+  if (!isTypeInList(node.type, SECTION_LIKE_TYPES) || traversal.depth === 0) {
+    return false
+  }
+
+  var box = getAbsoluteBoundingBox(node)
+  var rootBox = traversal.rootBox || { width: 0, height: 0 }
+  var name = node.name || ''
+  var widthRatio = rootBox.width > 0 ? box.width / rootBox.width : 0
+  var isLargeBlock = box.height >= 250 && widthRatio >= 0.5
+  var isNamedBlock = box.height >= 180 && SECTION_NAME_PATTERNS.test(name)
+
+  return isLargeBlock || isNamedBlock
 }
 
 function isSelectedSectionRoot(node, traversal) {
@@ -594,7 +1154,14 @@ function matchesAnyPattern(value, patterns) {
 }
 
 function isImageCandidate(node) {
-  return hasImageFill(node) || isImageLikeType(node.type) || getMatchedKeywords(node.name || '', IMAGE_KEYWORDS).length > 0
+  var box = getAbsoluteBoundingBox(node)
+  var name = node.name || ''
+
+  if (node.visible === false || box.width < 80 || box.height < 60 || DECORATIVE_LAYER_PATTERNS.test(name)) {
+    return false
+  }
+
+  return hasImageFill(node) || (isImageLikeType(node.type) && getMatchedKeywords(name, IMAGE_KEYWORDS).length > 0)
 }
 
 function isImageLikeType(type) {
@@ -612,6 +1179,10 @@ function isTypeInList(type, types) {
 }
 
 function hasImageFill(node) {
+  if (node && node.kind === 'IMAGE_FILL') {
+    return true
+  }
+
   if (!Array.isArray(node.fills)) {
     return false
   }

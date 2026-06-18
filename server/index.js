@@ -4,7 +4,8 @@ import { chromium, request as playwrightRequest } from 'playwright'
 const PORT = Number(process.env.PORT || 3001)
 const MAX_LINKS_TO_CHECK = 30
 const MAX_DESIGN_ELEMENTS = 120
-const MAX_SCREENSHOT_PIXELS = 12_000_000
+const DESKTOP_DESIGN_VIEWPORT = { width: 1920, height: 1080 }
+const DESKTOP_SCREENSHOT_SCALE = 2
 const NAVIGATION_TIMEOUT_MS = 15000
 const LINK_TIMEOUT_MS = 7000
 
@@ -62,7 +63,8 @@ async function scanUrl(targetUrl) {
   try {
     const context = await browser.newContext({
       ignoreHTTPSErrors: true,
-      viewport: { width: 1366, height: 900 },
+      viewport: DESKTOP_DESIGN_VIEWPORT,
+      deviceScaleFactor: DESKTOP_SCREENSHOT_SCALE,
       permissions: [],
       serviceWorkers: 'block',
     })
@@ -132,24 +134,24 @@ async function scanUrl(targetUrl) {
 
 async function safeWebScreenshot(page) {
   try {
-    const viewport = page.viewportSize() || { width: 1366, height: 900 }
+    const viewport = page.viewportSize() || DESKTOP_DESIGN_VIEWPORT
     const pageSize = await page.evaluate(() => ({
       width: Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth || 0),
       height: Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0),
     }))
-    const shouldCaptureFullPage = pageSize.width * pageSize.height <= MAX_SCREENSHOT_PIXELS
-    const buffer = await page.screenshot({ fullPage: shouldCaptureFullPage, type: 'png' })
+    const buffer = await page.screenshot({ fullPage: true, type: 'png' })
 
     return {
       dataUrl: `data:image/png;base64,${buffer.toString('base64')}`,
       mediaType: 'image/png',
-      width: pageSize.width,
+      width: viewport.width,
       height: pageSize.height,
       viewport,
-      fullPage: shouldCaptureFullPage,
-      capped: !shouldCaptureFullPage,
+      deviceScaleFactor: DESKTOP_SCREENSHOT_SCALE,
+      fullPage: true,
+      capped: false,
       capturedAt: new Date().toISOString(),
-      error: shouldCaptureFullPage ? '' : '페이지가 커서 viewport screenshot으로 대체했습니다.',
+      error: '',
     }
   } catch (error) {
     return {
@@ -157,7 +159,8 @@ async function safeWebScreenshot(page) {
       mediaType: 'image/png',
       width: 0,
       height: 0,
-      viewport: { width: 1366, height: 900 },
+      viewport: DESKTOP_DESIGN_VIEWPORT,
+      deviceScaleFactor: DESKTOP_SCREENSHOT_SCALE,
       fullPage: true,
       capturedAt: new Date().toISOString(),
       error: error instanceof Error ? error.message : '스크린샷 수집 실패',
@@ -510,7 +513,8 @@ function createEmptyWebScreenshot() {
     mediaType: 'image/png',
     width: 0,
     height: 0,
-    viewport: { width: 1366, height: 900 },
+    viewport: DESKTOP_DESIGN_VIEWPORT,
+    deviceScaleFactor: DESKTOP_SCREENSHOT_SCALE,
     fullPage: true,
     capturedAt: new Date().toISOString(),
     error: '스크린샷을 수집하지 못했습니다.',

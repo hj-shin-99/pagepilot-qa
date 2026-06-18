@@ -1,13 +1,19 @@
 const ZERO_WIDTH_CHARS = /[\u200B-\u200D\uFEFF]/g
 const SPECIAL_WHITESPACE = /[\u00A0\u1680\u180E\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]/g
 const REPEATED_WHITESPACE = /\s+/g
-const PUNCTUATION_VARIANTS = /[.,，。ㆍ·:：;；!！?？"'“”‘’`´\-‐‑‒–—―_/\\()[\]{}<>《》…⋯•]/g
+const COMPARE_TEXT_PUNCTUATION = /[.,，。:：;；()（）[\]{}]/g
 const LAYOUT_TOLERANCE = 8
 const OBVIOUS_LAYOUT_TOLERANCE = 40
 const FUZZY_MATCH_THRESHOLD = 0.8
 const MIN_FUZZY_TEXT_LENGTH = 6
 const TOP_ISSUE_LIMIT = 5
 const DECORATIVE_LAYER_PATTERN = /\b(vector|path|shape|rectangle|ellipse|line|icon|logo|blende|blend|group|frame)\b|icon\s*frame/i
+const BUTTON_LAYER_PATTERN = /button|btn|cta|link-button|primary|secondary|버튼/i
+const BUTTON_TEXT_PATTERN = /자세히|더 보기|더보기|바로가기|신청|구매|상담|예약|문의|프로모션/i
+const TEXT_PAIR_SIMILARITY_THRESHOLD = 0.62
+const TEXT_PAIR_TOKEN_OVERLAP_THRESHOLD = 0.5
+const BUTTON_PAIR_SIMILARITY_THRESHOLD = 0.45
+const BUTTON_PAIR_TOKEN_OVERLAP_THRESHOLD = 0.5
 const PLANNER_SECTIONS = [
   { id: 'top', name: 'Hero/KV 영역', aliases: ['상단 영역'] },
   { id: 'product-overview', name: '상품 개요 영역', aliases: ['주요 콘텐츠 영역'] },
@@ -27,6 +33,11 @@ export function extractFigmaElements(source) {
 
   if (normalizedSource?.qaModel && typeof normalizedSource.qaModel === 'object') {
     return extractQaModelElements(normalizedSource.qaModel)
+  }
+
+  const structuredFallbackElements = extractStructuredFallbackElements(normalizedSource)
+  if (structuredFallbackElements.length > 0) {
+    return structuredFallbackElements
   }
 
   const sections = extractSections(normalizedSource)
@@ -70,49 +81,47 @@ export function compareDesignElements(figmaElements = [], webElements = []) {
     return createComparisonResult(issues)
   }
 
-  const figmaTextElements = normalizedFigmaElements.filter((element) => !isImageElement(element))
-  const webTextElements = normalizedWebElements.filter((element) => !isImageElement(element))
-  const issues = []
-  const textMatches = createTextMatches(
-    figmaTextElements.filter(isComparableTextElement),
-    webTextElements.filter(isComparableTextElement),
+  const figmaTextElements = normalizedFigmaElements.filter((element) => isComparableTextElement(element) && !isImageElement(element))
+  const webTextElements = normalizedWebElements.filter((element) => isComparableTextElement(element) && !isImageElement(element))
+  const figmaButtons = figmaTextElements.filter(isButtonCandidate)
+  const webButtons = webTextElements.filter(isButtonCandidate)
+  const textComparison = matchComparableGroups(
+    figmaTextElements.filter((element) => !isButtonCandidate(element)),
+    webTextElements.filter((element) => !isButtonCandidate(element)),
+    'text',
   )
+  const buttonComparison = matchComparableGroups(figmaButtons, webButtons, 'button')
+  const issues = []
 
-  textMatches.matches.forEach((match) => {
-    issues.push(compareMatchedElements(match.figmaElement, match.webElement, {
-      matchIndex: 0,
-      matchType: match.matchType,
-      fuzzyScore: match.score,
-      matchedBy: match.matchedBy,
-    }))
+  textComparison.similarMatches.forEach(({ figmaElement, webElement, matchedBy, score }) => {
+    issues.push(createTextDifferenceIssue(figmaElement, webElement, matchedBy, score))
   })
+  textComparison.unmatchedFigma.forEach((figmaElement) => issues.push(createTextOnlyIssue(figmaElement, 'figma')))
+  textComparison.unmatchedWeb.forEach((webElement) => issues.push(createTextOnlyIssue(webElement, 'web')))
 
-  textMatches.unmatchedFigma
-    .forEach((figmaElement) => issues.push(createMissingFigmaIssue(figmaElement)))
+  buttonComparison.similarMatches.forEach(({ figmaElement, webElement, matchedBy, score }) => {
+    const issue = createButtonPairIssue(figmaElement, webElement, matchedBy, score)
+    if (issue) issues.push(issue)
+  })
+  buttonComparison.exactMatches.forEach(({ figmaElement, webElement }) => {
+    const issue = createButtonPairIssue(figmaElement, webElement, 'compareText exact', 1)
+    if (issue) issues.push(issue)
+  })
+  buttonComparison.unmatchedFigma.forEach((figmaElement) => issues.push(createButtonOnlyIssue(figmaElement, 'figma')))
+  buttonComparison.unmatchedWeb.forEach((webElement) => issues.push(createButtonOnlyIssue(webElement, 'web')))
 
-  textMatches.unmatchedWeb
-    .forEach((webElement) => issues.push(createWebOnlyIssue(webElement)))
-
-  issues.push(...compareImageElements(
-    normalizedFigmaElements.filter((element) => isImageElement(element) && isComparableImageElement(element)),
-    normalizedWebElements.filter((element) => isImageElement(element) && isComparableImageElement(element)),
-  ))
-
-  return createComparisonResult(aggregateFooterReferenceIssues(sortIssuesByPriority(issues)))
+  return createComparisonResult(sortIssuesByPriority(issues))
 }
 
 export function normalizeDesignText(value) {
-  return cleanText(value)
-    .replace(PUNCTUATION_VARIANTS, '')
-    .replace(REPEATED_WHITESPACE, ' ')
-    .trim()
-    .toLowerCase()
+  return compareText(value)
 }
 
 function compareText(value) {
   return cleanText(value)
-    .replace(PUNCTUATION_VARIANTS, '')
-    .replace(REPEATED_WHITESPACE, '')
+    .replace(COMPARE_TEXT_PUNCTUATION, ' ')
+    .replace(REPEATED_WHITESPACE, ' ')
+    .trim()
     .toLowerCase()
 }
 
@@ -162,6 +171,62 @@ function extractQaModelElements(qaModel) {
   return withPositionRatios(dedupeQaModelElements(elements), sections)
 }
 
+function extractStructuredFallbackElements(source) {
+  if (!source || typeof source !== 'object') return []
+
+  const hasStructuredArrays = Array.isArray(source?.texts)
+    || Array.isArray(source?.ctas)
+    || Array.isArray(source?.images)
+    || Array.isArray(source?.sections)
+
+  if (!hasStructuredArrays) return []
+
+  const sections = extractSections(source)
+  const elements = []
+  const pushText = (node, index, isButton = false) => {
+    const element = createFigmaElement(isButton ? { ...node, tag: 'button', qaImportance: 'button' } : node, index, {
+      layerPath: getLayerPath(node),
+      sections,
+    })
+    if (element) elements.push(element)
+  }
+  const pushImage = (node, index) => {
+    const element = createFigmaImageElement(node, index, {
+      layerPath: getLayerPath(node),
+      sections,
+    })
+    if (element) elements.push(element)
+  }
+
+  if (Array.isArray(source.texts)) {
+    source.texts.forEach((node, index) => pushText(node, elements.length + index + 1))
+  }
+
+  if (Array.isArray(source.ctas)) {
+    source.ctas.forEach((node, index) => pushText(node, elements.length + index + 1, true))
+  }
+
+  if (Array.isArray(source.images)) {
+    source.images.forEach((node, index) => pushImage(node, elements.length + index + 1))
+  }
+
+  if (Array.isArray(source.sections)) {
+    source.sections.forEach((section) => {
+      if (Array.isArray(section.texts)) {
+        section.texts.forEach((node) => pushText({ ...node, sectionName: section.name || node.sectionName }, elements.length + 1))
+      }
+      if (Array.isArray(section.ctas)) {
+        section.ctas.forEach((node) => pushText({ ...node, sectionName: section.name || node.sectionName }, elements.length + 1, true))
+      }
+      if (Array.isArray(section.images)) {
+        section.images.forEach((node) => pushImage({ ...node, sectionName: section.name || node.sectionName }, elements.length + 1))
+      }
+    })
+  }
+
+  return withPositionRatios(dedupeQaModelElements(elements), sections)
+}
+
 function extractQaModelSections(qaModel) {
   if (!Array.isArray(qaModel.sections)) return []
 
@@ -184,6 +249,8 @@ function extractQaModelSections(qaModel) {
 }
 
 function createQaModelTextElement(node, index, sections) {
+  if (!isVisibleFigmaNode(node)) return null
+
   const text = cleanText(node.text || node.label || node.characters || '')
   if (!text) return null
 
@@ -216,6 +283,8 @@ function createQaModelTextElement(node, index, sections) {
 }
 
 function createQaModelImageElement(node, index, sections) {
+  if (!isVisibleFigmaNode(node)) return null
+
   const bounds = getNodeBounds(node)
   const sectionName = cleanText(node.sectionLabel || findSectionForBounds(bounds, sections)?.name || getPlannerSectionName(node, bounds.y))
   const kind = node.kind || 'contentImage'
@@ -311,6 +380,8 @@ function walkFigmaNode(node, elements, context) {
 }
 
 function createFigmaElement(node, index, context = {}) {
+  if (!isVisibleFigmaNode(node)) return null
+
   const rawText = getFigmaNodeText(node)
   const text = cleanText(rawText)
   if (!text) return null
@@ -348,6 +419,8 @@ function createFigmaElement(node, index, context = {}) {
 }
 
 function createFigmaImageElement(node, index, context = {}) {
+  if (!isVisibleFigmaNode(node)) return null
+
   const bounds = getNodeBounds(node)
   const layerPath = context.layerPath || getLayerPath(node)
   const matchedSection = context.section || findSectionForBounds(bounds, context.sections)
@@ -413,8 +486,20 @@ function getFigmaNodeText(node) {
   if (typeof node.characters === 'string') return node.characters
   if (typeof node.text === 'string') return node.text
   if (typeof node.normalizedText === 'string') return node.normalizedText
-  if (typeof node.name === 'string' && (node.type === 'TEXT' || node.fontSize || node.style)) return node.name
+  if (typeof node.label === 'string') return node.label
   return ''
+}
+
+function isVisibleFigmaNode(node) {
+  if (!node || typeof node !== 'object') return false
+  if (node.visible === false || node.hidden === true) return false
+
+  const opacity = firstNumber(node.opacity)
+  if (opacity !== null && opacity <= 0) return false
+
+  const bounds = getNodeBounds(node)
+  if ((bounds.width <= 0 || bounds.height <= 0) && !cleanText(node.text || node.characters || node.label || '')) return false
+  return true
 }
 
 function getFigmaColor(fills) {
@@ -476,6 +561,222 @@ function prepareComparableElements(elements, source) {
     .filter(Boolean)
 }
 
+function matchComparableGroups(figmaElements, webElements, group) {
+  const exactMatches = []
+  const remainingWebByKey = new Map()
+
+  webElements.forEach((element) => {
+    const key = compareText(element.text)
+    const matches = remainingWebByKey.get(key) || []
+    matches.push(element)
+    remainingWebByKey.set(key, matches)
+  })
+
+  const unmatchedFigma = []
+  figmaElements.forEach((element) => {
+    const key = compareText(element.text)
+    const matches = remainingWebByKey.get(key)
+    if (matches && matches.length > 0) {
+      exactMatches.push({ figmaElement: element, webElement: matches.shift(), matchedBy: 'compareText exact', score: 1 })
+      if (matches.length === 0) remainingWebByKey.delete(key)
+      return
+    }
+
+    unmatchedFigma.push(element)
+  })
+
+  const unmatchedWeb = Array.from(remainingWebByKey.values()).flat()
+  const candidates = []
+
+  unmatchedFigma.forEach((figmaElement) => {
+    unmatchedWeb.forEach((webElement) => {
+      const candidate = createSimilarityCandidate(figmaElement, webElement, group)
+      if (candidate) candidates.push(candidate)
+    })
+  })
+
+  const usedFigma = new Set()
+  const usedWeb = new Set()
+  const similarMatches = []
+
+  candidates
+    .sort((first, second) => {
+      if (first.score !== second.score) return second.score - first.score
+      return first.positionDelta - second.positionDelta
+    })
+    .forEach((candidate) => {
+      if (usedFigma.has(candidate.figmaElement) || usedWeb.has(candidate.webElement)) return
+      usedFigma.add(candidate.figmaElement)
+      usedWeb.add(candidate.webElement)
+      similarMatches.push(candidate)
+    })
+
+  return {
+    exactMatches,
+    similarMatches,
+    unmatchedFigma: unmatchedFigma.filter((element) => !usedFigma.has(element)),
+    unmatchedWeb: unmatchedWeb.filter((element) => !usedWeb.has(element)),
+  }
+}
+
+function createSimilarityCandidate(figmaElement, webElement, group) {
+  const figmaText = compareText(figmaElement.text)
+  const webText = compareText(webElement.text)
+  if (!figmaText || !webText || figmaText === webText) return null
+
+  const similarity = getTextSimilarity(figmaText, webText)
+  const tokenOverlap = getTokenOverlapScore(figmaText, webText)
+  const containsMatch = figmaText.includes(webText) || webText.includes(figmaText)
+  const positionDelta = getPositionDelta(figmaElement, webElement)
+  const isButtonGroup = group === 'button'
+  const hasStrongTextSimilarity = similarity >= TEXT_PAIR_SIMILARITY_THRESHOLD
+  const hasStrongTokenOverlap = tokenOverlap >= TEXT_PAIR_TOKEN_OVERLAP_THRESHOLD
+  const hasButtonSimilarity = similarity >= BUTTON_PAIR_SIMILARITY_THRESHOLD
+  const hasButtonTokenOverlap = tokenOverlap >= BUTTON_PAIR_TOKEN_OVERLAP_THRESHOLD
+  const hasHybridTextSimilarity = similarity >= 0.48 && tokenOverlap >= 0.34
+  const hasHybridButtonSimilarity = similarity >= 0.36 && tokenOverlap >= 0.34
+  const isEligible = isButtonGroup
+    ? containsMatch || hasButtonSimilarity || hasButtonTokenOverlap || hasHybridButtonSimilarity
+    : containsMatch || hasStrongTextSimilarity || hasStrongTokenOverlap || hasHybridTextSimilarity || ((isKeyCopyElement(figmaElement) || isKeyCopyElement(webElement)) && similarity >= 0.45 && tokenOverlap >= 0.2)
+
+  if (!isEligible) return null
+
+  const containsScore = containsMatch ? 0.08 : 0
+  const keyCopyScore = !isButtonGroup && (isKeyCopyElement(figmaElement) || isKeyCopyElement(webElement)) ? 0.04 : 0
+  const score = (similarity * (isButtonGroup ? 0.48 : 0.66))
+    + (tokenOverlap * (isButtonGroup ? 0.18 : 0.22))
+    + containsScore
+    + keyCopyScore
+
+  return {
+    figmaElement,
+    webElement,
+    matchedBy: containsMatch ? 'similar compareText' : tokenOverlap >= 0.5 ? 'token overlap' : 'text similarity',
+    score,
+    positionDelta,
+  }
+}
+
+function getTokenOverlapScore(firstText, secondText) {
+  const firstTokens = getCoreTokens(firstText)
+  const secondTokens = getCoreTokens(secondText)
+  if (firstTokens.length === 0 || secondTokens.length === 0) return 0
+
+  const secondTokenSet = new Set(secondTokens)
+  const overlapCount = firstTokens.filter((token) => secondTokenSet.has(token)).length
+  return overlapCount / Math.max(firstTokens.length, secondTokens.length)
+}
+
+function getCoreTokens(value) {
+  return compareText(value)
+    .split(' ')
+    .map((token) => token.trim())
+    .filter(Boolean)
+}
+
+function createTextDifferenceIssue(figmaElement, webElement, matchedBy, similarityScore) {
+  return createGroupedIssue({
+    status: 'warn',
+    label: '문구 차이',
+    text: figmaElement.text || webElement.text,
+    detail: '시안과 웹의 문구가 완전히 같지 않습니다.',
+    categories: ['text'],
+    differences: [createDifference('text', '문구 차이', '시안과 웹 문구를 다시 확인해 주세요.')],
+    figmaElement,
+    webElement,
+    matchType: 'text-difference',
+    matchedBy,
+    similarityScore,
+    primaryCandidate: true,
+    issueType: 'text-difference',
+  })
+}
+
+function createTextOnlyIssue(element, source) {
+  const isFigma = source === 'figma'
+
+  return createGroupedIssue({
+    status: 'error',
+    label: isFigma ? '시안에만 있음' : '웹에만 있음',
+    text: element.text,
+    detail: isFigma ? '시안에는 있지만 웹에서는 같은 문구를 찾지 못했습니다.' : '웹에는 있지만 시안에서는 같은 문구를 찾지 못했습니다.',
+    categories: ['text'],
+    differences: [createDifference('text', isFigma ? '시안에만 있음' : '웹에만 있음', isFigma ? '웹 대응 문구를 찾지 못했습니다.' : '시안 대응 문구를 찾지 못했습니다.')],
+    figmaElement: isFigma ? element : null,
+    webElement: isFigma ? null : element,
+    matchType: isFigma ? 'figma-only' : 'web-only',
+    primaryCandidate: true,
+    issueType: isFigma ? 'figma-only' : 'web-only',
+  })
+}
+
+function createButtonPairIssue(figmaElement, webElement, matchedBy, similarityScore) {
+  const labels = []
+  const differences = []
+  const categories = ['cta']
+
+  if (!areTextsEquivalent(figmaElement.text, webElement.text)) {
+    labels.push('버튼 문구 차이')
+    categories.push('text')
+    differences.push(createDifference('cta', '버튼 문구 차이', '시안과 웹 버튼 문구가 다릅니다.'))
+  }
+
+  if (hasMissingButtonHref(webElement)) {
+    labels.push('버튼 링크 확인')
+    differences.push(createDifference('cta', '버튼 링크 확인', '웹 링크 버튼에 href가 비어 있습니다.'))
+  }
+
+  if (labels.length === 0) return null
+
+  return createGroupedIssue({
+    status: labels.includes('버튼 문구 차이') ? 'warn' : 'error',
+    label: labels.join(' / '),
+    text: figmaElement.text || webElement.text,
+    detail: labels.includes('버튼 문구 차이')
+      ? '버튼 문구와 링크를 함께 확인해 주세요.'
+      : '웹 링크 버튼의 href 값을 확인해 주세요.',
+    categories: Array.from(new Set(categories)),
+    differences,
+    figmaElement,
+    webElement,
+    matchType: 'button-check',
+    matchedBy,
+    similarityScore,
+    primaryCandidate: true,
+    issueType: 'button',
+  })
+}
+
+function createButtonOnlyIssue(element, source) {
+  const isFigma = source === 'figma'
+  const labels = [isFigma ? '시안 버튼만 있음' : '웹 버튼만 있음']
+  const differences = [createDifference('cta', labels[0], isFigma ? '웹 대응 버튼을 찾지 못했습니다.' : '시안 대응 버튼을 찾지 못했습니다.')]
+
+  if (!isFigma && hasMissingButtonHref(element)) {
+    labels.push('버튼 링크 확인')
+    differences.push(createDifference('cta', '버튼 링크 확인', '웹 링크 버튼에 href가 비어 있습니다.'))
+  }
+
+  return createGroupedIssue({
+    status: 'error',
+    label: labels.join(' / '),
+    text: element.text,
+    detail: isFigma ? '시안 버튼은 있지만 웹 버튼에서 같은 문구를 찾지 못했습니다.' : '웹 버튼은 있지만 시안 버튼에서 같은 문구를 찾지 못했습니다.',
+    categories: labels.includes('버튼 링크 확인') ? ['cta', 'text'] : ['cta'],
+    differences,
+    figmaElement: isFigma ? element : null,
+    webElement: isFigma ? null : element,
+    matchType: isFigma ? 'figma-button-only' : 'web-button-only',
+    primaryCandidate: true,
+    issueType: 'button',
+  })
+}
+
+function hasMissingButtonHref(element) {
+  return Boolean(element && String(element.tag || '').toLowerCase() === 'a' && !String(element.href || '').trim())
+}
+
+// eslint-disable-next-line no-unused-vars
 function createTextMatches(figmaElements, webElements) {
   const candidates = []
 
@@ -549,6 +850,7 @@ function isSameSection(figmaElement, webElement) {
     || Boolean(figmaElement.sectionName && webElement.sectionName && figmaElement.sectionName === webElement.sectionName)
 }
 
+// eslint-disable-next-line no-unused-vars
 function compareMatchedElements(figmaElement, webElement, options = {}) {
   const differences = []
   const matchType = options.matchType || 'exact'
@@ -602,6 +904,7 @@ function compareMatchedElements(figmaElement, webElement, options = {}) {
   })
 }
 
+// eslint-disable-next-line no-unused-vars
 function createMissingFigmaIssue(figmaElement) {
   const isActionable = isActionableMissingElement(figmaElement)
 
@@ -620,6 +923,7 @@ function createMissingFigmaIssue(figmaElement) {
   })
 }
 
+// eslint-disable-next-line no-unused-vars
 function createWebOnlyIssue(webElement) {
   const isActionable = isActionableMissingElement(webElement)
 
@@ -638,7 +942,7 @@ function createWebOnlyIssue(webElement) {
   })
 }
 
-function createGroupedIssue({ status, label, text, detail, categories, differences, figmaElement, webElement, matchType, primaryCandidate = false, forceReference = false, matchedBy = '', similarityScore = null }) {
+function createGroupedIssue({ status, label, text, detail, categories, differences, figmaElement, webElement, matchType, primaryCandidate = false, forceReference = false, matchedBy = '', similarityScore = null, issueType = 'text' }) {
   const primaryElement = figmaElement || webElement
   const sort = getSortPosition(figmaElement, webElement)
   const sectionName = getPlannerSectionName(primaryElement, sort.y)
@@ -664,6 +968,7 @@ function createGroupedIssue({ status, label, text, detail, categories, differenc
     issueGroup,
     plannerType: issueGroup,
     isReference,
+    issueType,
     categories,
     differences,
     matchType: matchType || 'exact',
@@ -694,22 +999,36 @@ function createComparisonWaitingIssue(webElementCount) {
     webElement: null,
     matchType: 'waiting',
     primaryCandidate: true,
+    issueType: 'waiting',
   })
 }
 
 function createComparisonResult(issues) {
   const sortedIssues = sortIssuesByPriority(issues)
-  const primaryIssues = sortedIssues.filter((issue) => issue.status !== 'ok' && !issue.isReference && isPlannerVisibleIssue(issue))
+  const primaryIssues = sortedIssues.filter((issue) => issue.status !== 'ok' && !issue.isReference)
   const primaryIds = new Set(primaryIssues.map((issue) => issue.id))
   const referenceIssues = sortedIssues.filter((issue) => issue.status !== 'ok' && !primaryIds.has(issue.id))
+  const textDifferences = primaryIssues.filter((issue) => issue.issueType === 'text-difference')
+  const figmaOnly = primaryIssues.filter((issue) => issue.issueType === 'figma-only')
+  const webOnly = primaryIssues.filter((issue) => issue.issueType === 'web-only')
+  const buttonIssues = primaryIssues.filter((issue) => issue.issueType === 'button')
+  const waitingIssues = primaryIssues.filter((issue) => issue.issueType === 'waiting')
+  const actionableIssues = [...textDifferences, ...figmaOnly, ...webOnly, ...buttonIssues]
+  const visibleIssues = actionableIssues.length > 0 ? actionableIssues : waitingIssues
 
   return {
     counts: getDesignCounts(sortedIssues),
     summaryCounts: getSummaryCounts(primaryIssues, referenceIssues),
     sectionSummaries: getSectionSummaries(primaryIssues),
-    topIssues: primaryIssues.slice(0, TOP_ISSUE_LIMIT),
-    primaryIssues,
+    topIssues: visibleIssues.slice(0, TOP_ISSUE_LIMIT),
+    primaryIssues: visibleIssues,
     referenceIssues,
+    textDifferences,
+    figmaOnly,
+    webOnly,
+    buttonIssues,
+    waitingIssues,
+    emptyMessage: visibleIssues.length === 0 ? '큰 문구 차이를 찾지 못했습니다.' : '',
     issues: sortedIssues,
   }
 }
@@ -839,6 +1158,7 @@ function getLayoutDifference(figmaElement, webElement) {
   }
 }
 
+// eslint-disable-next-line no-unused-vars
 function compareImageElements(figmaImages, webImages) {
   const issues = []
   const usedWeb = new Set()
@@ -941,6 +1261,7 @@ function getImageSide(element) {
   return x < 320 ? 'left' : x > 700 ? 'right' : 'center'
 }
 
+// eslint-disable-next-line no-unused-vars
 function aggregateFooterReferenceIssues(issues) {
   const footerIssues = issues.filter((issue) => issue.status !== 'ok' && issue.isFooterDisclaimer)
   if (footerIssues.length <= 1) return issues
@@ -974,6 +1295,17 @@ function isCtaElement(element) {
     || /\b(button|btn|cta|link)\b|더보기|자세히|신청|구매|상담|가입|예약|문의/i.test(`${element.text || ''} ${element.layerPath || ''}`)
 }
 
+function isButtonCandidate(element) {
+  if (!element || element.isFooterDisclaimer || isNavLikeElement(element)) return false
+
+  const tag = String(element.tag || '').toLowerCase()
+  const layerText = `${element.layerPath || ''} ${element.text || ''}`
+  const text = cleanText(element.text || '')
+  if (tag === 'a' || tag === 'button') return true
+  if (element.qaImportance === 'button') return true
+  return BUTTON_LAYER_PATTERN.test(layerText) || (text.length <= 24 && BUTTON_TEXT_PATTERN.test(text))
+}
+
 function isCoreText(element) {
   if (!element || element.isFooterDisclaimer) return false
   const normalizedText = element.normalizedText || normalizeDesignText(element.text)
@@ -1003,12 +1335,14 @@ function isComparableTextElement(element) {
   return true
 }
 
+// eslint-disable-next-line no-unused-vars
 function isComparableImageElement(element) {
   if (!element || element.kind === 'iconOrGraphic') return false
   if (isRawLayerLikeText(element.text || element.name || element.kind) && !isHeroImageCandidate(element)) return false
   return isLargeImageCandidate(element)
 }
 
+// eslint-disable-next-line no-unused-vars
 function isPlannerVisibleIssue(issue) {
   if (issue.isFooterDisclaimer) return false
   if (issue.categories.includes('image')) return isHeroImageCandidate(issue.figma) || (isLargeImageCandidate(issue.figma) && issue.figma?.kind !== 'iconOrGraphic' && !isDecorativeLayerElement(issue.figma))

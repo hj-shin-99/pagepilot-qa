@@ -1,18 +1,11 @@
 import { useMemo, useRef, useState } from 'react'
 
-const TOP_ISSUE_LIMIT = 5
-
-const topMetricLabels = [
-  { key: 'text', label: '문구' },
-  { key: 'cta', label: '버튼' },
-  { key: 'design', label: '디자인' },
+const summaryMetricLabels = [
+  { key: 'textDifferences', label: '문구 차이' },
+  { key: 'figmaOnly', label: '시안에만' },
+  { key: 'webOnly', label: '웹에만' },
+  { key: 'buttonIssues', label: '버튼/링크' },
 ]
-
-const statusLabels = {
-  ok: '정상',
-  error: '확인 필요',
-  warn: '확인 필요',
-}
 
 function MockupQaPanel({ designImages, designQa, result }) {
   const [selectedIssueId, setSelectedIssueId] = useState('')
@@ -20,20 +13,18 @@ function MockupQaPanel({ designImages, designQa, result }) {
   const figmaFrameRef = useRef(null)
   const isSyncingScrollRef = useRef(false)
 
-  const primaryIssues = useMemo(() => getPrimaryIssues(designQa), [designQa])
-  const referenceIssues = useMemo(() => getReferenceIssues(designQa, primaryIssues), [designQa, primaryIssues])
-  const visiblePrimaryIssues = useMemo(() => primaryIssues.slice(0, TOP_ISSUE_LIMIT), [primaryIssues])
-  const foldedIssues = useMemo(() => [...primaryIssues.slice(TOP_ISSUE_LIMIT), ...referenceIssues], [primaryIssues, referenceIssues])
-  const foldedIssueGroups = useMemo(() => groupIssuesBySection(foldedIssues), [foldedIssues])
-  const markerMap = useMemo(() => createMarkerMap(visiblePrimaryIssues, foldedIssues), [visiblePrimaryIssues, foldedIssues])
-  const topCounts = useMemo(() => getTopCounts(visiblePrimaryIssues), [visiblePrimaryIssues])
-  const selectableIssues = [...primaryIssues, ...referenceIssues]
-  const firstIssueId = visiblePrimaryIssues[0]?.id || referenceIssues[0]?.id || ''
-  const activeIssueId = selectableIssues.some((issue) => issue.id === selectedIssueId) ? selectedIssueId : firstIssueId
+  const issueSections = useMemo(() => getIssueSections(designQa), [designQa])
+  const selectableIssues = useMemo(() => issueSections.flatMap((section) => section.items), [issueSections])
+  const waitingIssue = designQa?.waitingIssues?.[0] || null
   const selectedImage = designImages[0]
-  const selectedIssue = selectableIssues.find((issue) => issue.id === activeIssueId) || primaryIssues[0] || referenceIssues[0]
-  const selectedMarkerLabel = selectedIssue ? markerMap.get(selectedIssue.id) : ''
-  const paneMarkers = useMemo(() => createPaneMarkers(visiblePrimaryIssues, markerMap, selectedIssue), [visiblePrimaryIssues, markerMap, selectedIssue])
+  const firstIssueId = selectableIssues[0]?.id || waitingIssue?.id || ''
+  const activeIssueId = selectableIssues.some((issue) => issue.id === selectedIssueId) ? selectedIssueId : firstIssueId
+  const selectedIssue = selectableIssues.find((issue) => issue.id === activeIssueId) || waitingIssue || null
+  const markerMap = useMemo(() => createMarkerMap(selectableIssues), [selectableIssues])
+  const selectedMarkerLabel = selectedIssue ? markerMap.get(selectedIssue.id) || '' : ''
+  const paneMarkers = useMemo(() => createPaneMarkers(selectableIssues, markerMap, selectedIssue), [selectableIssues, markerMap, selectedIssue])
+  const sectionCounts = useMemo(() => getSectionCounts(designQa), [designQa])
+  const totalIssueCount = selectableIssues.length
 
   const handleIssueSelect = (issue) => {
     setSelectedIssueId(issue.id)
@@ -66,26 +57,42 @@ function MockupQaPanel({ designImages, designQa, result }) {
             <p className="eyebrow">웹·시안 비교</p>
             <h3>시안 비교 QA</h3>
           </div>
-          <span>1920 기준 대조</span>
+          <span>텍스트 중심 비교</span>
         </div>
         <div className="mockup-simple-summary">
-          <strong>우선 확인할 항목 {visiblePrimaryIssues.length}개를 찾았습니다.</strong>
-          <span>1번부터 {visiblePrimaryIssues.length}번 표시된 위치만 먼저 확인하세요.</span>
+          {waitingIssue ? (
+            <>
+              <strong>Figma JSON을 입력하면 문구 비교를 시작합니다.</strong>
+              <span>{waitingIssue.detail}</span>
+            </>
+          ) : totalIssueCount > 0 ? (
+            <>
+              <strong>문구와 버튼 확인 {totalIssueCount}건을 찾았습니다.</strong>
+              <span>문구 차이, 누락, 버튼/링크만 먼저 확인하세요.</span>
+            </>
+          ) : (
+            <>
+              <strong>{designQa?.emptyMessage || '큰 문구 차이를 찾지 못했습니다.'}</strong>
+              <span>줄바꿈, 공백, 마침표 차이만 있는 경우 기본 결과에 올리지 않습니다.</span>
+            </>
+          )}
         </div>
-        <div className="mockup-summary-pills" aria-label="우선 확인 항목 유형">
-          {topMetricLabels.map((metric) => (
-            <span key={metric.key}>{metric.label} {topCounts[metric.key]}건</span>
-          ))}
-        </div>
+        {!waitingIssue ? (
+          <div className="mockup-summary-pills" aria-label="문구 비교 결과 요약">
+            {summaryMetricLabels.map((metric) => (
+              <span key={metric.key}>{metric.label} {sectionCounts[metric.key]}건</span>
+            ))}
+          </div>
+        ) : null}
       </article>
 
       <article className="detail-card mockup-viewer-card" id="mockup-compare-viewer">
         <div className="section-title-row">
           <div>
             <h3>웹 화면과 피그마 시안</h3>
-            <p className="panel-note relaxed-note">두 화면은 현재 위치 비율로 함께 스크롤되며, 위치 보기를 누르면 해당 영역으로 이동합니다.</p>
+            <p className="panel-note relaxed-note">두 화면은 스크롤 비율로 함께 이동하며, 위치 정보가 있을 때만 마커를 표시합니다.</p>
           </div>
-          <span>같은 표시 폭으로 축소 표시</span>
+          <span>좌우 비교 뷰 유지</span>
         </div>
 
         <div className="mockup-comparison-grid">
@@ -120,83 +127,61 @@ function MockupQaPanel({ designImages, designQa, result }) {
         </div>
       </article>
 
-      <article className="detail-card mockup-report-card">
-        <div className="section-title-row">
-          <div>
-            <h3>확인 필요 TOP 5</h3>
-            <p className="panel-note relaxed-note">번호, 영역, 확인할 부분과 이유만 먼저 확인하세요.</p>
+      {!waitingIssue ? issueSections.map((section) => (
+        <article className="detail-card mockup-report-card" key={section.id}>
+          <div className="section-title-row">
+            <div>
+              <h3>{section.title}</h3>
+              <p className="panel-note relaxed-note">위치 영역, Figma 문구, Web 문구, 확인 유형만 간단히 표시합니다.</p>
+            </div>
+            <span>{section.items.length}건</span>
           </div>
-          <span>현재 {visiblePrimaryIssues.length}개 표시</span>
-        </div>
-
-        <ul className="mockup-issue-list mockup-top-list">
-          {visiblePrimaryIssues.length > 0 ? visiblePrimaryIssues.map((issue) => (
-            <IssueCard
-              issue={issue}
-              isReference={false}
-              isSelected={selectedIssue?.id === issue.id}
-              key={issue.id}
-              markerLabel={markerMap.get(issue.id)}
-              onSelect={handleIssueSelect}
-            />
-          )) : <li className="empty-row">먼저 확인할 주요 비교 이슈가 없습니다.</li>}
-        </ul>
-      </article>
+          <ul className="mockup-issue-list">
+            {section.items.length > 0 ? section.items.map((issue) => (
+              <IssueRow
+                issue={issue}
+                isSelected={selectedIssue?.id === issue.id}
+                key={issue.id}
+                markerLabel={markerMap.get(issue.id) || ''}
+                onSelect={handleIssueSelect}
+              />
+            )) : <li className="empty-row">{section.emptyMessage}</li>}
+          </ul>
+        </article>
+      )) : (
+        <article className="detail-card mockup-report-card">
+          <div className="section-title-row">
+            <div>
+              <h3>비교 대기</h3>
+              <p className="panel-note relaxed-note">Figma JSON과 웹 캡처가 함께 있어야 문구 비교가 생성됩니다.</p>
+            </div>
+          </div>
+          <ul className="mockup-issue-list">
+            <IssueRow issue={waitingIssue} isSelected markerLabel="[대기]" onSelect={handleIssueSelect} />
+          </ul>
+        </article>
+      )}
 
       <details className="detail-card mockup-folded-card">
         <summary>
           <span>
-            <strong>전체 참고 이슈 보기</strong>
-            <small>기본 접힘 · 나머지 주요 후보와 푸터/디스클레이머 포함 {foldedIssues.length}건</small>
+            <strong>스타일 참고</strong>
+            <small>기본 접힘 · 글씨 크기, 컬러, 위치 차이는 이번 결과 기본 목록에서 제외했습니다.</small>
           </span>
           <span className="section-priority-badge">참고</span>
         </summary>
-        <div className="mockup-section-list mockup-reference-list">
-          {foldedIssueGroups.length > 0 ? foldedIssueGroups.map((group) => (
-            <details className={`mockup-section-card ${group.isFooterDisclaimer ? 'is-footer' : ''}`} key={group.id}>
-              <summary>
-                <span>
-                  <strong>{group.isFooterDisclaimer ? '푸터/디스클레이머' : group.name}</strong>
-                  <small>{group.issues.length}건 · 참고 확인</small>
-                </span>
-                <span className="section-priority-badge">접힘</span>
-              </summary>
-              <ul className="mockup-issue-list">
-                {group.isFooterDisclaimer ? (
-                  <FooterReferenceCard
-                    count={group.issues.length}
-                    issue={group.issues[0]}
-                    isSelected={selectedIssue?.id === group.issues[0]?.id}
-                    markerLabel={group.issues[0] ? markerMap.get(group.issues[0].id) : '참고'}
-                    onSelect={handleIssueSelect}
-                  />
-                ) : group.issues.map((issue) => (
-                  <IssueCard
-                    issue={issue}
-                    isReference
-                    isSelected={selectedIssue?.id === issue.id}
-                    key={issue.id}
-                    markerLabel={markerMap.get(issue.id)}
-                    onSelect={handleIssueSelect}
-                  />
-                ))}
-              </ul>
-            </details>
-          )) : <p className="empty-row">접힌 참고 이슈가 없습니다.</p>}
-        </div>
+        <p className="panel-note relaxed-note">필요하면 상단 비교 뷰어에서 직접 확인해 주세요. 이번 결과 생성은 문구와 버튼 비교를 우선합니다.</p>
       </details>
 
       <details className="detail-card mockup-folded-card">
         <summary>
           <span>
-            <strong>상세 데이터</strong>
-            <small>기본 접힘 · 원문과 위치 데이터는 내부 비교용으로만 사용</small>
+            <strong>이미지 참고</strong>
+            <small>기본 접힘 · 시안 이미지와 웹 이미지는 비교 뷰어에서 위치 참고용으로만 유지합니다.</small>
           </span>
-          <span className="section-priority-badge">상세</span>
+          <span className="section-priority-badge">참고</span>
         </summary>
-        <p className="panel-note relaxed-note">
-          줄바꿈, 공백, 마침표, 글꼴 이름 차이는 기본 확인 항목으로 보지 않습니다. 상세 좌표와 원문 데이터는 각 카드의 상세 보기에서만 확인할 수 있습니다.
-        </p>
+        <p className="panel-note relaxed-note">위치 정보가 없는 경우 마커를 억지로 만들지 않습니다.</p>
       </details>
     </section>
   )
@@ -211,14 +196,14 @@ function ComparisonPane({ anchorLabel, frameRef, highlightRatio, imageAlt, image
       </div>
       {issue ? (
         <p className="comparison-selected-context">
-          선택 이슈 {markerLabel} · {getSafeSectionName(issue)} · {highlightRatio === null ? '위치 정보 없음' : `${formatPercent(highlightRatio)} 지점`}
+          선택 항목 {markerLabel || '[선택]'} · {getSafeSectionName(issue)} · {highlightRatio === null ? '위치 정보 없음' : `${formatPercent(highlightRatio)} 지점`}
         </p>
       ) : null}
       <div
         className="comparison-image-frame"
         data-anchor-scope={anchorLabel}
         ref={frameRef}
-        style={{ '--highlight-top': `${(highlightRatio || 0) * 100}%` }}
+        style={{ '--highlight-top': highlightRatio === null ? undefined : `${highlightRatio * 100}%` }}
         tabIndex="-1"
         onScroll={onScroll}
       >
@@ -242,68 +227,45 @@ function ComparisonPane({ anchorLabel, frameRef, highlightRatio, imageAlt, image
   )
 }
 
-function IssueCard({ issue, isReference, isSelected, markerLabel, onSelect }) {
+function IssueRow({ issue, isSelected, markerLabel, onSelect }) {
   return (
     <li className={`mockup-issue-card ${issue.status} ${isSelected ? 'is-selected' : ''}`}>
       <button type="button" onClick={() => onSelect(issue)}>
         <span className="mockup-issue-meta">
-          <span className="issue-marker-chip">{markerLabel}</span>
-          <span>{isReference ? '참고' : statusLabels[issue.status]}</span>
+          <span className="issue-marker-chip">{markerLabel || '[선택]'}</span>
+          <span>{issue.label}</span>
         </span>
-        <strong>{markerLabel} {getSafeSectionName(issue)} - {getIssueTypeLabel(issue)}</strong>
+        <strong>{getSafeSectionName(issue)}</strong>
         <dl className="mockup-card-fields">
           <div>
-            <dt>확인할 부분</dt>
-            <dd><IssueText text={getIssueItemText(issue)} /></dd>
+            <dt>위치 영역</dt>
+            <dd>{getSafeSectionName(issue)}</dd>
           </div>
-          {hasTextDifference(issue) ? (
-            <>
-              <div>
-                <dt>Figma</dt>
-                <dd><IssueText text={issue.figma?.text || '피그마 문구 없음'} /></dd>
-              </div>
-              <div>
-                <dt>Web</dt>
-                <dd><IssueText text={issue.web?.text || '웹 문구 없음'} /></dd>
-              </div>
-            </>
-          ) : null}
           <div>
-            <dt>왜 확인해야 하나요?</dt>
-            <dd>{getConfirmText(issue)}</dd>
+            <dt>Figma</dt>
+            <dd><IssueText text={issue.figma?.text || (issue.matchType === 'waiting' ? '피그마 기준 없음' : '없음')} /></dd>
+          </div>
+          <div>
+            <dt>Web</dt>
+            <dd><IssueText text={issue.web?.text || (issue.matchType === 'waiting' ? '웹 기준 대기' : '없음')} /></dd>
+          </div>
+          <div>
+            <dt>확인 유형</dt>
+            <dd>{issue.label}</dd>
           </div>
         </dl>
-        <span className="mockup-location-action">위치 보기</span>
+        <span className="mockup-location-action">{hasReliableLocation(issue) ? '위치 보기' : '위치 정보 없음'}</span>
       </button>
       <IssueRawDetails issue={issue} />
     </li>
   )
 }
 
-function FooterReferenceCard({ count, issue, isSelected, markerLabel, onSelect }) {
-  if (!issue) return null
-
-  return (
-    <li className={`mockup-issue-card warn ${isSelected ? 'is-selected' : ''}`}>
-      <button type="button" onClick={() => onSelect(issue)}>
-        <span className="mockup-issue-meta">
-          <span className="issue-marker-chip">참고</span>
-          <span>참고</span>
-        </span>
-        <strong>[참고] 푸터/디스클레이머 영역</strong>
-        <p className="mockup-footer-note">긴 문구 영역입니다. 필요 시 별도로 확인해 주세요. 관련 참고 항목 {count}건은 한 카드로 묶었습니다.</p>
-        <span className="mockup-location-action">위치 보기</span>
-      </button>
-      <IssueRawDetails issue={issue} markerLabel={markerLabel} />
-    </li>
-  )
-}
-
 function IssueText({ text }) {
-  if (!text) return <span className="mockup-issue-text">문구 없음</span>
-  if (text.length <= 120) return <span className="mockup-issue-text">{text}</span>
+  if (!text) return <span className="mockup-issue-text">없음</span>
+  if (text.length <= 140) return <span className="mockup-issue-text">{text}</span>
 
-  return <span className="mockup-issue-text">{text.slice(0, 120)}...</span>
+  return <span className="mockup-issue-text">{text.slice(0, 140)}...</span>
 }
 
 function IssueRawDetails({ issue }) {
@@ -311,9 +273,9 @@ function IssueRawDetails({ issue }) {
     <details className="mockup-raw-details">
       <summary>상세 보기</summary>
       <div className="mockup-raw-grid">
-        <RawEvidence title="이슈 원문" rows={getIssueRawRows(issue)} />
-        <RawEvidence title="피그마 값" rows={getRawEvidenceRows(issue.figma)} />
-        <RawEvidence title="웹 값" rows={getRawEvidenceRows(issue.web)} />
+        <RawEvidence title="이슈 정보" rows={getIssueRawRows(issue)} />
+        <RawEvidence title="Figma 값" rows={getRawEvidenceRows(issue.figma)} />
+        <RawEvidence title="Web 값" rows={getRawEvidenceRows(issue.web)} />
       </div>
       {(issue.differences || []).length > 0 ? (
         <ul className="mockup-difference-list">
@@ -343,46 +305,42 @@ function RawEvidence({ title, rows }) {
   )
 }
 
-function getIssueRawRows(issue) {
+function getIssueSections(designQa = {}) {
   return [
-    ['상세', formatPlannerCopy(issue.detail)],
-    ['피그마 문구', issue.figma?.text || '-'],
-    ['웹 문구', issue.web?.text || '-'],
-    ['similarityScore', issue.similarityScore ?? '-'],
-    ['matchedBy', issue.matchedBy || '-'],
-    ['레이어 경로', issue.layerPath || issue.figma?.layerPath || issue.web?.layerPath || '-'],
+    {
+      id: 'text-differences',
+      title: '문구 차이',
+      items: Array.isArray(designQa.textDifferences) ? designQa.textDifferences : [],
+      emptyMessage: '큰 문구 차이를 찾지 못했습니다.',
+    },
+    {
+      id: 'figma-only',
+      title: '시안에만 있음',
+      items: Array.isArray(designQa.figmaOnly) ? designQa.figmaOnly : [],
+      emptyMessage: '시안에만 남은 문구를 찾지 못했습니다.',
+    },
+    {
+      id: 'web-only',
+      title: '웹에만 있음',
+      items: Array.isArray(designQa.webOnly) ? designQa.webOnly : [],
+      emptyMessage: '웹에만 남은 문구를 찾지 못했습니다.',
+    },
+    {
+      id: 'buttons',
+      title: '버튼/링크 확인',
+      items: Array.isArray(designQa.buttonIssues) ? designQa.buttonIssues : [],
+      emptyMessage: '버튼/링크 확인 항목이 없습니다.',
+    },
   ]
 }
 
-function getPrimaryIssues(designQa = {}) {
-  const primaryIssues = Array.isArray(designQa.primaryIssues) ? designQa.primaryIssues : []
-  const topIssues = Array.isArray(designQa.topIssues) ? designQa.topIssues.filter((issue) => !issue.isReference) : []
-  if (primaryIssues.length > 0) {
-    const topIssueIds = new Set(topIssues.map((issue) => issue.id))
-    return [...topIssues, ...primaryIssues.filter((issue) => !topIssueIds.has(issue.id))]
+function getSectionCounts(designQa = {}) {
+  return {
+    textDifferences: Array.isArray(designQa.textDifferences) ? designQa.textDifferences.length : 0,
+    figmaOnly: Array.isArray(designQa.figmaOnly) ? designQa.figmaOnly.length : 0,
+    webOnly: Array.isArray(designQa.webOnly) ? designQa.webOnly.length : 0,
+    buttonIssues: Array.isArray(designQa.buttonIssues) ? designQa.buttonIssues.length : 0,
   }
-
-  if (topIssues.length > 0) return topIssues
-
-  return (designQa.issues || []).filter((issue) => issue.status !== 'ok' && !issue.isReference)
-}
-
-function getReferenceIssues(designQa = {}, primaryIssues) {
-  if (Array.isArray(designQa.referenceIssues)) return designQa.referenceIssues
-
-  const primaryIds = new Set(primaryIssues.map((issue) => issue.id))
-  return (designQa.issues || []).filter((issue) => issue.status !== 'ok' && (issue.isReference || issue.isFooterDisclaimer) && !primaryIds.has(issue.id))
-}
-
-function getTopCounts(issues) {
-  return issues.reduce((counts, issue) => {
-    const categories = getCategories(issue)
-    return {
-      text: counts.text + (categories.includes('text') ? 1 : 0),
-      cta: counts.cta + (categories.includes('cta') ? 1 : 0),
-      design: counts.design + (categories.some((category) => ['style', 'layout', 'image'].includes(category)) ? 1 : 0),
-    }
-  }, { text: 0, cta: 0, design: 0 })
 }
 
 function createPaneMarkers(issues, markerMap, selectedIssue) {
@@ -391,58 +349,73 @@ function createPaneMarkers(issues, markerMap, selectedIssue) {
     : issues
 
   return markerIssues.reduce((markers, issue) => ({
-    web: [...markers.web, { issueId: issue.id, label: markerMap.get(issue.id), ratio: getPanePositionRatio(issue, 'web') }],
-    figma: [...markers.figma, { issueId: issue.id, label: markerMap.get(issue.id), ratio: getPanePositionRatio(issue, 'figma') }],
+    web: [...markers.web, { issueId: issue.id, label: markerMap.get(issue.id) || '[선택]', ratio: getPanePositionRatio(issue, 'web') }],
+    figma: [...markers.figma, { issueId: issue.id, label: markerMap.get(issue.id) || '[선택]', ratio: getPanePositionRatio(issue, 'figma') }],
   }), { web: [], figma: [] })
 }
 
-function createMarkerMap(primaryIssues, referenceIssues) {
+function createMarkerMap(issues) {
   const markerMap = new Map()
-  primaryIssues.forEach((issue, index) => markerMap.set(issue.id, `[${String(index + 1).padStart(2, '0')}]`))
-  referenceIssues.forEach((issue, index) => markerMap.set(issue.id, `[R${String(index + 1).padStart(2, '0')}]`))
+  issues.forEach((issue, index) => markerMap.set(issue.id, `[${String(index + 1).padStart(2, '0')}]`))
   return markerMap
 }
 
-function groupIssuesBySection(issues) {
-  const groups = new Map()
+function getIssueRawRows(issue) {
+  return [
+    ['확인 유형', issue.label],
+    ['상세', formatPlannerCopy(issue.detail || '-')],
+    ['위치 영역', getSafeSectionName(issue)],
+    ['similarityScore', issue.similarityScore ?? '-'],
+    ['matchedBy', issue.matchedBy || '-'],
+  ]
+}
 
-  issues.forEach((issue) => {
-    const key = issue.sectionId || issue.sectionName || '기타 섹션'
-    const group = groups.get(key) || {
-      id: key,
-      name: getSafeSectionName(issue),
-      priority: issue.priority ?? 9,
-      text: 0,
-      cta: 0,
-      design: 0,
-      isFooterDisclaimer: Boolean(issue.isFooterDisclaimer),
-      positionRatio: getPanePositionRatio(issue, 'figma') ?? getPanePositionRatio(issue, 'web') ?? 1,
-      issues: [],
-    }
+function getRawEvidenceRows(evidence) {
+  if (!evidence) return [['상태', '-']]
+  return [
+    ['텍스트', evidence.text || '-'],
+    ['href', evidence.href || '-'],
+    ['위치', `${formatRawNumber(evidence.x)} / ${formatRawNumber(evidence.y)}`],
+    ['영역 크기', `${formatRawNumber(evidence.width)} / ${formatRawNumber(evidence.height)}`],
+    ['레이어 경로', evidence.layerPath || '-'],
+  ]
+}
 
-    const categories = getCategories(issue)
-    group.priority = Math.min(group.priority, issue.priority ?? group.priority)
-    group.positionRatio = Math.min(group.positionRatio, getPanePositionRatio(issue, 'figma') ?? getPanePositionRatio(issue, 'web') ?? group.positionRatio)
-    group.text += categories.includes('text') ? 1 : 0
-    group.cta += categories.includes('cta') ? 1 : 0
-    group.design += categories.some((category) => ['style', 'layout', 'image'].includes(category)) ? 1 : 0
-    group.isFooterDisclaimer = group.isFooterDisclaimer || issue.isFooterDisclaimer
-    group.issues.push(issue)
-    groups.set(key, group)
-  })
+function scrollPaneToIssue(frameRef, issue, pane) {
+  window.requestAnimationFrame(() => {
+    const frame = frameRef.current
+    if (!frame) return
 
-  return Array.from(groups.values()).sort((first, second) => {
-    if (first.positionRatio !== second.positionRatio) return first.positionRatio - second.positionRatio
-    return second.issues.length - first.issues.length
+    const ratio = getPanePositionRatio(issue, pane)
+    if (ratio === null) return
+
+    const maxScroll = frame.scrollHeight - frame.clientHeight
+    frame.scrollTop = Math.max(0, maxScroll * ratio)
+    frame.focus({ preventScroll: true })
   })
 }
 
+function getPanePositionRatio(issue, pane) {
+  if (!issue) return null
+
+  const paneRatio = pane === 'web' ? issue.web?.positionRatio : issue.figma?.positionRatio
+  if (isFiniteRatio(paneRatio)) return clampRatio(paneRatio)
+  return null
+}
+
+function hasReliableLocation(issue) {
+  return getPanePositionRatio(issue, 'figma') !== null || getPanePositionRatio(issue, 'web') !== null
+}
+
 function getSafeSectionName(issue) {
+  if (!issue) return '위치 정보 없음'
   if (issue.isFooterDisclaimer) return '푸터/디스클레이머'
-  const sectionName = issue.sectionName || issue.region
+
+  const sectionName = issue.sectionName || issue.region || issue.figma?.sectionName || issue.web?.sectionName
   if (sectionName && !isRawSectionName(sectionName)) return sectionName
 
-  return getPlannerSectionNameByRatio(issue.anchor?.positionRatio ?? issue.figma?.positionRatio ?? issue.web?.positionRatio)
+  const ratio = issue.figma?.positionRatio ?? issue.web?.positionRatio ?? issue.anchor?.positionRatio
+  return getPlannerSectionNameByRatio(ratio)
 }
 
 function isRawSectionName(sectionName) {
@@ -456,6 +429,8 @@ function isRawSectionName(sectionName) {
 }
 
 function getPlannerSectionNameByRatio(positionRatio) {
+  if (!isFiniteRatio(positionRatio)) return '위치 정보 없음'
+
   const ratio = clampRatio(positionRatio)
   if (ratio < 0.22) return '상단 영역'
   if (ratio < 0.74) return '주요 콘텐츠 영역'
@@ -463,114 +438,11 @@ function getPlannerSectionNameByRatio(positionRatio) {
   return '푸터/디스클레이머'
 }
 
-function getConfirmText(issue) {
-  const categories = getCategories(issue)
-  if (categories.includes('cta')) return hasTextDifference(issue) ? '버튼 문구가 다릅니다.' : '버튼 문구와 연결 의도가 시안과 같은지 확인하세요.'
-  if (categories.includes('text')) return hasTextDifference(issue) ? '문구가 다릅니다.' : '문구가 시안 의도와 동일한지 확인하세요.'
-  if (categories.includes('layout')) return '이미지의 표시 위치와 크기 차이가 허용 가능한지 확인하세요.'
-  if (categories.includes('style') || categories.includes('image')) return '시안과 웹 화면의 시각 차이가 의도된 것인지 확인하세요.'
-  return '선택한 영역을 웹/피그마 이미지에서 비교해 확인하세요.'
-}
-
-function getCategories(issue) {
-  return Array.isArray(issue.categories) ? issue.categories : []
-}
-
-function hasTextDifference(issue) {
-  return Boolean(issue.figma?.text && issue.web?.text && getCategories(issue).includes('text'))
-}
-
-function getIssueTypeLabel(issue) {
-  const categories = getCategories(issue)
-  if (categories.includes('cta')) return '버튼 확인'
-  if (categories.includes('text')) return '문구 확인'
-  if (categories.includes('image')) return '이미지 확인'
-  return '확인 필요'
-}
-
-function getIssueItemText(issue) {
-  return formatPlannerCopy(sanitizeDefaultDisplayText(issue.text, getPlannerFallbackText(issue, 'item')))
-}
-
-function sanitizeDefaultDisplayText(value, fallback) {
-  const text = typeof value === 'string' ? value.trim() : ''
-  if (!text) return fallback
-  if (isRawPlannerText(text)) return fallback
-  return text
-}
-
 function formatPlannerCopy(value) {
   return String(value)
     .replace(/\bFigma\b/g, '피그마')
     .replace(/\bWeb\b/g, '웹')
     .replace(/\bCTA\b/g, '버튼')
-    .replace(/\bcon\b/gi, '주요 콘텐츠 영역')
-    .replace(/\bHigh\b/g, '확인 필요')
-    .replace(/\bfontFamily\b/g, '글꼴 정보')
-    .replace(/\bxRatio\b/g, '가로 위치')
-    .replace(/\blayerPath\b/g, '레이어 경로')
-    .replace(/\bnormalizedText\b/g, '정리된 문구')
-    .replace(/Main_visual/gi, '상단 영역')
-}
-
-function isRawPlannerText(value) {
-  const text = String(value).trim()
-  const normalizedText = text.toLowerCase()
-  const compactText = normalizedText.replace(/\s+/g, '')
-
-  return normalizedText === 'con'
-    || normalizedText.includes('hero/kv')
-    || normalizedText.includes('hero / kv')
-    || normalizedText.includes('main_visual')
-    || normalizedText.includes('main visual')
-    || normalizedText.includes('section_')
-    || /(^|\s|[-_])con($|\s|[-_])/.test(normalizedText)
-    || /\s\/\s|\/|>/.test(text)
-    || /^section[_-]?\d*/i.test(text)
-    || /^frame[_-]?\d*/i.test(text)
-    || /^(vector|path|shape|rectangle|ellipse|line|group|frame|blende|blend|logo|icon|icon frame)([_\s-]?\d*)?$/i.test(text)
-    || /^(main[_\s-]?visual|hero|kv|con)([_\s-]?(image|img|graphic|candidate|copy|text))*$/i.test(text)
-    || /^(image|img|graphic|icon)[_\s-]?\d*$/i.test(text)
-    || compactText === 'mainvisualimage'
-}
-
-function getPlannerFallbackText(issue, source) {
-  if (source === 'figma') return getCategories(issue).includes('image') ? '시안 이미지' : '피그마 확인 항목'
-  if (source === 'web') return getCategories(issue).includes('image') ? '웹 이미지' : '웹 확인 항목'
-  if (getCategories(issue).includes('image')) return issue.label && !isRawPlannerText(issue.label) ? issue.label : '이미지 후보'
-  return issue.label && !isRawPlannerText(issue.label) ? issue.label : '확인 항목'
-}
-
-function getRawEvidenceRows(evidence) {
-  if (!evidence) return [['상태', '-']]
-  return [
-    ['텍스트', evidence.text || '-'],
-    ['글자 크기', evidence.fontSize],
-    ['색상', evidence.color],
-    ['위치', `${formatRawNumber(evidence.x)} / ${formatRawNumber(evidence.y)}`],
-    ['영역 크기', `${formatRawNumber(evidence.width)} / ${formatRawNumber(evidence.height)}`],
-    ['레이어 경로', evidence.layerPath || '-'],
-  ]
-}
-
-function scrollPaneToIssue(frameRef, issue, pane) {
-  window.requestAnimationFrame(() => {
-    const frame = frameRef.current
-    if (!frame) return
-    const ratio = getPanePositionRatio(issue, pane)
-    if (ratio === null) return
-
-    const maxScroll = frame.scrollHeight - frame.clientHeight
-    frame.scrollTop = Math.max(0, maxScroll * ratio)
-    frame.focus({ preventScroll: true })
-  })
-}
-
-function getPanePositionRatio(issue, pane) {
-  if (!issue) return null
-  const paneRatio = pane === 'web' ? issue.web?.positionRatio : issue.figma?.positionRatio
-  const ratio = paneRatio ?? issue.anchor?.positionRatio
-  return ratio === null || ratio === undefined ? null : clampRatio(ratio)
 }
 
 function formatImageMeta(image) {
@@ -599,6 +471,10 @@ function formatRawNumber(value) {
 function formatRawValue(value) {
   if (value === undefined || value === null || value === '') return '-'
   return formatPlannerCopy(String(value))
+}
+
+function isFiniteRatio(value) {
+  return Number.isFinite(Number(value))
 }
 
 function clampRatio(value) {

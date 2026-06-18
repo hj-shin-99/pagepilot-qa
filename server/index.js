@@ -237,29 +237,10 @@ async function safeDomSnapshot(page, targetUrl) {
         naturalHeight: image.naturalHeight,
       }))
 
-      const designElements = Array.from(document.querySelectorAll('h1,h2,h3,p,a,button,img')).slice(0, maxDesignElements).map((element, index) => {
-        const rect = element.getBoundingClientRect()
-        const styles = window.getComputedStyle(element)
-        const text = element.tagName.toLowerCase() === 'img'
-          ? element.getAttribute('alt') || element.getAttribute('aria-label') || ''
-          : element.textContent?.trim().replace(/\s+/g, ' ') || element.getAttribute('aria-label') || ''
-
-        return {
-          index: index + 1,
-          tag: element.tagName.toLowerCase(),
-          text,
-          fontFamily: styles.fontFamily,
-          fontSize: styles.fontSize,
-          fontWeight: styles.fontWeight,
-          lineHeight: styles.lineHeight,
-          color: styles.color,
-          x: Math.round((rect.x + window.scrollX) * 100) / 100,
-          y: Math.round((rect.y + window.scrollY) * 100) / 100,
-          width: Math.round(rect.width * 100) / 100,
-          height: Math.round(rect.height * 100) / 100,
-          href: element.tagName.toLowerCase() === 'a' ? element.href : '',
-        }
-      })
+      const designElements = collectVisibleDesignElements().slice(0, maxDesignElements).map((entry, index) => ({
+        index: index + 1,
+        ...entry,
+      }))
 
       return {
         links,
@@ -283,6 +264,171 @@ async function safeDomSnapshot(page, targetUrl) {
         } catch {
           return ''
         }
+      }
+
+      function collectVisibleDesignElements() {
+        const elementsByKey = new Map()
+        const documentHeight = Math.max(
+          document.documentElement.scrollHeight,
+          document.body?.scrollHeight || 0,
+          window.innerHeight,
+        ) || 1
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+          acceptNode(node) {
+            if (!node.textContent || !normalizeText(node.textContent)) return NodeFilter.FILTER_REJECT
+
+            const parent = node.parentElement
+            if (!parent || !isVisibleElement(parent)) return NodeFilter.FILTER_REJECT
+            if (isIgnoredTag(parent.tagName)) return NodeFilter.FILTER_REJECT
+            return NodeFilter.FILTER_ACCEPT
+          },
+        })
+
+        while (walker.nextNode()) {
+          const node = walker.currentNode
+          const anchor = getTextAnchor(node.parentElement)
+          if (!anchor || !isVisibleElement(anchor)) continue
+
+          const text = normalizeText(node.textContent)
+          if (!text) continue
+
+          const key = getElementKey(anchor)
+          const entry = elementsByKey.get(key) || createElementEntry(anchor, documentHeight)
+          if (!entry) continue
+          entry.textParts.push(text)
+          elementsByKey.set(key, entry)
+        }
+
+        document.querySelectorAll('a, button, [role="button"], input[type="button"], input[type="submit"]').forEach((element) => {
+          if (!isVisibleElement(element)) return
+
+          const key = getElementKey(element)
+          const entry = elementsByKey.get(key) || createElementEntry(element, documentHeight)
+          if (!entry) return
+
+          if (entry.textParts.length === 0) {
+            const fallbackText = normalizeText(element.value || element.innerText || element.textContent || '')
+            if (fallbackText) entry.textParts.push(fallbackText)
+          }
+
+          elementsByKey.set(key, entry)
+        })
+
+        return Array.from(elementsByKey.values())
+          .map((entry) => finalizeElementEntry(entry))
+          .filter(Boolean)
+          .sort((first, second) => {
+            if (first.y !== second.y) return first.y - second.y
+            return first.x - second.x
+          })
+      }
+
+      function createElementEntry(element, documentHeight) {
+        const rect = element.getBoundingClientRect()
+        if (!hasVisibleRect(rect)) return null
+
+        const styles = window.getComputedStyle(element)
+        const x = rect.x + window.scrollX
+        const y = rect.y + window.scrollY
+
+        return {
+          element,
+          tag: element.tagName.toLowerCase(),
+          layerPath: getElementPath(element),
+          href: element.tagName.toLowerCase() === 'a' ? element.getAttribute('href')?.trim() || '' : '',
+          fontFamily: styles.fontFamily,
+          fontSize: styles.fontSize,
+          fontWeight: styles.fontWeight,
+          lineHeight: styles.lineHeight,
+          color: styles.color,
+          x: Math.round(x * 100) / 100,
+          y: Math.round(y * 100) / 100,
+          width: Math.round(rect.width * 100) / 100,
+          height: Math.round(rect.height * 100) / 100,
+          positionRatio: Math.max(0, Math.min(1, y / documentHeight)),
+          textParts: [],
+        }
+      }
+
+      function finalizeElementEntry(entry) {
+        const text = normalizeText(entry.textParts.join(' '))
+        if (!text) return null
+
+        return {
+          tag: entry.tag,
+          text,
+          layerPath: entry.layerPath,
+          href: entry.href,
+          fontFamily: entry.fontFamily,
+          fontSize: entry.fontSize,
+          fontWeight: entry.fontWeight,
+          lineHeight: entry.lineHeight,
+          color: entry.color,
+          x: entry.x,
+          y: entry.y,
+          width: entry.width,
+          height: entry.height,
+          positionRatio: entry.positionRatio,
+        }
+      }
+
+      function getTextAnchor(element) {
+        if (!element) return null
+
+        const semanticAnchor = element.closest('a, button, [role="button"], input[type="button"], input[type="submit"], h1, h2, h3, h4, h5, h6, p, li, dt, dd, blockquote, figcaption, label, small')
+        if (semanticAnchor && isVisibleElement(semanticAnchor)) return semanticAnchor
+
+        return element
+      }
+
+      function isVisibleElement(element) {
+        if (!element || element.closest('[hidden], [aria-hidden="true"]')) return false
+
+        const styles = window.getComputedStyle(element)
+        if (styles.display === 'none' || styles.visibility === 'hidden') return false
+        if (Number.parseFloat(styles.opacity || '1') === 0) return false
+
+        return hasVisibleRect(element.getBoundingClientRect())
+      }
+
+      function hasVisibleRect(rect) {
+        return Boolean(rect && rect.width > 0 && rect.height > 0)
+      }
+
+      function normalizeText(value) {
+        return String(value || '').replace(/\s+/g, ' ').trim()
+      }
+
+      function isIgnoredTag(tagName) {
+        return ['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE'].includes(String(tagName || '').toUpperCase())
+      }
+
+      function getElementKey(element) {
+        if (!element) return ''
+        if (element.dataset.designQaKey) return element.dataset.designQaKey
+
+        const key = `${element.tagName.toLowerCase()}-${Math.random().toString(36).slice(2, 10)}`
+        element.dataset.designQaKey = key
+        return key
+      }
+
+      function getElementPath(element) {
+        if (!element) return ''
+
+        const parts = []
+        let current = element
+        let depth = 0
+
+        while (current && current !== document.body && depth < 4) {
+          const tagName = current.tagName.toLowerCase()
+          const idPart = current.id ? `#${current.id}` : ''
+          const classPart = current.classList.length > 0 ? `.${Array.from(current.classList).slice(0, 2).join('.')}` : ''
+          parts.unshift(`${tagName}${idPart}${classPart}`)
+          current = current.parentElement
+          depth += 1
+        }
+
+        return parts.join(' > ')
       }
     }, { baseUrl: targetUrl, maxDesignElements: MAX_DESIGN_ELEMENTS })
   } catch {

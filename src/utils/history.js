@@ -1,4 +1,5 @@
-const HISTORY_KEY = 'pagepilot-qa-history-v2'
+const HISTORY_KEY = 'pagepilot-qa-history-v3'
+const LEGACY_HISTORY_KEY = 'pagepilot-qa-history-v2'
 const MAX_HISTORY_ITEMS = 10
 const EMPTY_COUNTS = {
   total: 0,
@@ -14,7 +15,8 @@ const EMPTY_COUNTS = {
 
 export function loadHistoryItems() {
   try {
-    const parsed = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]')
+    const storedHistory = localStorage.getItem(HISTORY_KEY) || localStorage.getItem(LEGACY_HISTORY_KEY) || '[]'
+    const parsed = JSON.parse(storedHistory)
     return Array.isArray(parsed) ? parsed.map(sanitizeHistoryItem).filter(Boolean) : []
   } catch {
     return []

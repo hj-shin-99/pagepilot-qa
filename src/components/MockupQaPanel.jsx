@@ -9,7 +9,9 @@ const summaryMetricLabels = [
   { key: 'imageIssues', label: '이미지 참고' },
 ]
 
-function MockupQaPanel({ designImages, designQa, result }) {
+const aiQaGroups = ['문구 차이', '시안에만 있음', '웹에만 있음', '버튼/링크 확인', '이미지 확인', '레이아웃 확인', '참고']
+
+function MockupQaPanel({ aiQa, designImages, designQa, result, onRunAiQa }) {
   const [selectedIssueId, setSelectedIssueId] = useState('')
   const webFrameRef = useRef(null)
   const figmaFrameRef = useRef(null)
@@ -68,9 +70,9 @@ function MockupQaPanel({ designImages, designQa, result }) {
         <div className="section-title-row">
           <div>
             <p className="eyebrow">웹·시안 비교</p>
-            <h3>시안 비교 QA</h3>
+            <h3>시안 비교 QA V3</h3>
           </div>
-          <span>텍스트 중심 비교</span>
+          <span>Playwright + JSON + 로컬 규칙 + OpenAI</span>
         </div>
         <div className="mockup-simple-summary">
           {waitingIssue ? (
@@ -98,6 +100,8 @@ function MockupQaPanel({ designImages, designQa, result }) {
           </div>
         ) : null}
       </article>
+
+      <AiQaIntegratedPanel aiQa={aiQa} onRunAiQa={onRunAiQa} />
 
       <article className="detail-card mockup-viewer-card" id="mockup-compare-viewer">
         <div className="section-title-row">
@@ -177,6 +181,8 @@ function MockupQaPanel({ designImages, designQa, result }) {
         </article>
       )}
 
+      <AiQaResultSections aiQa={aiQa} />
+
       {!waitingIssue && referenceIssues.length > 0 ? (
         <details className="detail-card mockup-folded-card">
           <summary>
@@ -202,6 +208,135 @@ function MockupQaPanel({ designImages, designQa, result }) {
 
     </section>
   )
+}
+
+function AiQaIntegratedPanel({ aiQa, onRunAiQa }) {
+  const result = aiQa?.result || null
+  const isRunning = aiQa?.state === 'running'
+  const hasError = Boolean(aiQa?.error)
+
+  return (
+    <article className="detail-card ai-qa-hero-card">
+      <div className="section-title-row">
+        <div>
+          <p className="eyebrow">AI 기획 QA</p>
+          <h3>OpenAI 통합 검수</h3>
+          <p className="panel-note relaxed-note">AI는 Web/Figma 이미지를 우선 보고, DOM 텍스트와 Figma JSON은 보조 근거로 사용합니다.</p>
+        </div>
+        <button className="primary-button ai-run-button" type="button" disabled={isRunning} onClick={onRunAiQa}>
+          {isRunning ? 'AI 검수 중입니다...' : result ? 'AI로 다시 검수하기' : 'AI로 검수하기'}
+        </button>
+      </div>
+
+      <div className="ai-summary-box">
+        {result ? (
+          <>
+            <strong>AI 검수 요약</strong>
+            <span>{result.summary}</span>
+            <div className="ai-summary-pills">
+              <span>신뢰도 {formatConfidence(result.confidence)}</span>
+              <span>확인 필요 {result.items.length}건</span>
+            </div>
+          </>
+        ) : isRunning ? (
+          <>
+            <strong>AI 검수 중입니다...</strong>
+            <span>Web 캡처, Figma 시안 이미지, DOM 텍스트, Figma JSON, 로컬 후보 이슈를 종합해 확인 중입니다.</span>
+          </>
+        ) : (
+          <>
+            <strong>AI QA 대기</strong>
+            <span>검사 완료 후 확인한 경우 1회 자동 실행됩니다. 같은 결과에서는 재실행 버튼을 누르기 전까지 다시 호출하지 않습니다.</span>
+          </>
+        )}
+      </div>
+
+      {hasError ? <p className="ai-error-message">{aiQa.error}</p> : null}
+      {aiQa?.rawText ? (
+        <details className="ai-raw-response">
+          <summary>원문 응답 보기</summary>
+          <pre>{aiQa.rawText}</pre>
+        </details>
+      ) : null}
+      <p className="ai-cost-note">AI QA는 OpenAI API를 사용하므로 실행할 때마다 API 크레딧이 소모됩니다.</p>
+    </article>
+  )
+}
+
+function AiQaResultSections({ aiQa }) {
+  const items = Array.isArray(aiQa?.result?.items) ? aiQa.result.items : []
+  if (items.length === 0) return null
+
+  const groupedItems = groupAiItems(items)
+
+  return aiQaGroups.map((group) => (
+    <article className="detail-card ai-result-card" key={group}>
+      <div className="section-title-row">
+        <h3>AI {group}</h3>
+        <span>{groupedItems[group].length}건</span>
+      </div>
+      {groupedItems[group].length > 0 ? (
+        <ul className="ai-issue-list">
+          {groupedItems[group].map((item, index) => (
+            <AiIssueRow item={item} key={`${group}-${index}-${item.title}`} number={index + 1} />
+          ))}
+        </ul>
+      ) : <p className="empty-row">해당 항목 없음</p>}
+    </article>
+  ))
+}
+
+function AiIssueRow({ item, number }) {
+  return (
+    <li className={`ai-issue-row priority-${item.priority}`}>
+      <span className="ai-issue-number">{String(number).padStart(2, '0')}</span>
+      <dl className="ai-issue-fields">
+        <div>
+          <dt>영역</dt>
+          <dd>{item.area}</dd>
+        </div>
+        <div>
+          <dt>확인 유형</dt>
+          <dd>{item.type}</dd>
+        </div>
+        <div>
+          <dt>제목</dt>
+          <dd>{item.title}</dd>
+        </div>
+        <div>
+          <dt>Figma</dt>
+          <dd>{item.figma || '없음'}</dd>
+        </div>
+        <div>
+          <dt>Web</dt>
+          <dd>{item.web || '없음'}</dd>
+        </div>
+        <div>
+          <dt>이유</dt>
+          <dd>{item.reason || '확인이 필요합니다.'}</dd>
+        </div>
+        <div>
+          <dt>근거</dt>
+          <dd>{item.evidence || '이미지와 추출 데이터를 종합 확인'}</dd>
+        </div>
+      </dl>
+    </li>
+  )
+}
+
+function groupAiItems(items) {
+  const groups = aiQaGroups.reduce((result, group) => ({ ...result, [group]: [] }), {})
+  items.forEach((item) => {
+    const group = aiQaGroups.includes(item.type) ? item.type : '참고'
+    groups[group].push(item)
+  })
+  return groups
+}
+
+function formatConfidence(value) {
+  if (value === 'high') return '높음'
+  if (value === 'low') return '낮음'
+  return '보통'
 }
 
 function ComparisonPane({ anchorLabel, frameRef, highlightRatio, imageAlt, imageSrc, issue, label, markerLabel, markers, note, onMarkerSelect, onScroll, placeholder }) {

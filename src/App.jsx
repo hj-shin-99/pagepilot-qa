@@ -13,6 +13,8 @@ import MockupQaPanel from './components/MockupQaPanel'
 import SummaryCards from './components/SummaryCards'
 import WorkspaceTabs from './components/WorkspaceTabs'
 
+const AI_IMAGE_DATA_URL_MAX_LENGTH = 9_000_000
+
 function isValidHttpUrl(value) {
   try {
     const url = new URL(value)
@@ -36,6 +38,7 @@ function App() {
   const [scanError, setScanError] = useState('')
   const [historyItems, setHistoryItems] = useState(() => loadHistoryItems())
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
+  const [aiQa, setAiQa] = useState({ state: 'idle', result: null, error: '', rawText: '' })
 
   const summary = useMemo(() => (result ? createResultSummary(result) : ''), [result])
   const statusCounts = useMemo(() => (result ? getStatusCounts(result.checks) : null), [result])
@@ -82,6 +85,7 @@ function App() {
   const handleStartScan = async () => {
     setCopyStatus('')
     setScanError('')
+    setAiQa({ state: 'idle', result: null, error: '', rawText: '' })
 
     if (!isValidHttpUrl(url)) {
       setInputError('http:// 또는 https://로 시작하는 테스트 URL을 입력해 주세요.')
@@ -112,6 +116,8 @@ function App() {
       setScanState('complete')
       setActiveTab('mockup')
       setHistoryItems(saveHistoryItem(createHistoryItem(payload, figmaElements, designImages)))
+      const nextDesignQa = compareDesignElements(figmaElements, payload.designElements || [])
+      await maybeRunAiQa({ scanResult: payload, nextDesignQa, force: false })
     } catch (error) {
       setScanError(error instanceof Error ? error.message : '검사 중 오류가 발생했습니다.')
       setScanState('failed')
@@ -134,6 +140,7 @@ function App() {
     setFigmaError('')
     setScanError('')
     setCopyStatus('')
+    setAiQa({ state: 'idle', result: null, error: '', rawText: '' })
     setActiveTab('mockup')
   }
 
@@ -159,6 +166,57 @@ function App() {
       setCopyStatus('리포트가 클립보드에 복사되었습니다.')
     } catch {
       setCopyStatus('복사에 실패했습니다. 브라우저 권한을 확인해 주세요.')
+    }
+  }
+
+  const handleRunAiQa = async () => {
+    await maybeRunAiQa({ scanResult: result, nextDesignQa: designQa, force: true })
+  }
+
+  const maybeRunAiQa = async ({ scanResult, nextDesignQa, force }) => {
+    if (!scanResult) {
+      setAiQa({ state: 'failed', result: null, error: '먼저 URL 검사를 실행한 뒤 AI QA를 사용할 수 있습니다.', rawText: '' })
+      return
+    }
+
+    const resultKey = getAiResultKey(scanResult)
+    if (!force && aiQa.resultKey === resultKey && aiQa.state !== 'idle') return
+    if (!window.confirm('OpenAI API 크레딧이 소모됩니다. 진행할까요?')) {
+      setAiQa({ state: 'skipped', result: null, error: 'AI 검수를 실행하지 않았습니다.', rawText: '', resultKey })
+      return
+    }
+
+    setAiQa({ state: 'running', result: null, error: '', rawText: '', resultKey })
+
+    const controller = new AbortController()
+    const timeoutId = window.setTimeout(() => controller.abort(), 70000)
+
+    try {
+      const response = await fetch('/api/ai-qa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(createAiQaRequestPayload({ result: scanResult, figmaElements, webElements: scanResult.designElements || [], designImages, designQa: nextDesignQa })),
+        signal: controller.signal,
+      })
+      const payload = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        throw new Error(payload.message || 'AI QA 실행 중 오류가 발생했습니다.')
+      }
+
+      if (payload.parseError) {
+        setAiQa({ state: 'failed', result: null, error: payload.message || 'AI 응답을 해석하지 못했습니다. 원문 응답을 확인해주세요.', rawText: payload.rawText || '', resultKey })
+        return
+      }
+
+      setAiQa({ state: 'complete', result: payload.result, error: '', rawText: '', resultKey })
+    } catch (error) {
+      const message = error?.name === 'AbortError'
+        ? 'AI QA 요청 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.'
+        : error instanceof Error ? error.message : '네트워크 오류로 AI QA를 실행하지 못했습니다.'
+      setAiQa({ state: 'failed', result: null, error: message, rawText: '', resultKey })
+    } finally {
+      window.clearTimeout(timeoutId)
     }
   }
 
@@ -220,11 +278,13 @@ function App() {
             ) : null}
             {activeTab === 'mockup' ? (
               <MockupQaPanel
+                aiQa={aiQa}
                 designImages={designImages}
                 designQa={designQa}
                 figmaElements={figmaElements}
                 result={result}
                 webElements={webElements}
+                onRunAiQa={handleRunAiQa}
               />
             ) : null}
           </>
@@ -271,6 +331,111 @@ function createTopIssueSummaries(result, designQa) {
   const summaries = [...designSummaries, ...techSummaries].slice(0, 3)
 
   return summaries.length > 0 ? summaries : ['Tech QA와 시안 비교 QA 주요 항목 정상']
+}
+
+function createAiQaRequestPayload({ result, figmaElements, webElements, designImages, designQa }) {
+  return {
+    pageTitle: result.pageTitle || '',
+    url: result.targetUrl || '',
+    figma: {
+      texts: createAiElementSummary(figmaElements.filter((element) => !isAiButtonElement(element) && !isAiReferenceElement(element)), 60),
+      buttons: createAiElementSummary(figmaElements.filter(isAiButtonElement), 30),
+      image: createAiImagePayload({
+        name: designImages[0]?.name || 'Figma 시안 이미지',
+        dataUrl: designImages[0]?.previewUrl || '',
+      }),
+    },
+    web: {
+      texts: createAiElementSummary(webElements.filter((element) => !isAiButtonElement(element) && !isAiReferenceElement(element)), 60),
+      buttons: createAiElementSummary(webElements.filter(isAiButtonElement), 30),
+      links: createAiLinkSummary(result),
+      screenshot: createAiImagePayload({
+        name: 'Web 1920 캡처',
+        width: result.webScreenshot?.width,
+        height: result.webScreenshot?.height,
+        dataUrl: result.webScreenshot?.dataUrl || '',
+      }),
+    },
+    localIssues: createAiIssueSummary(designQa),
+  }
+}
+
+function createAiElementSummary(elements, limit) {
+  return elements.slice(0, limit).map((element) => ({
+    text: cleanAiText(element.text || element.label || element.name || ''),
+    compareText: cleanAiText(element.compareText || element.normalizedText || ''),
+    sectionLabel: cleanAiText(element.sectionLabel || element.sectionName || element.region || ''),
+    qaGroupId: cleanAiText(element.qaGroupId || ''),
+    href: cleanAiText(element.href || ''),
+    positionRatio: getAiPositionRatio(element.positionRatio),
+  })).filter((element) => element.text || element.compareText)
+}
+
+function createAiLinkSummary(result) {
+  const links = [
+    ...(Array.isArray(result.links) ? result.links : []),
+    ...(Array.isArray(result.missingHrefLinks) ? result.missingHrefLinks : []),
+  ]
+
+  return links.slice(0, 40).map((link) => ({
+    label: cleanAiText(link.label || link.text || ''),
+    href: cleanAiText(link.href || ''),
+    url: cleanAiText(link.url || ''),
+    status: cleanAiText(link.status || link.statusText || ''),
+  })).filter((link) => link.label || link.href || link.url)
+}
+
+function createAiIssueSummary(designQa = {}) {
+  const issues = [
+    ...(Array.isArray(designQa.primaryIssues) ? designQa.primaryIssues : []),
+    ...(Array.isArray(designQa.referenceIssues) ? designQa.referenceIssues.slice(0, 5) : []),
+  ]
+
+  return issues.slice(0, 20).map((issue) => ({
+    type: cleanAiText(issue.label || issue.issueType || ''),
+    area: cleanAiText(issue.sectionName || issue.region || ''),
+    title: cleanAiText(issue.itemTitle || issue.text || ''),
+    figma: cleanAiText(issue.figma?.text || ''),
+    web: cleanAiText(issue.web?.text || ''),
+    qaGroupId: cleanAiText(issue.qaGroupId || ''),
+  }))
+}
+
+function createAiImagePayload(image) {
+  const dataUrl = typeof image.dataUrl === 'string' && image.dataUrl.length <= AI_IMAGE_DATA_URL_MAX_LENGTH ? image.dataUrl : ''
+  return {
+    name: image.name || '',
+    width: image.width || null,
+    height: image.height || null,
+    dataUrl,
+  }
+}
+
+function isAiButtonElement(element) {
+  const tag = String(element?.tag || '').toLowerCase()
+  const text = `${element?.text || ''} ${element?.layerPath || ''}`
+  return tag === 'button'
+    || tag === 'a'
+    || element?.qaImportance === 'button'
+    || /button|btn|cta|link|버튼|자세히|더 보기|더보기|바로가기|신청|구매|상담|예약|문의/i.test(text)
+}
+
+function isAiReferenceElement(element) {
+  return Boolean(element?.isReferenceOnly || element?.isNavigation || element?.isFooterDisclaimer)
+}
+
+function getAiPositionRatio(value) {
+  if (value && typeof value === 'object') return Number.isFinite(Number(value.yRatio)) ? Number(value.yRatio) : null
+  return Number.isFinite(Number(value)) ? Number(value) : null
+}
+
+function cleanAiText(value) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim()
+  return text.length > 240 ? `${text.slice(0, 240)}...` : text
+}
+
+function getAiResultKey(result) {
+  return `${result?.targetUrl || ''}:${result?.scannedAt || ''}`
 }
 
 function readFileAsText(file) {

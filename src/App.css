@@ -511,6 +511,166 @@
   background: var(--status-color);
 }
 
+.ai-qa-hero-card,
+.ai-result-card {
+  display: grid;
+  gap: 14px;
+}
+
+.ai-run-button {
+  width: fit-content;
+}
+
+.ai-summary-box {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--info-line);
+  border-radius: 16px;
+  background: var(--info-bg);
+}
+
+.ai-summary-box strong {
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 900;
+}
+
+.ai-summary-box span,
+.ai-cost-note {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.6;
+}
+
+.ai-summary-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ai-summary-pills span {
+  border-radius: 999px;
+  padding: 7px 10px;
+  color: #0f172a;
+  background: #ffffff;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.ai-error-message {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--danger-line);
+  border-radius: 14px;
+  color: #991b1b;
+  background: var(--danger-bg);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.ai-raw-response {
+  border: 1px solid #e5edf6;
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: var(--surface);
+}
+
+.ai-raw-response summary {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.ai-raw-response pre {
+  max-height: 280px;
+  overflow: auto;
+  white-space: pre-wrap;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.ai-cost-note {
+  margin: 0;
+}
+
+.ai-issue-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ai-issue-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #e5edf6;
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.ai-issue-row.priority-high {
+  border-color: var(--danger-line);
+  background: var(--danger-bg);
+}
+
+.ai-issue-row.priority-medium {
+  border-color: var(--warning-line);
+  background: var(--warning-bg);
+}
+
+.ai-issue-number {
+  display: inline-flex;
+  min-width: 34px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: #ffffff;
+  background: #0f172a;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.ai-issue-fields {
+  display: grid;
+  grid-template-columns: 0.75fr 0.9fr 1.1fr 1.3fr 1.3fr 1.5fr 1.2fr;
+  gap: 0;
+  margin: 0;
+}
+
+.ai-issue-fields div {
+  display: grid;
+  gap: 4px;
+  padding: 6px 8px;
+  border-left: 1px solid var(--subtle-line);
+}
+
+.ai-issue-fields div:first-child {
+  border-left: 0;
+}
+
+.ai-issue-fields dt {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.ai-issue-fields dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
 .detail-card {
   padding: 20px;
 }
@@ -1434,6 +1594,7 @@
 
   .mockup-metrics,
   .mockup-comparison-grid,
+  .ai-issue-fields,
   .mockup-raw-grid {
     grid-template-columns: 1fr;
   }
@@ -1499,6 +1660,16 @@
   .mockup-card-fields div {
     border-left: 0;
     grid-template-columns: 1fr;
+  }
+
+  .ai-issue-row,
+  .ai-issue-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-issue-fields div {
+    border-left: 0;
+    border-top: 1px solid var(--subtle-line);
   }
 
   .mockup-card-fields {

@@ -1,7 +1,17 @@
 import express from 'express'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import OpenAI from 'openai'
 import { chromium, request as playwrightRequest } from 'playwright'
 
 const PORT = Number(process.env.PORT || 3001)
+const AI_QA_MODEL = 'gpt-5.4-mini'
+const AI_QA_TIMEOUT_MS = 60000
+const MAX_AI_ITEMS = 40
+const MAX_AI_TEXT_ITEMS = 60
+const MAX_AI_ISSUES = 20
+const MAX_AI_IMAGE_DATA_URL_LENGTH = 9_000_000
 const MAX_LINKS_TO_CHECK = 30
 const MAX_DESIGN_ELEMENTS = 120
 const DESKTOP_DESIGN_VIEWPORT = { width: 1920, height: 1080 }
@@ -11,7 +21,9 @@ const LINK_TIMEOUT_MS = 7000
 
 const app = express()
 
-app.use(express.json({ limit: '32kb' }))
+loadLocalEnv()
+
+app.use(express.json({ limit: '24mb' }))
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true })
@@ -36,6 +48,42 @@ app.post('/api/scan', async (req, res) => {
   }
 })
 
+app.post('/api/ai-qa', async (req, res) => {
+  const apiKey = process.env.OPENAI_API_KEY
+
+  if (!apiKey) {
+    res.status(400).json({ message: 'OpenAI API Key가 설정되지 않았습니다. .env의 OPENAI_API_KEY를 확인해주세요.', code: 'missing_api_key' })
+    return
+  }
+
+  const payload = createSafeAiQaPayload(req.body)
+  if (!payload.url) {
+    res.status(400).json({ message: 'AI QA를 실행할 URL 정보가 없습니다.', code: 'invalid_payload' })
+    return
+  }
+
+  try {
+    const client = new OpenAI({ apiKey, timeout: AI_QA_TIMEOUT_MS })
+    const rawText = await requestAiQa(client, payload)
+    const parsed = parseAiQaJson(rawText)
+
+    if (!parsed) {
+      res.json({
+        ok: false,
+        parseError: true,
+        message: 'AI 응답을 해석하지 못했습니다. 원문 응답을 확인해주세요.',
+        rawText,
+      })
+      return
+    }
+
+    res.json({ ok: true, model: AI_QA_MODEL, result: normalizeAiQaResult(parsed) })
+  } catch (error) {
+    const mappedError = mapOpenAiError(error)
+    res.status(mappedError.status).json(mappedError.body)
+  }
+})
+
 app.listen(PORT, () => {
   console.log(`PagePilot QA API listening on http://127.0.0.1:${PORT}`)
 })
@@ -47,6 +95,245 @@ function isHttpUrl(value) {
   } catch {
     return false
   }
+}
+
+function loadLocalEnv() {
+  if (process.env.OPENAI_API_KEY) return
+
+  try {
+    const currentFile = fileURLToPath(import.meta.url)
+    const envPath = path.resolve(path.dirname(currentFile), '..', '.env')
+    if (!fs.existsSync(envPath)) return
+
+    const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/)
+    lines.forEach((line) => {
+      const trimmed = line.trim()
+      if (!trimmed || trimmed.startsWith('#')) return
+      const separatorIndex = trimmed.indexOf('=')
+      if (separatorIndex <= 0) return
+      const key = trimmed.slice(0, separatorIndex).trim()
+      const value = trimmed.slice(separatorIndex + 1).trim().replace(/^['"]|['"]$/g, '')
+      if (key && process.env[key] === undefined) process.env[key] = value
+    })
+  } catch {
+    // Missing or unreadable local .env is handled by the API route.
+  }
+}
+
+function createSafeAiQaPayload(body = {}) {
+  return {
+    pageTitle: limitText(body.pageTitle, 140),
+    url: isHttpUrl(body.url) ? body.url : '',
+    figma: {
+      texts: normalizeAiItems(body.figma?.texts, MAX_AI_TEXT_ITEMS),
+      buttons: normalizeAiItems(body.figma?.buttons, 30),
+      image: normalizeAiImage(body.figma?.image),
+    },
+    web: {
+      texts: normalizeAiItems(body.web?.texts, MAX_AI_TEXT_ITEMS),
+      buttons: normalizeAiItems(body.web?.buttons, 30),
+      links: normalizeAiLinks(body.web?.links),
+      screenshot: normalizeAiImage(body.web?.screenshot),
+    },
+    localIssues: normalizeAiIssues(body.localIssues),
+  }
+}
+
+function normalizeAiItems(items, limit) {
+  if (!Array.isArray(items)) return []
+  return items.slice(0, limit).map((item) => ({
+    text: limitText(item?.text || item?.label || '', 220),
+    compareText: limitText(item?.compareText || '', 220),
+    sectionLabel: limitText(item?.sectionLabel || item?.sectionName || '', 80),
+    qaGroupId: limitText(item?.qaGroupId || '', 80),
+    href: limitText(item?.href || '', 220),
+    positionRatio: normalizeRatio(item?.positionRatio),
+  })).filter((item) => item.text || item.compareText)
+}
+
+function normalizeAiLinks(links) {
+  if (!Array.isArray(links)) return []
+  return links.slice(0, 40).map((link) => ({
+    label: limitText(link?.label || '', 160),
+    href: limitText(link?.href || '', 220),
+    url: limitText(link?.url || '', 220),
+    status: limitText(link?.status || '', 80),
+  })).filter((link) => link.label || link.href || link.url)
+}
+
+function normalizeAiIssues(issues) {
+  if (!Array.isArray(issues)) return []
+  return issues.slice(0, MAX_AI_ISSUES).map((issue) => ({
+    type: limitText(issue?.type || issue?.label || '', 80),
+    area: limitText(issue?.area || issue?.sectionName || issue?.region || '', 80),
+    title: limitText(issue?.title || issue?.itemTitle || issue?.text || '', 160),
+    figma: limitText(issue?.figma || issue?.figmaText || '', 260),
+    web: limitText(issue?.web || issue?.webText || '', 260),
+    qaGroupId: limitText(issue?.qaGroupId || '', 80),
+  })).filter((issue) => issue.type || issue.title)
+}
+
+function normalizeAiImage(image) {
+  const dataUrl = typeof image?.dataUrl === 'string' && image.dataUrl.length <= MAX_AI_IMAGE_DATA_URL_LENGTH ? image.dataUrl : ''
+  return {
+    name: limitText(image?.name || '', 120),
+    width: Number.isFinite(Number(image?.width)) ? Number(image.width) : null,
+    height: Number.isFinite(Number(image?.height)) ? Number(image.height) : null,
+    dataUrl,
+    omittedReason: dataUrl ? '' : image?.dataUrl ? '이미지 데이터가 커서 AI 요청에서 제외됨' : '',
+  }
+}
+
+function normalizeRatio(value) {
+  if (value && typeof value === 'object') return Number.isFinite(Number(value.yRatio)) ? Number(value.yRatio) : null
+  return Number.isFinite(Number(value)) ? Number(value) : null
+}
+
+async function requestAiQa(client, payload) {
+  const userContent = [
+    { type: 'text', text: createAiQaPrompt(payload) },
+  ]
+
+  if (payload.web.screenshot.dataUrl) {
+    userContent.push({ type: 'image_url', image_url: { url: payload.web.screenshot.dataUrl, detail: 'low' } })
+  }
+  if (payload.figma.image.dataUrl) {
+    userContent.push({ type: 'image_url', image_url: { url: payload.figma.image.dataUrl, detail: 'low' } })
+  }
+
+  const completion = await client.chat.completions.create({
+    model: AI_QA_MODEL,
+    messages: [
+      { role: 'system', content: getAiQaSystemPrompt() },
+      { role: 'user', content: userContent },
+    ],
+    response_format: { type: 'json_object' },
+    max_completion_tokens: 2200,
+  })
+
+  return completion.choices?.[0]?.message?.content || ''
+}
+
+function getAiQaSystemPrompt() {
+  return [
+    '너는 웹 기획자/QA 담당자다.',
+    '웹 캡처, Figma 시안, Figma JSON 요약, Playwright 추출 결과를 함께 보고 실제 운영 QA 관점에서 확인해야 할 차이만 정리한다.',
+    'Figma JSON은 참고 자료이지 절대 기준이 아니다. 레이어 구조, 그룹핑, 텍스트 분리 방식, 좌표 정보가 틀릴 수 있다.',
+    '판단 우선순위: 1) Web 캡처와 Figma 시안 이미지를 실제 화면 기준으로 비교 2) Playwright가 추출한 Web DOM 텍스트/버튼/링크 확인 3) Figma JSON은 시안 텍스트/버튼/영역 보조 확인 4) 로컬 규칙 기반 후보 이슈는 참고하되 그대로 믿지 말 것.',
+    'JSON에 없다고 시안에 없는 것으로 단정하지 말고, JSON 좌표가 다르다고 위치 오류로 단정하지 말고, JSON 텍스트가 쪼개져 있어도 시안 이미지 기준으로 같은 문구면 동일하게 판단한다.',
+    'JSON과 시안 이미지가 충돌하면 “시안 이미지 기준 확인 필요”로 표시하고, Playwright DOM과 웹 캡처가 충돌하면 “웹 렌더링 기준 확인 필요”로 표시한다.',
+    '찾을 것: 문구 차이, 시안에는 있는데 웹에 없는 콘텐츠, 웹에는 있는데 시안에 없는 콘텐츠, 버튼/CTA 문구 차이, 버튼/CTA 누락, 링크 확인 필요, 주요 이미지/비주얼 차이, 눈에 띄는 레이아웃 차이, 기획자가 확인해야 할 검토 사항.',
+    '무시할 것: 줄바꿈 차이, 단순 공백 차이, 마침표/쉼표 차이, 브라우저 렌더링 미세 위치 차이, 실제 차이가 작아 보이는 폰트명 차이, GNB/푸터/디스클레이머의 사소한 차이, 동일 문구 반복, 개발자용 layerPath, Vector, icon, logo, blende.',
+    '로컬 규칙 기반 후보 이슈는 참고만 하고 그대로 믿지 말고 이미지와 텍스트를 함께 보고 최종 판단한다.',
+    '반드시 JSON 객체만 응답한다.',
+  ].join('\n')
+}
+
+function createAiQaPrompt(payload) {
+  const compactPayload = {
+    pageTitle: payload.pageTitle,
+    url: payload.url,
+    figma: {
+      texts: payload.figma.texts,
+      buttons: payload.figma.buttons,
+      imageMeta: omitImageData(payload.figma.image),
+    },
+    web: {
+      texts: payload.web.texts,
+      buttons: payload.web.buttons,
+      links: payload.web.links,
+      screenshotMeta: omitImageData(payload.web.screenshot),
+    },
+    localRuleBasedCandidateIssues: payload.localIssues,
+  }
+
+  return [
+    '아래 QA 데이터를 검토해서 실제 확인이 필요한 항목만 JSON으로 정리해줘.',
+    '응답 형식:',
+    '{"summary":"전체 요약","confidence":"high | medium | low","items":[{"type":"문구 차이 | 시안에만 있음 | 웹에만 있음 | 버튼/링크 확인 | 이미지 확인 | 레이아웃 확인 | 참고","area":"상단 영역 | 주요 콘텐츠 영역 | 하단 안내 영역 | 푸터/디스클레이머 | 위치 확인 필요","title":"짧은 제목","figma":"Figma 기준 내용","web":"Web 기준 내용","reason":"왜 확인이 필요한지","evidence":"근거: Web 캡처 + Figma 시안 이미지 | Web DOM 텍스트 + Figma JSON | 로컬 후보 이슈 + 이미지 확인 필요","priority":"high | medium | low"}]}',
+    '이미지는 첨부 순서대로 Web 1920 캡처, Figma 시안 이미지다. 첨부가 없으면 메타 정보만 참고해라.',
+    JSON.stringify(compactPayload, null, 2),
+  ].join('\n\n')
+}
+
+function omitImageData(image) {
+  return {
+    name: image.name,
+    width: image.width,
+    height: image.height,
+    hasImageData: Boolean(image.dataUrl),
+    omittedReason: image.omittedReason,
+  }
+}
+
+function parseAiQaJson(rawText) {
+  if (!rawText) return null
+  try {
+    return JSON.parse(rawText)
+  } catch {
+    const match = rawText.match(/\{[\s\S]*\}/)
+    if (!match) return null
+    try {
+      return JSON.parse(match[0])
+    } catch {
+      return null
+    }
+  }
+}
+
+function normalizeAiQaResult(result) {
+  const items = Array.isArray(result.items) ? result.items.slice(0, MAX_AI_ITEMS).map((item) => ({
+    type: normalizeAiItemType(item?.type),
+    area: normalizeAiArea(item?.area),
+    title: limitText(item?.title || '확인 필요', 120),
+    figma: limitText(item?.figma || '', 300),
+    web: limitText(item?.web || '', 300),
+    reason: limitText(item?.reason || '', 360),
+    evidence: limitText(item?.evidence || item?.basis || '', 180),
+    priority: normalizePriority(item?.priority),
+  })) : []
+
+  return {
+    summary: limitText(result.summary || 'AI 검수 결과가 생성되었습니다.', 400),
+    confidence: normalizeConfidence(result.confidence),
+    items,
+  }
+}
+
+function normalizeAiItemType(value) {
+  const allowed = ['문구 차이', '시안에만 있음', '웹에만 있음', '버튼/링크 확인', '이미지 확인', '레이아웃 확인', '참고']
+  return allowed.includes(value) ? value : '참고'
+}
+
+function normalizeAiArea(value) {
+  const allowed = ['상단 영역', '주요 콘텐츠 영역', '하단 안내 영역', '푸터/디스클레이머', '위치 확인 필요']
+  return allowed.includes(value) ? value : '위치 확인 필요'
+}
+
+function normalizePriority(value) {
+  return ['high', 'medium', 'low'].includes(value) ? value : 'medium'
+}
+
+function normalizeConfidence(value) {
+  return ['high', 'medium', 'low'].includes(value) ? value : 'medium'
+}
+
+function mapOpenAiError(error) {
+  const status = Number(error?.status || error?.response?.status || 500)
+  const message = String(error?.message || '')
+  const code = String(error?.code || error?.error?.code || '')
+
+  if (status === 401 || status === 403) return { status: 401, body: { message: 'OpenAI API Key가 유효하지 않습니다. .env의 OPENAI_API_KEY를 확인해주세요.', code: 'invalid_api_key' } }
+  if (status === 402 || status === 429 || /quota|billing|credit/i.test(message + code)) return { status: 402, body: { message: 'API 크레딧이 부족하거나 결제 설정이 필요합니다.', code: 'insufficient_credits' } }
+  if (status === 404 || /model/i.test(message + code)) return { status: 400, body: { message: `AI 모델명 확인이 필요합니다. 서버의 AI_QA_MODEL 값을 확인해주세요. 현재 모델: ${AI_QA_MODEL}`, code: 'model_error' } }
+  if (/timeout|ETIMEDOUT/i.test(message + code)) return { status: 504, body: { message: 'AI QA 요청 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.', code: 'timeout' } }
+  if (/network|fetch|connection|ECONN/i.test(message + code)) return { status: 502, body: { message: 'OpenAI API 네트워크 연결 중 오류가 발생했습니다.', code: 'network_error' } }
+  return { status: 500, body: { message: 'AI QA 실행 중 오류가 발생했습니다.', code: 'ai_qa_error' } }
+}
+
+function limitText(value, maxLength) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim()
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text
 }
 
 async function scanUrl(targetUrl) {

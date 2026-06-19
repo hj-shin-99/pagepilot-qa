@@ -35,6 +35,7 @@ function App() {
   const [copyStatus, setCopyStatus] = useState('')
   const [scanError, setScanError] = useState('')
   const [historyItems, setHistoryItems] = useState(() => loadHistoryItems())
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
 
   const summary = useMemo(() => (result ? createResultSummary(result) : ''), [result])
   const statusCounts = useMemo(() => (result ? getStatusCounts(result.checks) : null), [result])
@@ -179,18 +180,20 @@ function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       <InputPanel
         designImages={designImages}
         figmaError={figmaError}
         figmaJson={figmaJson}
         inputError={inputError}
+        isCollapsed={isSidebarCollapsed}
         isScanning={isScanning}
         url={url}
         onDesignImagesSelect={handleDesignImagesSelect}
         onDesignImageDelete={handleDesignImageDelete}
         onFigmaFileSelect={handleFigmaFileSelect}
         onFigmaTextChange={handleFigmaTextChange}
+        onToggleCollapsed={() => setIsSidebarCollapsed((value) => !value)}
         onStartScan={handleStartScan}
         onUrlChange={setUrl}
       />

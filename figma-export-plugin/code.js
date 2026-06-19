@@ -302,6 +302,7 @@ function createTextNode(node, baseNode) {
   textNode.text = node.characters || ''
   textNode.characters = node.characters || ''
   textNode.normalizedText = normalizeText(textNode.text)
+  textNode.compareText = createCompareText(textNode.text)
   textNode.fontFamily = textStyle.fontFamily
   textNode.fontStyle = textStyle.fontStyle
   textNode.fontSize = textStyle.fontSize
@@ -364,6 +365,7 @@ function createCandidate(kind, node, text, traversal) {
     type: node.type,
     text: candidateText,
     normalizedText: normalizeText(candidateText || node.name || ''),
+    compareText: createCompareText(candidateText || node.name || ''),
     matchedBy: getMatchedKeywords((node.name || '') + ' ' + candidateText, CTA_KEYWORDS),
     x: box.x,
     y: box.y,
@@ -503,6 +505,7 @@ function createQaModel(selection, context) {
   sortByPosition(qaTexts)
   sortByPosition(qaButtons)
   sortByPosition(qaImages)
+  assignQaDisplayOrder(qaTexts, qaButtons, qaImages)
 
   for (var sectionIndex = 0; sectionIndex < qaSections.length; sectionIndex += 1) {
     var section = qaSections[sectionIndex]
@@ -627,14 +630,26 @@ function createQaText(textNode, qaSections) {
 
   var section = findQaSectionForItem(textNode, qaSections)
   var importance = getTextImportance(textNode, section)
+  var sectionLabel = section ? section.label : getLooseSectionLabel(textNode.positionRatio)
+  var isNavigation = importance === 'nav' || NAV_TEXT_PATTERNS.test(getLayerPathText(textNode.layerPath))
+  var isFooterDisclaimer = sectionLabel === '푸터/디스클레이머' || NOTE_TEXT_PATTERNS.test(textNode.text + ' ' + getLayerPathText(textNode.layerPath))
+  var referenceOnly = isNavigation || isFooterDisclaimer || importance === 'note'
 
   return {
     id: textNode.id,
     text: textNode.text,
     characters: textNode.characters,
     normalizedText: normalizeText(textNode.text),
+    compareText: createCompareText(textNode.text),
+    qaGroupId: createQaGroupId(textNode, section, importance),
+    displayOrder: 0,
+    referenceOnly: referenceOnly,
+    isNavigation: isNavigation,
+    isFooterDisclaimer: isFooterDisclaimer,
+    isLongText: isLongQaText(textNode.text),
+    isPrimaryQaTarget: isPrimaryQaTarget(textNode, importance, sectionLabel, referenceOnly),
     importance: importance,
-    sectionLabel: section ? section.label : getLooseSectionLabel(textNode.positionRatio),
+    sectionLabel: sectionLabel,
     sectionId: section ? section.id : '',
     tag: 'TEXT',
     fontSize: textNode.fontSize,
@@ -651,7 +666,7 @@ function createQaText(textNode, qaSections) {
 function isUsefulQaText(textNode) {
   if (!textNode || textNode.visible === false || readNumber(textNode.opacity, 1) < 0.1) return false
   if (!textNode.text || normalizeText(textNode.text).length < 2) return false
-  if (readNumber(textNode.fontSize, 0) < 10) return false
+  if (readNumber(textNode.fontSize, 0) < 7) return false
   if (isDecorativeLayerPath(textNode.layerPath)) return false
   return true
 }
@@ -669,6 +684,46 @@ function getTextImportance(textNode, section) {
   return 'body'
 }
 
+function createQaGroupId(item, section, kind) {
+  var sectionLabel = section ? section.label : getLooseSectionLabel(item.positionRatio)
+  var layerText = getLayerPathText(item.layerPath) + ' ' + (item.name || '') + ' ' + (item.text || '')
+  var yRatio = item.positionRatio && typeof item.positionRatio.yRatio === 'number' ? item.positionRatio.yRatio : 0
+  var isButton = kind === 'button' || kind === 'primary' || kind === 'secondary'
+
+  if (sectionLabel === '푸터/디스클레이머' || /footer|disclaimer|유의|고지|약관|푸터|풋터/i.test(layerText)) return 'footer-disclaimer'
+  if (kind === 'heroImage') return 'hero-visual'
+
+  if (sectionLabel === 'Hero/KV 영역') {
+    if (/visual|image|img|kv|hero|메인|비주얼|이미지/i.test(layerText) && kind !== 'title' && kind !== 'body') return 'hero-visual'
+    if (kind === 'title') return 'hero-title'
+    return 'hero-body'
+  }
+
+  if (sectionLabel === '상품 종류 영역' && (kind === 'title' || /BMW\s*스마트\s*상품\s*종류|상품\s*종류|프로그램\s*종류/i.test(item.text || ''))) return 'product-type-section-title'
+  if (sectionLabel === '상품 종류 영역' || /card|카드|type|종류/i.test(layerText)) {
+    return 'product-type-card-' + getQaCardIndex(item, section)
+  }
+
+  if (sectionLabel === '구비서류 영역' || /table|document|서류|구비|표/i.test(layerText)) return 'document-table'
+  if (sectionLabel === '하단 배너 영역' || isButton || yRatio >= 0.78) return 'bottom-cta'
+  if (sectionLabel === '상품 개요 영역' && kind === 'title') return 'product-overview-title'
+  if (sectionLabel === '상품 개요 영역') return 'product-overview-body'
+  return getLooseQaGroupId(item, sectionLabel)
+}
+
+function getQaCardIndex(item, section) {
+  if (!section || !section.width) return 1
+  var centerX = item.x + (item.width || 0) / 2
+  var ratio = (centerX - section.x) / section.width
+  return Math.max(1, Math.min(3, Math.ceil(ratio * 3)))
+}
+
+function getLooseQaGroupId(item, sectionLabel) {
+  var yRatio = item.positionRatio && typeof item.positionRatio.yRatio === 'number' ? item.positionRatio.yRatio : 0
+  var xRatio = item.positionRatio && typeof item.positionRatio.xRatio === 'number' ? item.positionRatio.xRatio : 0
+  return slugText(sectionLabel || 'section') + '-' + Math.round(yRatio * 20) + '-' + Math.round(xRatio * 6)
+}
+
 function createQaButton(candidate, qaSections) {
   if (!candidate || isDecorativeLayerPath(candidate.layerPath)) return null
   var text = trimText(candidate.text || '')
@@ -676,14 +731,26 @@ function createQaButton(candidate, qaSections) {
   if (!isRealQaButtonCandidate(candidate, text)) return null
 
   var section = findQaSectionForItem(candidate, qaSections)
+  var sectionLabel = section ? section.label : getLooseSectionLabel(candidate.positionRatio)
+  var isNavigation = NAV_TEXT_PATTERNS.test(getLayerPathText(candidate.layerPath))
+  var isFooterDisclaimer = sectionLabel === '푸터/디스클레이머' || NOTE_TEXT_PATTERNS.test(text + ' ' + getLayerPathText(candidate.layerPath))
+  var importance = isNavigation ? 'nav' : isPrimaryButtonText(text) ? 'primary' : 'secondary'
   return {
     id: candidate.id,
     label: text,
     text: text,
     normalizedText: normalizeText(text),
-    sectionLabel: section ? section.label : getLooseSectionLabel(candidate.positionRatio),
+    compareText: createCompareText(text),
+    qaGroupId: createQaGroupId(candidate, section, 'button'),
+    displayOrder: 0,
+    referenceOnly: isNavigation || isFooterDisclaimer,
+    isNavigation: isNavigation,
+    isFooterDisclaimer: isFooterDisclaimer,
+    isLongText: false,
+    isPrimaryQaTarget: !isNavigation && !isFooterDisclaimer,
+    sectionLabel: sectionLabel,
     sectionId: section ? section.id : '',
-    importance: NAV_TEXT_PATTERNS.test(getLayerPathText(candidate.layerPath)) ? 'nav' : isPrimaryButtonText(text) ? 'primary' : 'secondary',
+    importance: importance,
     tag: 'button',
     x: candidate.x,
     y: candidate.y,
@@ -706,14 +773,24 @@ function createQaImage(imageNode, qaSections, pageBox) {
 
   var section = findQaSectionForItem(imageNode, qaSections)
   var displayName = getQaImageDisplayName(kind)
+  var sectionLabel = section ? section.label : getLooseSectionLabel(imageNode.positionRatio)
+  var isFooterDisclaimer = sectionLabel === '푸터/디스클레이머'
   return {
     id: imageNode.id,
     name: displayName,
     text: displayName,
     sourceName: imageNode.name || '',
     normalizedText: normalizeText(displayName),
+    compareText: createCompareText(displayName),
+    qaGroupId: createQaGroupId(imageNode, section, kind),
+    displayOrder: 0,
+    referenceOnly: isFooterDisclaimer,
+    isNavigation: false,
+    isFooterDisclaimer: isFooterDisclaimer,
+    isLongText: false,
+    isPrimaryQaTarget: !isFooterDisclaimer,
     kind: kind,
-    sectionLabel: section ? section.label : getLooseSectionLabel(imageNode.positionRatio),
+    sectionLabel: sectionLabel,
     sectionId: section ? section.id : '',
     x: imageNode.x,
     y: imageNode.y,
@@ -1013,6 +1090,30 @@ function sortByPosition(items) {
   })
 }
 
+function assignQaDisplayOrder(texts, buttons, images) {
+  var items = []
+  Array.prototype.push.apply(items, texts)
+  Array.prototype.push.apply(items, buttons)
+  Array.prototype.push.apply(items, images)
+  sortByPosition(items)
+
+  for (var index = 0; index < items.length; index += 1) {
+    items[index].displayOrder = index + 1
+  }
+}
+
+function isLongQaText(text) {
+  return normalizeText(text || '').length >= 80
+}
+
+function isPrimaryQaTarget(item, importance, sectionLabel, referenceOnly) {
+  if (referenceOnly) return false
+  if (importance === 'nav' || sectionLabel === '푸터/디스클레이머') return false
+  if (isDecorativeLayerPath(item.layerPath)) return false
+  if (importance === 'title' || importance === 'button' || importance === 'primary' || importance === 'secondary') return true
+  return hasMeaningfulTextCharacter(normalizeText(item.text || ''))
+}
+
 function isSectionCandidate(node, traversal) {
   if (!isTypeInList(node.type, SECTION_LIKE_TYPES) || traversal.depth === 0) {
     return false
@@ -1121,6 +1222,15 @@ function normalizeText(value) {
     .replace(/\s+/g, ' ')
     .replace(/^\s+|\s+$/g, '')
     .replace(/[A-Z]/g, function (letter) { return letter.toLowerCase() })
+}
+
+function createCompareText(value) {
+  return normalizeText(value).replace(/\s+/g, '')
+}
+
+function slugText(value) {
+  var text = normalizeText(value).replace(/[^a-z0-9가-힣]+/g, '-')
+  return text.replace(/^-+|-+$/g, '') || 'section'
 }
 
 function addUniqueMatch(matches, match) {

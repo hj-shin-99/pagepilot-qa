@@ -3,6 +3,7 @@ function InputPanel({
   figmaJson,
   inputError,
   figmaError,
+  isCollapsed,
   isScanning,
   designImages,
   onUrlChange,
@@ -10,6 +11,7 @@ function InputPanel({
   onFigmaFileSelect,
   onDesignImagesSelect,
   onDesignImageDelete,
+  onToggleCollapsed,
   onStartScan,
 }) {
   const handleSubmit = (event) => {
@@ -18,7 +20,12 @@ function InputPanel({
   }
 
   return (
-    <aside className="control-panel">
+    <aside className={`control-panel ${isCollapsed ? 'is-collapsed' : ''}`}>
+      <button className="sidebar-toggle-button" type="button" onClick={onToggleCollapsed}>
+        {isCollapsed ? '열기' : '접기'}
+      </button>
+      {isCollapsed ? null : (
+        <>
       <div className="brand-mark">
         <span className="brand-dot" aria-hidden="true" />
         PagePilot QA
@@ -91,6 +98,8 @@ function InputPanel({
           </div>
         ) : null}
       </section>
+        </>
+      )}
     </aside>
   )
 }

@@ -1,19 +1,21 @@
 const ZERO_WIDTH_CHARS = /[\u200B-\u200D\uFEFF]/g
 const SPECIAL_WHITESPACE = /[\u00A0\u1680\u180E\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]/g
 const REPEATED_WHITESPACE = /\s+/g
-const COMPARE_TEXT_PUNCTUATION = /[.,，。:：;；()（）[\]{}]/g
+const COMPARE_TEXT_PUNCTUATION = /[.,，。:：;；()（）[\]{}'"“”‘’!?！？、/\\\-_·•…]/g
+const COMPARE_TEXT_REMOVABLE = /[\s.,，。:：;；()（）[\]{}'"“”‘’!?！？、/\\\-_·•…]/g
 const LAYOUT_TOLERANCE = 8
 const OBVIOUS_LAYOUT_TOLERANCE = 40
 const FUZZY_MATCH_THRESHOLD = 0.8
 const MIN_FUZZY_TEXT_LENGTH = 6
-const TOP_ISSUE_LIMIT = 5
 const DECORATIVE_LAYER_PATTERN = /\b(vector|path|shape|rectangle|ellipse|line|icon|logo|blende|blend|group|frame)\b|icon\s*frame/i
 const BUTTON_LAYER_PATTERN = /button|btn|cta|link-button|primary|secondary|버튼/i
 const BUTTON_TEXT_PATTERN = /자세히|더 보기|더보기|바로가기|신청|구매|상담|예약|문의|프로모션/i
-const TEXT_PAIR_SIMILARITY_THRESHOLD = 0.62
-const TEXT_PAIR_TOKEN_OVERLAP_THRESHOLD = 0.5
-const BUTTON_PAIR_SIMILARITY_THRESHOLD = 0.45
-const BUTTON_PAIR_TOKEN_OVERLAP_THRESHOLD = 0.5
+const TEXT_PAIR_SIMILARITY_THRESHOLD = 0.78
+const TEXT_PAIR_TOKEN_OVERLAP_THRESHOLD = 0.7
+const BUTTON_PAIR_SIMILARITY_THRESHOLD = 0.72
+const BUTTON_PAIR_TOKEN_OVERLAP_THRESHOLD = 0.65
+const CONTAINED_TEXT_MIN_LENGTH = 6
+const LONG_TEXT_CHUNK_SIZE = 30
 const PLANNER_SECTIONS = [
   { id: 'top', name: 'Hero/KV 영역', aliases: ['상단 영역'] },
   { id: 'product-overview', name: '상품 개요 영역', aliases: ['주요 콘텐츠 영역'] },
@@ -119,10 +121,13 @@ export function normalizeDesignText(value) {
 
 function compareText(value) {
   return cleanText(value)
-    .replace(COMPARE_TEXT_PUNCTUATION, ' ')
-    .replace(REPEATED_WHITESPACE, ' ')
-    .trim()
+    .replace(COMPARE_TEXT_REMOVABLE, '')
     .toLowerCase()
+}
+
+function getElementCompareText(element) {
+  const exportedCompareText = typeof element?.compareText === 'string' ? compareText(element.compareText) : ''
+  return exportedCompareText || compareText(element?.text || '')
 }
 
 function areTextsEquivalent(firstText, secondText) {
@@ -258,19 +263,26 @@ function createQaModelTextElement(node, index, sections) {
   const matchedSection = findSectionForBounds(bounds, sections)
   const sectionName = cleanText(node.sectionLabel || matchedSection?.name || getPlannerSectionName(node, bounds.y))
   const importance = cleanText(node.importance || 'body')
-  const isReferenceOnly = importance === 'note' || importance === 'nav' || sectionName === '푸터/디스클레이머'
+  const isNavigation = Boolean(node.isNavigation) || importance === 'nav'
+  const isFooterDisclaimer = Boolean(node.isFooterDisclaimer) || sectionName === '푸터/디스클레이머'
+  const isReferenceOnly = Boolean(node.referenceOnly) || isNavigation || importance === 'note' || isFooterDisclaimer
 
   return {
     index,
     tag: node.tag || (importance === 'button' ? 'button' : 'TEXT'),
     text,
     normalizedText: normalizeDesignText(node.normalizedText || text),
+    compareText: getElementCompareText({ ...node, text }),
+    qaGroupId: getString(node.qaGroupId),
     layerPath: getLayerPath(node),
     sectionId: getPlannerSectionId(sectionName),
     sectionName,
     qaImportance: importance,
     isReferenceOnly,
-    isFooterDisclaimer: isReferenceOnly && (importance === 'note' || sectionName === '푸터/디스클레이머'),
+    isNavigation,
+    isFooterDisclaimer,
+    isLongText: Boolean(node.isLongText),
+    isPrimaryQaTarget: Boolean(node.isPrimaryQaTarget),
     fontSize: node.fontSize ?? '',
     fontWeight: node.fontWeight ?? '',
     x: bounds.x,
@@ -295,11 +307,14 @@ function createQaModelImageElement(node, index, sections) {
     kind,
     text: cleanText(node.text || node.name || `이미지 ${index}`),
     normalizedText: normalizeDesignText(node.normalizedText || node.text || node.name || `이미지 ${index}`),
+    compareText: getElementCompareText({ ...node, text: node.text || node.name || `이미지 ${index}` }),
+    qaGroupId: getString(node.qaGroupId),
     layerPath: getLayerPath(node),
     sectionId: getPlannerSectionId(sectionName),
     sectionName,
-    isReferenceOnly: kind === 'iconOrGraphic',
-    isFooterDisclaimer: sectionName === '푸터/디스클레이머',
+    isReferenceOnly: Boolean(node.referenceOnly) || kind === 'iconOrGraphic',
+    isFooterDisclaimer: Boolean(node.isFooterDisclaimer) || sectionName === '푸터/디스클레이머',
+    isPrimaryQaTarget: Boolean(node.isPrimaryQaTarget),
     x: bounds.x,
     y: bounds.y,
     width: bounds.width,
@@ -396,7 +411,9 @@ function createFigmaElement(node, index, context = {}) {
     index,
     tag: node.type || node.tag || 'FIGMA',
     text,
-    normalizedText: normalizeDesignText(text),
+    normalizedText: normalizeDesignText(node.compareText || text),
+    compareText: getElementCompareText({ ...node, text }),
+    qaGroupId: getString(node.qaGroupId),
     layerPath,
     sectionId: getPlannerSectionId(sectionName),
     sectionName,
@@ -432,7 +449,9 @@ function createFigmaImageElement(node, index, context = {}) {
     tag: 'img',
     kind: node.kind || 'IMAGE',
     text,
-    normalizedText: normalizeDesignText(text),
+    normalizedText: normalizeDesignText(node.compareText || text),
+    compareText: getElementCompareText({ ...node, text }),
+    qaGroupId: getString(node.qaGroupId),
     layerPath,
     sectionId: getPlannerSectionId(sectionName),
     sectionName,
@@ -538,7 +557,10 @@ function prepareComparableElements(elements, source) {
       const y = rawY ?? 0
       const layerPath = getLayerPath(element)
       const sectionName = getPlannerSectionName({ ...element, text, layerPath }, y)
+      const isNavigation = Boolean(element.isNavigation) || isNavLikeElement({ ...element, text, layerPath })
       const isFooterDisclaimer = Boolean(element.isFooterDisclaimer) || isFooterDisclaimerText(`${text} ${layerPath} ${sectionName}`)
+
+      const comparableText = getElementCompareText({ ...element, text })
 
       return {
         ...element,
@@ -546,11 +568,17 @@ function prepareComparableElements(elements, source) {
         source,
         tag: element.tag || (source === 'figma' ? 'FIGMA' : 'element'),
         text,
-        normalizedText: normalizeDesignText(text),
+        normalizedText: comparableText,
+        compareText: comparableText,
+        qaGroupId: getString(element.qaGroupId),
         layerPath,
         sectionId: getPlannerSectionId(sectionName),
         sectionName,
+        isNavigation,
         isFooterDisclaimer,
+        isReferenceOnly: Boolean(element.isReferenceOnly || element.referenceOnly || isNavigation || isFooterDisclaimer),
+        isLongText: Boolean(element.isLongText) || text.length >= 80,
+        isPrimaryQaTarget: Boolean(element.isPrimaryQaTarget),
         x: firstNumber(element.x) ?? 0,
         y,
         width: firstNumber(element.width) ?? 0,
@@ -566,15 +594,16 @@ function matchComparableGroups(figmaElements, webElements, group) {
   const remainingWebByKey = new Map()
 
   webElements.forEach((element) => {
-    const key = compareText(element.text)
+    const key = getElementCompareText(element)
+    if (!key) return
     const matches = remainingWebByKey.get(key) || []
     matches.push(element)
     remainingWebByKey.set(key, matches)
   })
 
-  const unmatchedFigma = []
+  let unmatchedFigma = []
   figmaElements.forEach((element) => {
-    const key = compareText(element.text)
+    const key = getElementCompareText(element)
     const matches = remainingWebByKey.get(key)
     if (matches && matches.length > 0) {
       exactMatches.push({ figmaElement: element, webElement: matches.shift(), matchedBy: 'compareText exact', score: 1 })
@@ -585,7 +614,10 @@ function matchComparableGroups(figmaElements, webElements, group) {
     unmatchedFigma.push(element)
   })
 
-  const unmatchedWeb = Array.from(remainingWebByKey.values()).flat()
+  let unmatchedWeb = Array.from(remainingWebByKey.values()).flat()
+
+  unmatchedFigma = unmatchedFigma.filter((figmaElement) => !isTextPresentOnPage(figmaElement, webElements))
+  unmatchedWeb = unmatchedWeb.filter((webElement) => !isTextPresentOnPage(webElement, figmaElements))
   const candidates = []
 
   unmatchedFigma.forEach((figmaElement) => {
@@ -602,7 +634,7 @@ function matchComparableGroups(figmaElements, webElements, group) {
   candidates
     .sort((first, second) => {
       if (first.score !== second.score) return second.score - first.score
-      return first.positionDelta - second.positionDelta
+      return (first.figmaElement.index || 0) - (second.figmaElement.index || 0)
     })
     .forEach((candidate) => {
       if (usedFigma.has(candidate.figmaElement) || usedWeb.has(candidate.webElement)) return
@@ -620,24 +652,23 @@ function matchComparableGroups(figmaElements, webElements, group) {
 }
 
 function createSimilarityCandidate(figmaElement, webElement, group) {
-  const figmaText = compareText(figmaElement.text)
-  const webText = compareText(webElement.text)
+  const figmaText = getElementCompareText(figmaElement)
+  const webText = getElementCompareText(webElement)
   if (!figmaText || !webText || figmaText === webText) return null
+  if (areCompareTextsEquivalent(figmaText, webText)) return null
 
   const similarity = getTextSimilarity(figmaText, webText)
-  const tokenOverlap = getTokenOverlapScore(figmaText, webText)
-  const containsMatch = figmaText.includes(webText) || webText.includes(figmaText)
-  const positionDelta = getPositionDelta(figmaElement, webElement)
+  const tokenOverlap = getTokenOverlapScore(figmaElement.text, webElement.text)
+  const lengthRatio = Math.min(figmaText.length, webText.length) / Math.max(figmaText.length, webText.length)
+  const containsMatch = areCompareTextsEquivalent(figmaText, webText)
   const isButtonGroup = group === 'button'
-  const hasStrongTextSimilarity = similarity >= TEXT_PAIR_SIMILARITY_THRESHOLD
-  const hasStrongTokenOverlap = tokenOverlap >= TEXT_PAIR_TOKEN_OVERLAP_THRESHOLD
+  const hasStrongTextSimilarity = similarity >= TEXT_PAIR_SIMILARITY_THRESHOLD || (lengthRatio >= 0.7 && similarity >= 0.72)
+  const hasStrongTokenOverlap = tokenOverlap >= TEXT_PAIR_TOKEN_OVERLAP_THRESHOLD || (lengthRatio >= 0.7 && tokenOverlap >= 0.6)
   const hasButtonSimilarity = similarity >= BUTTON_PAIR_SIMILARITY_THRESHOLD
   const hasButtonTokenOverlap = tokenOverlap >= BUTTON_PAIR_TOKEN_OVERLAP_THRESHOLD
-  const hasHybridTextSimilarity = similarity >= 0.48 && tokenOverlap >= 0.34
-  const hasHybridButtonSimilarity = similarity >= 0.36 && tokenOverlap >= 0.34
   const isEligible = isButtonGroup
-    ? containsMatch || hasButtonSimilarity || hasButtonTokenOverlap || hasHybridButtonSimilarity
-    : containsMatch || hasStrongTextSimilarity || hasStrongTokenOverlap || hasHybridTextSimilarity || ((isKeyCopyElement(figmaElement) || isKeyCopyElement(webElement)) && similarity >= 0.45 && tokenOverlap >= 0.2)
+    ? containsMatch || hasButtonSimilarity || hasButtonTokenOverlap
+    : containsMatch || hasStrongTextSimilarity || hasStrongTokenOverlap
 
   if (!isEligible) return null
 
@@ -653,8 +684,46 @@ function createSimilarityCandidate(figmaElement, webElement, group) {
     webElement,
     matchedBy: containsMatch ? 'similar compareText' : tokenOverlap >= 0.5 ? 'token overlap' : 'text similarity',
     score,
-    positionDelta,
   }
+}
+
+function isTextPresentOnPage(element, candidates) {
+  const targetText = getElementCompareText(element)
+  if (!targetText) return false
+
+  const candidateTexts = candidates.map(getElementCompareText).filter(Boolean)
+  if (candidateTexts.some((candidateText) => candidateText === targetText || areCompareTextsEquivalent(targetText, candidateText))) return true
+  if (targetText.length < CONTAINED_TEXT_MIN_LENGTH) return false
+
+  const pageCorpus = candidateTexts.join('')
+  if (pageCorpus.includes(targetText)) return true
+
+  const chunks = createLongTextChunks(targetText)
+  if (chunks.length === 0) return false
+
+  const matchedChunkCount = chunks.filter((chunk) => pageCorpus.includes(chunk)).length
+  return matchedChunkCount / chunks.length >= 0.7
+}
+
+function areCompareTextsEquivalent(firstText, secondText) {
+  const first = compareText(firstText)
+  const second = compareText(secondText)
+  if (!first || !second) return false
+  if (first === second) return true
+  if (Math.min(first.length, second.length) < CONTAINED_TEXT_MIN_LENGTH) return false
+  return first.includes(second) || second.includes(first)
+}
+
+function createLongTextChunks(value) {
+  const text = compareText(value)
+  if (text.length < LONG_TEXT_CHUNK_SIZE * 2) return []
+
+  const chunks = []
+  for (let index = 0; index < text.length; index += LONG_TEXT_CHUNK_SIZE) {
+    const chunk = text.slice(index, index + LONG_TEXT_CHUNK_SIZE)
+    if (chunk.length >= CONTAINED_TEXT_MIN_LENGTH) chunks.push(chunk)
+  }
+  return chunks
 }
 
 function getTokenOverlapScore(firstText, secondText) {
@@ -668,7 +737,11 @@ function getTokenOverlapScore(firstText, secondText) {
 }
 
 function getCoreTokens(value) {
-  return compareText(value)
+  return cleanText(value)
+    .replace(COMPARE_TEXT_PUNCTUATION, ' ')
+    .replace(REPEATED_WHITESPACE, ' ')
+    .trim()
+    .toLowerCase()
     .split(' ')
     .map((token) => token.trim())
     .filter(Boolean)
@@ -951,6 +1024,7 @@ function createGroupedIssue({ status, label, text, detail, categories, differenc
   const isReference = forceReference || isFooterDisclaimer || isReferenceOnly || !isPrimaryIssue({ status, categories, figmaElement, webElement, isFooterDisclaimer, primaryCandidate })
   const priority = getIssuePriority({ status, categories, figmaElement, webElement, isFooterDisclaimer, isReference })
   const issueGroup = isReference ? 'reference' : 'primary'
+  const qaGroupId = getString(figmaElement?.qaGroupId || webElement?.qaGroupId)
 
   return {
     id: `${status}-${label}-${normalizeDesignText(text)}-${sort.y}-${sort.x}-${figmaElement?.index || 'no-figma'}-${webElement?.index || 'no-web'}-${matchType || 'match'}`,
@@ -962,6 +1036,7 @@ function createGroupedIssue({ status, label, text, detail, categories, differenc
     region: sectionName,
     sectionId: getPlannerSectionId(sectionName),
     sectionName,
+    qaGroupId,
     isFooterDisclaimer,
     priority,
     severity: priority <= 3 && status !== 'ok' && !isReference ? 'check-required' : status,
@@ -1005,23 +1080,31 @@ function createComparisonWaitingIssue(webElementCount) {
 
 function createComparisonResult(issues) {
   const sortedIssues = sortIssuesByPriority(issues)
-  const primaryIssues = sortedIssues.filter((issue) => issue.status !== 'ok' && !issue.isReference)
-  const primaryIds = new Set(primaryIssues.map((issue) => issue.id))
-  const referenceIssues = sortedIssues.filter((issue) => issue.status !== 'ok' && !primaryIds.has(issue.id))
-  const textDifferences = primaryIssues.filter((issue) => issue.issueType === 'text-difference')
-  const figmaOnly = primaryIssues.filter((issue) => issue.issueType === 'figma-only')
-  const webOnly = primaryIssues.filter((issue) => issue.issueType === 'web-only')
-  const buttonIssues = primaryIssues.filter((issue) => issue.issueType === 'button')
-  const waitingIssues = primaryIssues.filter((issue) => issue.issueType === 'waiting')
-  const actionableIssues = [...textDifferences, ...figmaOnly, ...webOnly, ...buttonIssues]
-  const visibleIssues = actionableIssues.length > 0 ? actionableIssues : waitingIssues
+  const rawPrimaryIssues = sortedIssues.filter((issue) => issue.status !== 'ok' && !issue.isReference)
+  const primaryIds = new Set(rawPrimaryIssues.map((issue) => issue.id))
+  const rawReferenceIssues = sortedIssues.filter((issue) => issue.status !== 'ok' && !primaryIds.has(issue.id))
+  const rawTextDifferences = rawPrimaryIssues.filter((issue) => issue.issueType === 'text-difference')
+  const rawFigmaOnly = rawPrimaryIssues.filter((issue) => issue.issueType === 'figma-only')
+  const rawWebOnly = rawPrimaryIssues.filter((issue) => issue.issueType === 'web-only')
+  const rawButtonIssues = rawPrimaryIssues.filter((issue) => issue.issueType === 'button')
+  const waitingIssues = rawPrimaryIssues.filter((issue) => issue.issueType === 'waiting')
+  const actionableIssues = [...rawTextDifferences, ...rawFigmaOnly, ...rawWebOnly, ...rawButtonIssues]
+  const representativeIssues = assignDisplayIndexes(actionableIssues.length > 0 ? createRepresentativeIssues(actionableIssues) : waitingIssues)
+  const visibleIssues = representativeIssues.slice(0, 10)
+  const overflowIssues = representativeIssues.slice(10).map((issue) => ({ ...issue, isReference: true, issueGroup: 'reference', plannerType: 'reference' }))
+  const referenceIssues = [...overflowIssues, ...rawReferenceIssues]
+  const textDifferences = visibleIssues.filter((issue) => issue.issueType === 'text-difference')
+  const figmaOnly = visibleIssues.filter((issue) => issue.issueType === 'figma-only')
+  const webOnly = visibleIssues.filter((issue) => issue.issueType === 'web-only')
+  const buttonIssues = visibleIssues.filter((issue) => issue.issueType === 'button')
 
   return {
-    counts: getDesignCounts(sortedIssues),
-    summaryCounts: getSummaryCounts(primaryIssues, referenceIssues),
-    sectionSummaries: getSectionSummaries(primaryIssues),
-    topIssues: visibleIssues.slice(0, TOP_ISSUE_LIMIT),
+    counts: getDesignCounts([...visibleIssues, ...referenceIssues]),
+    summaryCounts: getSummaryCounts(visibleIssues, referenceIssues),
+    sectionSummaries: getSectionSummaries(visibleIssues),
+    topIssues: visibleIssues,
     primaryIssues: visibleIssues,
+    representativeIssues,
     referenceIssues,
     textDifferences,
     figmaOnly,
@@ -1033,11 +1116,183 @@ function createComparisonResult(issues) {
   }
 }
 
+function assignDisplayIndexes(issues) {
+  return issues.map((issue, index) => ({
+    ...issue,
+    displayIndex: index + 1,
+    displayLabel: `[${String(index + 1).padStart(2, '0')}]`,
+  }))
+}
+
+function createRepresentativeIssues(issues) {
+  const groups = new Map()
+
+  sortIssuesByPriority(issues).forEach((issue) => {
+    const key = getRepresentativeGroupKey(issue)
+    const group = groups.get(key) || []
+    group.push(issue)
+    groups.set(key, group)
+  })
+
+  return Array.from(groups.entries())
+    .map(([key, groupIssues]) => createRepresentativeIssue(key, groupIssues))
+    .sort(compareIssuePosition)
+}
+
+function createRepresentativeIssue(groupKey, issues) {
+  const orderedIssues = [...issues].sort(compareIssuePosition)
+  const baseIssue = orderedIssues[0]
+  const categories = Array.from(new Set(orderedIssues.flatMap((issue) => issue.categories || [])))
+  const differences = getUniqueDifferences(orderedIssues)
+  const checkSummary = getCheckSummary(orderedIssues, differences)
+  const issueTypes = new Set(orderedIssues.map((issue) => issue.issueType))
+  const issueType = getRepresentativeIssueType(issueTypes)
+  const figma = orderedIssues.find((issue) => issue.figma)?.figma || null
+  const web = orderedIssues.find((issue) => issue.web)?.web || null
+  const qaGroupId = getIssueQaGroupId(baseIssue)
+
+  return {
+    ...baseIssue,
+    id: `representative-${groupKey}`,
+    label: checkSummary.join(' / '),
+    detail: '',
+    categories,
+    differences,
+    issueType,
+    itemTitle: getRepresentativeItemTitle(baseIssue, qaGroupId),
+    checkSummary,
+    mergedIssueCount: orderedIssues.length,
+    mergedIssueIds: orderedIssues.map((issue) => issue.id),
+    qaGroupId,
+    figma,
+    web,
+    anchor: getRepresentativeAnchor(orderedIssues),
+    normalizedText: baseIssue.normalizedText,
+    isRepresentative: true,
+  }
+}
+
+function getRepresentativeGroupKey(issue) {
+  const qaGroupId = getIssueQaGroupId(issue)
+  if (qaGroupId) return `qa:${qaGroupId}`
+
+  const hasBothSides = Boolean(issue.figma && issue.web)
+  const figmaCompareText = issue.figma?.compareText || ''
+  const webCompareText = issue.web?.compareText || ''
+  const textKey = figmaCompareText || webCompareText || issue.normalizedText || ''
+
+  if (hasBothSides && textKey) return `text:${textKey}`
+  if (textKey) return `fallback:${issue.sectionId || issue.sectionName}:${textKey}:${getAnchorBucket(issue.anchor?.positionRatio, 40)}:${getAnchorBucket(issue.anchor?.xRatio, 8)}`
+  return `area:${issue.sectionId || issue.sectionName}:${getAnchorBucket(issue.anchor?.positionRatio, 40)}:${getAnchorBucket(issue.anchor?.xRatio, 8)}`
+}
+
+function getIssueQaGroupId(issue) {
+  return getString(issue.qaGroupId || issue.figma?.qaGroupId || issue.web?.qaGroupId)
+}
+
+function getAnchorBucket(value, buckets) {
+  const ratio = Number.isFinite(Number(value)) ? clampRatio(value) : 1
+  return Math.round(ratio * buckets)
+}
+
+function getRepresentativeAnchor(issues) {
+  return [...issues]
+    .map((issue) => issue.anchor)
+    .filter(Boolean)
+    .sort((first, second) => {
+      const firstRatio = first.positionRatio ?? 1
+      const secondRatio = second.positionRatio ?? 1
+      if (firstRatio !== secondRatio) return firstRatio - secondRatio
+      const firstXRatio = first.xRatio ?? 0
+      const secondXRatio = second.xRatio ?? 0
+      if (firstXRatio !== secondXRatio) return firstXRatio - secondXRatio
+      if (first.y !== second.y) return first.y - second.y
+      return first.x - second.x
+    })[0] || { x: 0, y: 0, xRatio: 0, positionRatio: null }
+}
+
+function getUniqueDifferences(issues) {
+  const seen = new Set()
+  const differences = []
+
+  issues.flatMap((issue) => issue.differences || []).forEach((difference) => {
+    const key = `${difference.type}:${getCheckLabel(difference.label)}`
+    if (seen.has(key)) return
+    seen.add(key)
+    differences.push({ ...difference, label: getCheckLabel(difference.label), detail: '' })
+  })
+
+  return differences
+}
+
+function getCheckSummary(issues, differences) {
+  const labels = differences.map((difference) => difference.label)
+  issues.forEach((issue) => labels.push(getCheckLabel(issue.label)))
+  return Array.from(new Set(labels)).filter(Boolean)
+}
+
+function getCheckLabel(label) {
+  const value = cleanText(label)
+  if (/시안에만|웹 대응|문구 누락/.test(value)) return '시안 문구 확인'
+  if (/웹에만|피그마 기준|시안 대응/.test(value)) return '웹 문구 확인'
+  if (/버튼|링크|cta/i.test(value)) return '버튼/링크 확인'
+  if (/font|폰트|글꼴|크기|size/i.test(value)) return '폰트 크기 확인'
+  if (/색|color/i.test(value)) return '색상 확인'
+  if (/위치|layout|레이아웃|크기/i.test(value)) return '위치 참고'
+  if (/문구|text/i.test(value)) return '문구 확인'
+  return value || '확인 필요'
+}
+
+function getRepresentativeIssueType(issueTypes) {
+  if (issueTypes.has('button')) return 'button'
+  if (issueTypes.has('text-difference')) return 'text-difference'
+  if (issueTypes.has('figma-only')) return 'figma-only'
+  if (issueTypes.has('web-only')) return 'web-only'
+  return issueTypes.values().next().value || 'text'
+}
+
+function getRepresentativeItemTitle(issue, qaGroupId) {
+  if (qaGroupId) return formatQaGroupId(qaGroupId)
+  const text = issue.figma?.text || issue.web?.text || issue.text || ''
+  return text.length > 40 ? `${text.slice(0, 40)}...` : text || issue.sectionName || '확인 항목'
+}
+
+function formatQaGroupId(value) {
+  const knownLabels = {
+    'hero-title': 'Hero 타이틀',
+    'hero-body': 'Hero 본문',
+    'hero-visual': 'Hero 비주얼',
+    'product-overview-title': '상품 개요 타이틀',
+    'product-overview-body': '상품 개요 본문',
+    'product-type-section-title': '상품 종류 섹션 타이틀',
+    'document-table': '구비서류 표',
+    'bottom-cta': '하단 CTA',
+    'footer-disclaimer': '푸터/디스클레이머',
+  }
+  if (knownLabels[value]) return knownLabels[value]
+  const productCardMatch = /^product-type-card-(\d+)$/.exec(value)
+  if (productCardMatch) return `상품 종류 카드 ${productCardMatch[1]}`
+  return value.split('-').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ')
+}
+
+function compareIssuePosition(first, second) {
+  const firstYRatio = first.anchor?.positionRatio ?? 1
+  const secondYRatio = second.anchor?.positionRatio ?? 1
+  if (firstYRatio !== secondYRatio) return firstYRatio - secondYRatio
+  const firstXRatio = first.anchor?.xRatio ?? 0
+  const secondXRatio = second.anchor?.xRatio ?? 0
+  if (firstXRatio !== secondXRatio) return firstXRatio - secondXRatio
+  if ((first.anchor?.y ?? 0) !== (second.anchor?.y ?? 0)) return (first.anchor?.y ?? 0) - (second.anchor?.y ?? 0)
+  return (first.anchor?.x ?? 0) - (second.anchor?.x ?? 0)
+}
+
 function pickEvidence(element) {
   return {
     tag: element.tag,
     text: element.text,
     normalizedText: element.normalizedText || normalizeDesignText(element.text),
+    compareText: element.compareText || getElementCompareText(element),
+    qaGroupId: element.qaGroupId || '',
     layerPath: element.layerPath,
     sectionName: element.sectionName,
     isFooterDisclaimer: Boolean(element.isFooterDisclaimer),

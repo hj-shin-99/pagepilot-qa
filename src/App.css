@@ -559,6 +559,33 @@
   font-weight: 900;
 }
 
+.mockup-ai-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.mockup-ai-summary-card {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid #e5edf6;
+  border-radius: 16px;
+  background: var(--surface);
+}
+
+.mockup-ai-summary-card span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.mockup-ai-summary-card strong {
+  color: var(--ink);
+  font-size: 28px;
+  font-weight: 950;
+}
+
 .ai-error-message {
   margin: 0;
   padding: 12px;
@@ -636,6 +663,65 @@
   background: #0f172a;
   font-size: 12px;
   font-weight: 900;
+}
+
+.mockup-ai-issue-card {
+  align-items: start;
+  cursor: pointer;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.mockup-ai-issue-card:hover,
+.mockup-ai-issue-card:focus-visible,
+.mockup-ai-issue-card.is-selected {
+  border-color: #ef4444;
+  box-shadow: 0 12px 28px rgba(239, 68, 68, 0.14);
+  outline: none;
+}
+
+.mockup-ai-issue-card.is-selected {
+  transform: translateY(-1px);
+}
+
+.mockup-ai-issue-fields {
+  display: grid;
+  grid-template-columns: 0.8fr 1fr 1.4fr 1.4fr;
+  gap: 0;
+  margin: 0;
+}
+
+.mockup-ai-issue-fields div {
+  display: grid;
+  gap: 6px;
+  padding: 0 12px;
+  border-left: 1px solid #e5edf6;
+}
+
+.mockup-ai-issue-fields div:first-child {
+  border-left: 0;
+}
+
+.mockup-ai-issue-fields dt {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.mockup-ai-issue-fields dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.diff-highlight {
+  border-radius: 6px;
+  padding: 1px 3px;
+  color: #b91c1c;
+  background: #fee2e2;
+  font-weight: 950;
 }
 
 .ai-issue-fields {
@@ -1053,6 +1139,97 @@
   max-width: 100%;
   height: auto;
   object-fit: contain;
+}
+
+.mockup-ai-image-grid {
+  align-items: stretch;
+}
+
+.mockup-ai-image-frame {
+  display: grid;
+  height: 320px;
+  min-height: 240px;
+  max-height: 360px;
+  overflow: hidden;
+  place-items: center;
+}
+
+.mockup-ai-image-stage {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  place-items: center;
+}
+
+.mockup-ai-image-stage img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.mockup-ai-region-highlight {
+  position: absolute;
+  z-index: 3;
+  top: var(--region-top);
+  right: 8%;
+  left: 8%;
+  border-top: 4px solid rgba(239, 68, 68, 0.92);
+  box-shadow: 0 0 0 8px rgba(239, 68, 68, 0.16);
+  pointer-events: none;
+}
+
+.mockup-ai-region-highlight span {
+  position: absolute;
+  top: -17px;
+  left: 0;
+  display: inline-flex;
+  min-width: 32px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: #ffffff;
+  background: #dc2626;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.mockup-ai-box-highlight {
+  position: absolute;
+  z-index: 4;
+  top: var(--box-top);
+  left: var(--box-left);
+  width: var(--box-width);
+  height: var(--box-height);
+  min-width: 24px;
+  min-height: 18px;
+  border: 3px solid rgba(220, 38, 38, 0.96);
+  border-radius: 8px;
+  background: rgba(239, 68, 68, 0.14);
+  box-shadow: 0 0 0 7px rgba(239, 68, 68, 0.14);
+  pointer-events: none;
+}
+
+.mockup-ai-box-highlight span {
+  position: absolute;
+  top: -16px;
+  left: -10px;
+  display: inline-flex;
+  min-width: 30px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: #ffffff;
+  background: #dc2626;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.comparison-placeholder.mockup-ai-image-placeholder {
+  width: 100%;
+  min-height: 100%;
 }
 
 .comparison-placeholder {
@@ -1593,8 +1770,10 @@
   }
 
   .mockup-metrics,
+  .mockup-ai-summary-grid,
   .mockup-comparison-grid,
   .ai-issue-fields,
+  .mockup-ai-issue-fields,
   .mockup-raw-grid {
     grid-template-columns: 1fr;
   }
@@ -1663,11 +1842,13 @@
   }
 
   .ai-issue-row,
-  .ai-issue-fields {
+  .ai-issue-fields,
+  .mockup-ai-issue-fields {
     grid-template-columns: 1fr;
   }
 
-  .ai-issue-fields div {
+  .ai-issue-fields div,
+  .mockup-ai-issue-fields div {
     border-left: 0;
     border-top: 1px solid var(--subtle-line);
   }

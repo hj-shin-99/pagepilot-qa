@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react'
 import './App.css'
 import { buildReportText, createResultSummary, getStatusCounts } from './utils/report'
-import { compareDesignElements, parseFigmaJsonInput } from './utils/designQa'
 import { loadHistoryItems, saveHistoryItem } from './utils/history'
 import AuditHeader from './components/AuditHeader'
 import CheckList from './components/CheckList'
@@ -13,7 +12,10 @@ import MockupQaPanel from './components/MockupQaPanel'
 import SummaryCards from './components/SummaryCards'
 import WorkspaceTabs from './components/WorkspaceTabs'
 
-const AI_IMAGE_DATA_URL_MAX_LENGTH = 9_000_000
+const AI_IMAGE_DATA_URL_MAX_LENGTH = 50_000_000
+const AI_TEXT_HINT_LIMIT = 100
+const AI_TEXT_HINT_MAX_LENGTH = 160
+const AI_MOCKUP_QA_TIMEOUT_MS = 180000
 
 function isValidHttpUrl(value) {
   try {
@@ -43,7 +45,6 @@ function App() {
   const summary = useMemo(() => (result ? createResultSummary(result) : ''), [result])
   const statusCounts = useMemo(() => (result ? getStatusCounts(result.checks) : null), [result])
   const webElements = useMemo(() => result?.designElements || [], [result])
-  const designQa = useMemo(() => compareDesignElements(figmaElements, webElements), [figmaElements, webElements])
   const isScanning = scanState === 'scanning'
 
   const handleFigmaTextChange = (value) => {
@@ -115,9 +116,8 @@ function App() {
       setResult(payload)
       setScanState('complete')
       setActiveTab('mockup')
-      setHistoryItems(saveHistoryItem(createHistoryItem(payload, figmaElements, designImages)))
-      const nextDesignQa = compareDesignElements(figmaElements, payload.designElements || [])
-      await maybeRunAiQa({ scanResult: payload, nextDesignQa, force: false })
+      setHistoryItems(saveHistoryItem(createHistoryItem(payload, designImages)))
+      await maybeRunAiQa({ scanResult: payload, force: false })
     } catch (error) {
       setScanError(error instanceof Error ? error.message : '검사 중 오류가 발생했습니다.')
       setScanState('failed')
@@ -170,10 +170,10 @@ function App() {
   }
 
   const handleRunAiQa = async () => {
-    await maybeRunAiQa({ scanResult: result, nextDesignQa: designQa, force: true })
+    await maybeRunAiQa({ scanResult: result, force: true })
   }
 
-  const maybeRunAiQa = async ({ scanResult, nextDesignQa, force }) => {
+  const maybeRunAiQa = async ({ scanResult, force }) => {
     if (!scanResult) {
       setAiQa({ state: 'failed', result: null, error: '먼저 URL 검사를 실행한 뒤 AI QA를 사용할 수 있습니다.', rawText: '' })
       return
@@ -181,27 +181,34 @@ function App() {
 
     const resultKey = getAiResultKey(scanResult)
     if (!force && aiQa.resultKey === resultKey && aiQa.state !== 'idle') return
-    if (!window.confirm('OpenAI API 크레딧이 소모됩니다. 진행할까요?')) {
-      setAiQa({ state: 'skipped', result: null, error: 'AI 검수를 실행하지 않았습니다.', rawText: '', resultKey })
-      return
-    }
 
     setAiQa({ state: 'running', result: null, error: '', rawText: '', resultKey })
 
     const controller = new AbortController()
-    const timeoutId = window.setTimeout(() => controller.abort(), 70000)
+    const timeoutId = window.setTimeout(() => controller.abort(), AI_MOCKUP_QA_TIMEOUT_MS)
 
     try {
-      const response = await fetch('/api/ai-qa', {
+      const response = await fetch('/api/ai-mockup-qa', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(createAiQaRequestPayload({ result: scanResult, figmaElements, webElements: scanResult.designElements || [], designImages, designQa: nextDesignQa })),
+        body: JSON.stringify(createAiMockupQaRequestPayload({ result: scanResult, figmaElements, webElements: scanResult.designElements || [], designImages })),
         signal: controller.signal,
       })
-      const payload = await response.json().catch(() => ({}))
+      console.log('[Mockup AI QA Front] response received')
+
+      let payload
+      try {
+        payload = await response.json()
+      } catch {
+        if (!response.ok) {
+          throw new AiQaRequestError('http_error', `AI QA HTTP 오류가 발생했습니다. (${response.status})`)
+        }
+        throw new AiQaRequestError('json_parse_error', 'AI QA 응답 JSON을 해석하지 못했습니다. 서버 응답 형식을 확인해주세요.')
+      }
+      console.log('[Mockup AI QA Front] parsed result', payload?.result || payload)
 
       if (!response.ok) {
-        throw new Error(payload.message || 'AI QA 실행 중 오류가 발생했습니다.')
+        throw new AiQaRequestError('http_error', payload?.message || `AI QA HTTP 오류가 발생했습니다. (${response.status})`)
       }
 
       if (payload.parseError) {
@@ -209,7 +216,8 @@ function App() {
         return
       }
 
-      setAiQa({ state: 'complete', result: payload.result, error: '', rawText: '', resultKey })
+      const aiResult = normalizeAiMockupQaFrontendResult(payload.result)
+      setAiQa({ state: 'complete', result: aiResult, error: '', rawText: '', resultKey })
     } catch (error) {
       const message = error?.name === 'AbortError'
         ? 'AI QA 요청 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.'
@@ -228,8 +236,8 @@ function App() {
     }
 
     try {
-      const elements = parseFigmaJsonInput(value)
-      setFigmaElements(elements)
+      const texts = extractFigmaTextHints(value)
+      setFigmaElements(texts)
       setFigmaError('')
     } catch {
       setFigmaElements([])
@@ -280,10 +288,7 @@ function App() {
               <MockupQaPanel
                 aiQa={aiQa}
                 designImages={designImages}
-                designQa={designQa}
-                figmaElements={figmaElements}
                 result={result}
-                webElements={webElements}
                 onRunAiQa={handleRunAiQa}
               />
             ) : null}
@@ -296,18 +301,17 @@ function App() {
   )
 }
 
-function createHistoryItem(result, figmaElements, designImages) {
+function createHistoryItem(result, designImages) {
   const techCounts = getStatusCounts(result.checks)
-  const designQa = compareDesignElements(figmaElements, result.designElements || [])
   const techIssueCount = techCounts.error + techCounts.warn
   const counts = {
-    total: techIssueCount + designQa.summaryCounts.total,
-    high: techCounts.error + designQa.summaryCounts.high,
-    text: designQa.summaryCounts.text,
-    style: designQa.summaryCounts.style,
-    layout: designQa.summaryCounts.layout,
-    cta: designQa.summaryCounts.cta,
-    footer: designQa.summaryCounts.footer,
+    total: techIssueCount,
+    high: techCounts.error,
+    text: 0,
+    style: 0,
+    layout: 0,
+    cta: 0,
+    footer: 0,
     techError: techCounts.error,
     techWarn: techCounts.warn,
   }
@@ -318,124 +322,107 @@ function createHistoryItem(result, figmaElements, designImages) {
     scannedAt: result.scannedAt,
     totalIssueCount: counts.total,
     counts,
-    topIssueSummaries: createTopIssueSummaries(result, designQa),
+    topIssueSummaries: createTopIssueSummaries(result),
     designImageFilenames: designImages.map((image) => image.name).filter(Boolean),
   }
 }
 
-function createTopIssueSummaries(result, designQa) {
-  const designSummaries = designQa.topIssues.map((issue) => `${issue.sectionName}: ${issue.label}`)
+function createTopIssueSummaries(result) {
   const techSummaries = result.checks
     .filter((check) => check.status !== 'ok')
     .map((check) => `Tech QA: ${check.title}`)
-  const summaries = [...designSummaries, ...techSummaries].slice(0, 3)
+  const summaries = techSummaries.slice(0, 3)
 
-  return summaries.length > 0 ? summaries : ['Tech QA와 시안 비교 QA 주요 항목 정상']
+  return summaries.length > 0 ? summaries : ['Tech QA 주요 항목 정상']
 }
 
-function createAiQaRequestPayload({ result, figmaElements, webElements, designImages, designQa }) {
+function createAiMockupQaRequestPayload({ result, figmaElements, webElements, designImages }) {
   return {
     pageTitle: result.pageTitle || '',
     url: result.targetUrl || '',
-    figma: {
-      texts: createAiElementSummary(figmaElements.filter((element) => !isAiButtonElement(element) && !isAiReferenceElement(element)), 60),
-      buttons: createAiElementSummary(figmaElements.filter(isAiButtonElement), 30),
-      image: createAiImagePayload({
-        name: designImages[0]?.name || 'Figma 시안 이미지',
-        dataUrl: designImages[0]?.previewUrl || '',
-      }),
-    },
-    web: {
-      texts: createAiElementSummary(webElements.filter((element) => !isAiButtonElement(element) && !isAiReferenceElement(element)), 60),
-      buttons: createAiElementSummary(webElements.filter(isAiButtonElement), 30),
-      links: createAiLinkSummary(result),
-      screenshot: createAiImagePayload({
-        name: 'Web 1920 캡처',
-        width: result.webScreenshot?.width,
-        height: result.webScreenshot?.height,
-        dataUrl: result.webScreenshot?.dataUrl || '',
-      }),
-    },
-    localIssues: createAiIssueSummary(designQa),
+    webScreenshotDataUrl: createAiImageDataUrl(result.webScreenshot?.dataUrl || ''),
+    figmaImageDataUrl: createAiImageDataUrl(designImages[0]?.previewUrl || ''),
+    figmaTexts: createAiTextHints(figmaElements),
+    webTexts: createAiTextHints(webElements),
   }
-}
-
-function createAiElementSummary(elements, limit) {
-  return elements.slice(0, limit).map((element) => ({
-    text: cleanAiText(element.text || element.label || element.name || ''),
-    compareText: cleanAiText(element.compareText || element.normalizedText || ''),
-    sectionLabel: cleanAiText(element.sectionLabel || element.sectionName || element.region || ''),
-    qaGroupId: cleanAiText(element.qaGroupId || ''),
-    href: cleanAiText(element.href || ''),
-    positionRatio: getAiPositionRatio(element.positionRatio),
-  })).filter((element) => element.text || element.compareText)
-}
-
-function createAiLinkSummary(result) {
-  const links = [
-    ...(Array.isArray(result.links) ? result.links : []),
-    ...(Array.isArray(result.missingHrefLinks) ? result.missingHrefLinks : []),
-  ]
-
-  return links.slice(0, 40).map((link) => ({
-    label: cleanAiText(link.label || link.text || ''),
-    href: cleanAiText(link.href || ''),
-    url: cleanAiText(link.url || ''),
-    status: cleanAiText(link.status || link.statusText || ''),
-  })).filter((link) => link.label || link.href || link.url)
-}
-
-function createAiIssueSummary(designQa = {}) {
-  const issues = [
-    ...(Array.isArray(designQa.primaryIssues) ? designQa.primaryIssues : []),
-    ...(Array.isArray(designQa.referenceIssues) ? designQa.referenceIssues.slice(0, 5) : []),
-  ]
-
-  return issues.slice(0, 20).map((issue) => ({
-    type: cleanAiText(issue.label || issue.issueType || ''),
-    area: cleanAiText(issue.sectionName || issue.region || ''),
-    title: cleanAiText(issue.itemTitle || issue.text || ''),
-    figma: cleanAiText(issue.figma?.text || ''),
-    web: cleanAiText(issue.web?.text || ''),
-    qaGroupId: cleanAiText(issue.qaGroupId || ''),
-  }))
-}
-
-function createAiImagePayload(image) {
-  const dataUrl = typeof image.dataUrl === 'string' && image.dataUrl.length <= AI_IMAGE_DATA_URL_MAX_LENGTH ? image.dataUrl : ''
-  return {
-    name: image.name || '',
-    width: image.width || null,
-    height: image.height || null,
-    dataUrl,
-  }
-}
-
-function isAiButtonElement(element) {
-  const tag = String(element?.tag || '').toLowerCase()
-  const text = `${element?.text || ''} ${element?.layerPath || ''}`
-  return tag === 'button'
-    || tag === 'a'
-    || element?.qaImportance === 'button'
-    || /button|btn|cta|link|버튼|자세히|더 보기|더보기|바로가기|신청|구매|상담|예약|문의/i.test(text)
-}
-
-function isAiReferenceElement(element) {
-  return Boolean(element?.isReferenceOnly || element?.isNavigation || element?.isFooterDisclaimer)
-}
-
-function getAiPositionRatio(value) {
-  if (value && typeof value === 'object') return Number.isFinite(Number(value.yRatio)) ? Number(value.yRatio) : null
-  return Number.isFinite(Number(value)) ? Number(value) : null
 }
 
 function cleanAiText(value) {
   const text = String(value || '').replace(/\s+/g, ' ').trim()
-  return text.length > 240 ? `${text.slice(0, 240)}...` : text
+  return text.length > AI_TEXT_HINT_MAX_LENGTH ? `${text.slice(0, AI_TEXT_HINT_MAX_LENGTH)}...` : text
+}
+
+function createAiTextHints(elements) {
+  const seen = new Set()
+  const hints = []
+
+  elements.forEach((element) => {
+    const text = cleanAiText(typeof element === 'string' ? element : element?.text || element?.label || element?.name || '')
+    if (!text || seen.has(text)) return
+    seen.add(text)
+    hints.push(text)
+  })
+
+  return hints.slice(0, AI_TEXT_HINT_LIMIT)
+}
+
+function createAiImageDataUrl(dataUrl) {
+  return typeof dataUrl === 'string' && dataUrl.length <= AI_IMAGE_DATA_URL_MAX_LENGTH ? dataUrl : ''
+}
+
+function extractFigmaTextHints(value) {
+  const parsed = JSON.parse(value)
+  const hints = []
+  const seen = new Set()
+
+  function addText(text) {
+    const cleaned = cleanAiText(text)
+    if (!cleaned || seen.has(cleaned) || hints.length >= AI_TEXT_HINT_LIMIT) return
+    seen.add(cleaned)
+    hints.push(cleaned)
+  }
+
+  function visit(node) {
+    if (!node || typeof node !== 'object' || hints.length >= AI_TEXT_HINT_LIMIT) return
+    if (typeof node.characters === 'string') addText(node.characters)
+    if (typeof node.text === 'string') addText(node.text)
+    if (node.type === 'TEXT' && typeof node.name === 'string') addText(node.name)
+
+    if (Array.isArray(node)) {
+      node.forEach(visit)
+      return
+    }
+
+    if (Array.isArray(node.children)) node.children.forEach(visit)
+    if (node.document) visit(node.document)
+    if (node.nodes) visit(node.nodes)
+  }
+
+  visit(parsed)
+  return hints
 }
 
 function getAiResultKey(result) {
   return `${result?.targetUrl || ''}:${result?.scannedAt || ''}`
+}
+
+function normalizeAiMockupQaFrontendResult(result) {
+  if (!result || typeof result !== 'object') {
+    throw new AiQaRequestError('normalize_error', 'AI QA 결과 형식이 올바르지 않습니다.')
+  }
+
+  const issues = Array.isArray(result.issues) ? result.issues : []
+  const summary = result.summary && typeof result.summary === 'object' ? result.summary : {}
+
+  return { ...result, summary, issues }
+}
+
+class AiQaRequestError extends Error {
+  constructor(code, message) {
+    super(message)
+    this.name = 'AiQaRequestError'
+    this.code = code
+  }
 }
 
 function readFileAsText(file) {

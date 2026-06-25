@@ -31,9 +31,9 @@ function InputPanel({
         PagePilot QA
       </div>
 
-      <h1>PagePilot QA v3</h1>
+      <h1>PagePilot QA</h1>
       <p className="lead-text">
-        URL, Figma JSON, 시안 이미지를 기반으로 Playwright 분석과 AI 검수를 결합해 웹페이지와 시안의 차이를 확인합니다.
+        URL, Figma JSON, 시안 이미지를 기반으로 Tech QA와 AI 시안 비교 QA를 실행합니다.
       </p>
 
       <form className="scan-form" onSubmit={handleSubmit}>

@@ -6,12 +6,13 @@ import OpenAI from 'openai'
 import { chromium, request as playwrightRequest } from 'playwright'
 
 const PORT = Number(process.env.PORT || 3001)
-const AI_QA_MODEL = 'gpt-5.4-mini'
+const AI_QA_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini'
 const AI_QA_TIMEOUT_MS = 60000
-const MAX_AI_ITEMS = 40
-const MAX_AI_TEXT_ITEMS = 60
-const MAX_AI_ISSUES = 20
-const MAX_AI_IMAGE_DATA_URL_LENGTH = 9_000_000
+const MAX_AI_IMAGE_DATA_URL_LENGTH = 50_000_000
+const MAX_MOCKUP_AI_TEXT_HINTS = 100
+const MAX_MOCKUP_AI_TEXT_LENGTH = 160
+const MAX_MOCKUP_AI_ISSUES = 10
+const MAX_TEXT_MISMATCH_HINTS = 20
 const MAX_LINKS_TO_CHECK = 30
 const MAX_DESIGN_ELEMENTS = 120
 const DESKTOP_DESIGN_VIEWPORT = { width: 1920, height: 1080 }
@@ -23,7 +24,7 @@ const app = express()
 
 loadLocalEnv()
 
-app.use(express.json({ limit: '24mb' }))
+app.use(express.json({ limit: '80mb' }))
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true })
@@ -48,38 +49,49 @@ app.post('/api/scan', async (req, res) => {
   }
 })
 
-app.post('/api/ai-qa', async (req, res) => {
-  const apiKey = process.env.OPENAI_API_KEY
+app.post('/api/ai-mockup-qa', async (req, res) => {
+  console.log('[Mockup AI QA] request received')
 
+  const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) {
-    res.status(400).json({ message: 'OpenAI API Key가 설정되지 않았습니다. .env의 OPENAI_API_KEY를 확인해주세요.', code: 'missing_api_key' })
+    res.status(400).json({ message: 'OpenAI API Key가 설정되지 않았습니다.', code: 'missing_api_key' })
     return
   }
 
-  const payload = createSafeAiQaPayload(req.body)
-  if (!payload.url) {
-    res.status(400).json({ message: 'AI QA를 실행할 URL 정보가 없습니다.', code: 'invalid_payload' })
+  const payload = createSafeMockupAiQaPayload(req.body)
+  console.log(`[Mockup AI QA] web image attached: ${Boolean(payload.webScreenshotDataUrl)}`)
+  console.log(`[Mockup AI QA] figma image attached: ${Boolean(payload.figmaImageDataUrl)}`)
+  console.log('[Mockup AI QA] figma text hints:', payload.figmaTexts)
+  console.log('[Mockup AI QA] web text hints:', payload.webTexts)
+  console.log('[Mockup AI QA] text mismatch hints:', payload.textMismatchHints)
+
+  if (!payload.webScreenshotDataUrl || !payload.figmaImageDataUrl) {
+    res.status(400).json({ message: '웹 캡처 이미지와 Figma 시안 이미지가 필요합니다.', code: 'missing_image' })
     return
   }
 
   try {
     const client = new OpenAI({ apiKey, timeout: AI_QA_TIMEOUT_MS })
-    const rawText = await requestAiQa(client, payload)
-    const parsed = parseAiQaJson(rawText)
+    console.log('[Mockup AI QA] calling OpenAI')
+    const rawText = await requestMockupAiQa(client, payload)
+    console.log('[Mockup AI QA] response received')
 
+    const parsed = parseAiQaJson(rawText)
     if (!parsed) {
-      res.json({
-        ok: false,
-        parseError: true,
-        message: 'AI 응답을 해석하지 못했습니다. 원문 응답을 확인해주세요.',
-        rawText,
-      })
+      console.log('[Mockup AI QA] sending response')
+      res.status(502).json({ message: 'OpenAI 응답 JSON을 해석하지 못했습니다.', code: 'parse_error' })
       return
     }
 
-    res.json({ ok: true, model: AI_QA_MODEL, result: normalizeAiQaResult(parsed) })
+    console.log('[Mockup AI QA] raw issues:', parsed.issues)
+    const result = normalizeMockupAiQaResult(parsed)
+    console.log('[Mockup AI QA] filtered issues:', result.issues)
+    console.log('[Mockup AI QA] issues with boxes:', result.issues.map((issue) => ({ title: issue.title, figmaBox: issue.figmaBox, webBox: issue.webBox })))
+    console.log('[Mockup AI QA] sending response')
+    res.json({ ok: true, model: AI_QA_MODEL, result })
   } catch (error) {
     const mappedError = mapOpenAiError(error)
+    console.log('[Mockup AI QA] sending response')
     res.status(mappedError.status).json(mappedError.body)
   }
 })
@@ -120,92 +132,141 @@ function loadLocalEnv() {
   }
 }
 
-function createSafeAiQaPayload(body = {}) {
+function createSafeMockupAiQaPayload(body = {}) {
+  const figmaTexts = normalizeTextHints(body.figmaTexts)
+  const webTexts = normalizeTextHints(body.webTexts)
+
   return {
-    pageTitle: limitText(body.pageTitle, 140),
     url: isHttpUrl(body.url) ? body.url : '',
-    figma: {
-      texts: normalizeAiItems(body.figma?.texts, MAX_AI_TEXT_ITEMS),
-      buttons: normalizeAiItems(body.figma?.buttons, 30),
-      image: normalizeAiImage(body.figma?.image),
-    },
-    web: {
-      texts: normalizeAiItems(body.web?.texts, MAX_AI_TEXT_ITEMS),
-      buttons: normalizeAiItems(body.web?.buttons, 30),
-      links: normalizeAiLinks(body.web?.links),
-      screenshot: normalizeAiImage(body.web?.screenshot),
-    },
-    localIssues: normalizeAiIssues(body.localIssues),
+    pageTitle: limitText(body.pageTitle, 140),
+    webScreenshotDataUrl: normalizeImageDataUrl(body.webScreenshotDataUrl),
+    figmaImageDataUrl: normalizeImageDataUrl(body.figmaImageDataUrl),
+    figmaTexts,
+    webTexts,
+    textMismatchHints: createTextMismatchHints(figmaTexts, webTexts),
   }
 }
 
-function normalizeAiItems(items, limit) {
-  if (!Array.isArray(items)) return []
-  return items.slice(0, limit).map((item) => ({
-    text: limitText(item?.text || item?.label || '', 220),
-    compareText: limitText(item?.compareText || '', 220),
-    sectionLabel: limitText(item?.sectionLabel || item?.sectionName || '', 80),
-    qaGroupId: limitText(item?.qaGroupId || '', 80),
-    href: limitText(item?.href || '', 220),
-    positionRatio: normalizeRatio(item?.positionRatio),
-  })).filter((item) => item.text || item.compareText)
+function normalizeImageDataUrl(value) {
+  return typeof value === 'string' && /^data:image\//.test(value) && value.length <= MAX_AI_IMAGE_DATA_URL_LENGTH ? value : ''
 }
 
-function normalizeAiLinks(links) {
-  if (!Array.isArray(links)) return []
-  return links.slice(0, 40).map((link) => ({
-    label: limitText(link?.label || '', 160),
-    href: limitText(link?.href || '', 220),
-    url: limitText(link?.url || '', 220),
-    status: limitText(link?.status || '', 80),
-  })).filter((link) => link.label || link.href || link.url)
+function normalizeTextHints(value) {
+  if (!Array.isArray(value)) return []
+  const seen = new Set()
+  const hints = []
+
+  value.forEach((item) => {
+    const text = limitText(typeof item === 'string' ? item : item?.text || item?.label || '', MAX_MOCKUP_AI_TEXT_LENGTH)
+    if (!text || seen.has(text)) return
+    seen.add(text)
+    hints.push(text)
+  })
+
+  return hints.slice(0, MAX_MOCKUP_AI_TEXT_HINTS)
 }
 
-function normalizeAiIssues(issues) {
-  if (!Array.isArray(issues)) return []
-  return issues.slice(0, MAX_AI_ISSUES).map((issue) => ({
-    type: limitText(issue?.type || issue?.label || '', 80),
-    area: limitText(issue?.area || issue?.sectionName || issue?.region || '', 80),
-    title: limitText(issue?.title || issue?.itemTitle || issue?.text || '', 160),
-    figma: limitText(issue?.figma || issue?.figmaText || '', 260),
-    web: limitText(issue?.web || issue?.webText || '', 260),
-    qaGroupId: limitText(issue?.qaGroupId || '', 80),
-  })).filter((issue) => issue.type || issue.title)
-}
+function createTextMismatchHints(figmaTexts, webTexts) {
+  const hints = []
+  const seen = new Set()
 
-function normalizeAiImage(image) {
-  const dataUrl = typeof image?.dataUrl === 'string' && image.dataUrl.length <= MAX_AI_IMAGE_DATA_URL_LENGTH ? image.dataUrl : ''
-  return {
-    name: limitText(image?.name || '', 120),
-    width: Number.isFinite(Number(image?.width)) ? Number(image.width) : null,
-    height: Number.isFinite(Number(image?.height)) ? Number(image.height) : null,
-    dataUrl,
-    omittedReason: dataUrl ? '' : image?.dataUrl ? '이미지 데이터가 커서 AI 요청에서 제외됨' : '',
-  }
-}
+  for (const figmaText of figmaTexts) {
+    for (const webText of webTexts) {
+      const reason = getTextMismatchReason(figmaText, webText)
+      if (!reason || !areRelatedMismatchTexts(figmaText, webText, reason)) continue
 
-function normalizeRatio(value) {
-  if (value && typeof value === 'object') return Number.isFinite(Number(value.yRatio)) ? Number(value.yRatio) : null
-  return Number.isFinite(Number(value)) ? Number(value) : null
-}
-
-async function requestAiQa(client, payload) {
-  const userContent = [
-    { type: 'text', text: createAiQaPrompt(payload) },
-  ]
-
-  if (payload.web.screenshot.dataUrl) {
-    userContent.push({ type: 'image_url', image_url: { url: payload.web.screenshot.dataUrl, detail: 'low' } })
-  }
-  if (payload.figma.image.dataUrl) {
-    userContent.push({ type: 'image_url', image_url: { url: payload.figma.image.dataUrl, detail: 'low' } })
+      const key = `${reason}:${normalizeCriticalMockupText(figmaText)}:${normalizeCriticalMockupText(webText)}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      hints.push({ reason, figma: figmaText, web: webText })
+      if (hints.length >= MAX_TEXT_MISMATCH_HINTS) return hints
+    }
   }
 
+  return hints
+}
+
+function getTextMismatchReason(figmaText, webText) {
+  if (hasTermPairMismatch(figmaText, webText, '금융상품', '금융프로그램')) return '금융 상품/금융 프로그램'
+  if (hasTermPairMismatch(figmaText, webText, '운용리스', '리스')) return '운용리스/리스'
+  if (hasTermPairMismatch(figmaText, webText, '상품', '프로그램')) return '상품/프로그램'
+  if (hasRateMismatch(figmaText, webText)) return '금리/숫자 패턴 다름'
+  if (hasCtaMismatch(figmaText, webText)) return 'CTA 문구 다름'
+  return ''
+}
+
+function hasTermPairMismatch(firstText, secondText, firstTerm, secondTerm) {
+  const first = normalizeCriticalMockupText(firstText)
+  const second = normalizeCriticalMockupText(secondText)
+
+  return hasCriticalPairDifference(first, second, firstTerm, secondTerm)
+}
+
+function hasRateMismatch(figmaText, webText) {
+  const figmaRates = extractRateTokens(figmaText)
+  const webRates = extractRateTokens(webText)
+  if (figmaRates.length === 0 || webRates.length === 0) return false
+  return figmaRates.join('|') !== webRates.join('|')
+}
+
+function extractRateTokens(value) {
+  const text = String(value || '').toLowerCase()
+  const shouldCheck = /%|금리|이율|할부|리스/.test(text)
+  if (!shouldCheck) return []
+  return (text.match(/\d+(?:[.,]\d+)?\s*(?:~|-)\s*\d+(?:[.,]\d+)?\s*%?|\d+(?:[.,]\d+)?\s*%/g) || [])
+    .map((token) => token.replace(/\s+/g, '').replace(/,/g, '.'))
+}
+
+function hasCtaMismatch(figmaText, webText) {
+  if (!hasCtaTerm(figmaText) || !hasCtaTerm(webText)) return false
+  return !isMinorMockupTextDifference(figmaText, webText)
+}
+
+function hasCtaTerm(value) {
+  return /구매상담|프로모션|바로가기|신청|상담|자세히|더\s*보기|더\s*알아보기/i.test(String(value || ''))
+}
+
+function areRelatedMismatchTexts(figmaText, webText, reason) {
+  if (reason === '운용리스/리스') return true
+  if (reason === '금리/숫자 패턴 다름') return hasMeaningfulTextOverlap(figmaText, webText) || hasRateContext(figmaText, webText)
+  return hasMeaningfulTextOverlap(figmaText, webText) || reason === 'CTA 문구 다름'
+}
+
+function hasRateContext(figmaText, webText) {
+  return /금리|이율|할부|리스|%/.test(`${figmaText} ${webText}`)
+}
+
+function hasMeaningfulTextOverlap(figmaText, webText) {
+  const figmaTokens = getComparableHintTokens(figmaText)
+  const webTokens = getComparableHintTokens(webText)
+
+  return figmaTokens.some((figmaToken) => webTokens.some((webToken) => {
+    if (figmaToken === webToken) return true
+    return figmaToken.length >= 3 && webToken.length >= 3 && (figmaToken.includes(webToken) || webToken.includes(figmaToken))
+  }))
+}
+
+function getComparableHintTokens(value) {
+  return String(value || '')
+    .toLowerCase()
+    .split(/[^0-9a-z가-힣.%~-]+/i)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2 && !['상품', '프로그램', '리스'].includes(token))
+}
+
+async function requestMockupAiQa(client, payload) {
   const completion = await client.chat.completions.create({
     model: AI_QA_MODEL,
     messages: [
-      { role: 'system', content: getAiQaSystemPrompt() },
-      { role: 'user', content: userContent },
+      { role: 'system', content: getMockupAiQaSystemPrompt() },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: createMockupAiQaPrompt(payload) },
+          { type: 'image_url', image_url: { url: payload.webScreenshotDataUrl, detail: 'auto' } },
+          { type: 'image_url', image_url: { url: payload.figmaImageDataUrl, detail: 'auto' } },
+        ],
+      },
     ],
     response_format: { type: 'json_object' },
     max_completion_tokens: 2200,
@@ -214,56 +275,188 @@ async function requestAiQa(client, payload) {
   return completion.choices?.[0]?.message?.content || ''
 }
 
-function getAiQaSystemPrompt() {
+function getMockupAiQaSystemPrompt() {
   return [
-    '너는 웹 기획자/QA 담당자다.',
-    '웹 캡처, Figma 시안, Figma JSON 요약, Playwright 추출 결과를 함께 보고 실제 운영 QA 관점에서 확인해야 할 차이만 정리한다.',
-    'Figma JSON은 참고 자료이지 절대 기준이 아니다. 레이어 구조, 그룹핑, 텍스트 분리 방식, 좌표 정보가 틀릴 수 있다.',
-    '판단 우선순위: 1) Web 캡처와 Figma 시안 이미지를 실제 화면 기준으로 비교 2) Playwright가 추출한 Web DOM 텍스트/버튼/링크 확인 3) Figma JSON은 시안 텍스트/버튼/영역 보조 확인 4) 로컬 규칙 기반 후보 이슈는 참고하되 그대로 믿지 말 것.',
-    'JSON에 없다고 시안에 없는 것으로 단정하지 말고, JSON 좌표가 다르다고 위치 오류로 단정하지 말고, JSON 텍스트가 쪼개져 있어도 시안 이미지 기준으로 같은 문구면 동일하게 판단한다.',
-    'JSON과 시안 이미지가 충돌하면 “시안 이미지 기준 확인 필요”로 표시하고, Playwright DOM과 웹 캡처가 충돌하면 “웹 렌더링 기준 확인 필요”로 표시한다.',
-    '찾을 것: 문구 차이, 시안에는 있는데 웹에 없는 콘텐츠, 웹에는 있는데 시안에 없는 콘텐츠, 버튼/CTA 문구 차이, 버튼/CTA 누락, 링크 확인 필요, 주요 이미지/비주얼 차이, 눈에 띄는 레이아웃 차이, 기획자가 확인해야 할 검토 사항.',
-    '무시할 것: 줄바꿈 차이, 단순 공백 차이, 마침표/쉼표 차이, 브라우저 렌더링 미세 위치 차이, 실제 차이가 작아 보이는 폰트명 차이, GNB/푸터/디스클레이머의 사소한 차이, 동일 문구 반복, 개발자용 layerPath, Vector, icon, logo, blende.',
-    '로컬 규칙 기반 후보 이슈는 참고만 하고 그대로 믿지 말고 이미지와 텍스트를 함께 보고 최종 판단한다.',
-    '반드시 JSON 객체만 응답한다.',
+    '너는 웹 QA 담당자다.',
+    '웹 캡처와 Figma 시안 이미지를 나란히 보고 실제 차이를 찾아라.',
+    'JSON/DOM 텍스트는 참고용이다.',
+    '가장 중요한 것은 실제 문구 의미 차이다.',
+    '줄바꿈, 공백, 마침표, 쉼표, 띄어쓰기만 다른 경우는 무시한다.',
+    '온라인견적 vs 온라인 견적, 소비자 정보포털 vs 소비자 정보 포털, 구비 서류 vs 구비서류는 무시한다.',
+    'My FinCar 앱 더 알아보기 vs MY FinCar 앱 더 알아보기처럼 대소문자만 다른 경우는 무시한다.',
+    '상품 vs 프로그램, 금융 상품 vs 금융 프로그램, 운용리스 vs 리스, 구매상담 바로가기 vs 프로모션 바로가기는 반드시 문구 차이로 유지한다.',
+    '0~8.99%처럼 금리 또는 숫자 패턴이 다른 경우는 반드시 문구 차이로 유지한다.',
+    '핵심 명사, 상품명, CTA 문구가 달라진 경우는 반드시 문구 차이로 유지한다.',
+    '문구 차이는 figma와 web에 비교 가능한 원문을 넣고, 사소한 표기 차이를 제외하고 실제 확인 필요한 차이만 반환한다.',
+    '문구 차이는 이미지에서 작게 보이거나 잘 보이지 않더라도 Figma/Web 텍스트 힌트에서 명확하면 반드시 반환한다.',
+    '작은 본문/디스클레이머 문구는 이미지보다 텍스트 힌트를 더 신뢰한다.',
+    'issues 배열은 최대 10개까지만 반환한다.',
+    '각 이슈의 region은 이미지 세로 위치 기준으로 top, upper, middle, lower, bottom, unknown 중 하나를 추정한다.',
+    '각 이슈마다 가능하면 figmaBox와 webBox를 0~1 비율 좌표로 반환하고, 정확한 위치를 모르면 null로 반환한다.',
+    '반드시 JSON으로만 응답한다.',
   ].join('\n')
 }
 
-function createAiQaPrompt(payload) {
-  const compactPayload = {
-    pageTitle: payload.pageTitle,
+function createMockupAiQaPrompt(payload) {
+  const hints = {
     url: payload.url,
-    figma: {
-      texts: payload.figma.texts,
-      buttons: payload.figma.buttons,
-      imageMeta: omitImageData(payload.figma.image),
-    },
-    web: {
-      texts: payload.web.texts,
-      buttons: payload.web.buttons,
-      links: payload.web.links,
-      screenshotMeta: omitImageData(payload.web.screenshot),
-    },
-    localRuleBasedCandidateIssues: payload.localIssues,
+    pageTitle: payload.pageTitle,
+    figmaTexts: payload.figmaTexts,
+    webTexts: payload.webTexts,
+    textMismatchHints: payload.textMismatchHints,
   }
 
   return [
-    '아래 QA 데이터를 검토해서 실제 확인이 필요한 항목만 JSON으로 정리해줘.',
-    '응답 형식:',
-    '{"summary":"전체 요약","confidence":"high | medium | low","items":[{"type":"문구 차이 | 시안에만 있음 | 웹에만 있음 | 버튼/링크 확인 | 이미지 확인 | 레이아웃 확인 | 참고","area":"상단 영역 | 주요 콘텐츠 영역 | 하단 안내 영역 | 푸터/디스클레이머 | 위치 확인 필요","title":"짧은 제목","figma":"Figma 기준 내용","web":"Web 기준 내용","reason":"왜 확인이 필요한지","evidence":"근거: Web 캡처 + Figma 시안 이미지 | Web DOM 텍스트 + Figma JSON | 로컬 후보 이슈 + 이미지 확인 필요","priority":"high | medium | low"}]}',
-    '이미지는 첨부 순서대로 Web 1920 캡처, Figma 시안 이미지다. 첨부가 없으면 메타 정보만 참고해라.',
-    JSON.stringify(compactPayload, null, 2),
+    '첨부 이미지는 순서대로 웹 fullPage screenshot, Figma 시안 이미지다.',
+    'Figma JSON 텍스트와 Web DOM visible text는 아래 참고 힌트로만 사용해라.',
+    'textMismatchHints는 서버가 만든 keyword mismatch 후보이며 최종 결과가 아니라 참고용이다. 이미지 또는 텍스트 힌트와 교차 확인해 실제 이슈만 반환해라.',
+    '문구 차이는 이미지에서 보이지 않더라도 Figma/Web 텍스트 힌트에서 명확하면 반드시 반환해라.',
+    '작은 본문/디스클레이머 문구는 이미지보다 텍스트 힌트를 더 신뢰해라.',
+    '전체 페이지를 한 번 훑고 끝내지 말고 상품 vs 프로그램, 금융 상품 vs 금융 프로그램, 운용리스 vs 리스, 0~8.99% vs 다른 금리, 구매상담 바로가기 vs 프로모션 바로가기를 반드시 교차 확인해라.',
+    'issues 배열은 실제 확인 필요한 차이만 10개 이하로 반환해라.',
+    '각 이슈에는 대략 위치를 region으로 넣어라. 허용값은 top, upper, middle, lower, bottom, unknown 중 하나다.',
+    '각 이슈마다 가능하면 figmaBox/webBox를 반환해라. box는 해당 문구가 보이는 대략적인 영역을 이미지 기준 0~1 비율 x, y, width, height로 표현한다.',
+    '정확한 위치를 모르면 figmaBox 또는 webBox는 null로 반환해라.',
+    '반드시 아래 JSON 형식으로만 응답해라.',
+    '{"summary":{"total":0,"textDifference":0,"figmaOnly":0,"webOnly":0,"visualDifference":0},"issues":[{"type":"문구 차이 | Figma에만 있음 | Web에만 있음 | 비주얼 차이","area":"대략적인 위치","region":"top | upper | middle | lower | bottom | unknown","figma":"시안 내용","web":"웹 내용","title":"짧은 제목","figmaBox":{"x":0.0,"y":0.0,"width":0.3,"height":0.05},"webBox":{"x":0.0,"y":0.0,"width":0.3,"height":0.05}}]}',
+    JSON.stringify(hints, null, 2),
   ].join('\n\n')
 }
 
-function omitImageData(image) {
+function normalizeMockupAiQaResult(result) {
+  const rawIssues = Array.isArray(result.issues) ? result.issues.map((issue) => ({
+    type: normalizeMockupIssueType(issue?.type),
+    area: limitText(issue?.area || '위치 확인 필요', 80),
+    region: normalizeMockupRegion(issue?.region),
+    figma: limitText(issue?.figma || '', 300),
+    web: limitText(issue?.web || '', 300),
+    title: limitText(issue?.title || '확인 필요', 120),
+    figmaBox: normalizeMockupBox(issue?.figmaBox),
+    webBox: normalizeMockupBox(issue?.webBox),
+  })) : []
+  const issues = filterMinorMockupTextIssues(rawIssues).slice(0, MAX_MOCKUP_AI_ISSUES)
+
+  const summary = normalizeMockupSummary({}, issues)
+  return { summary, issues }
+}
+
+function normalizeMockupSummary(summary = {}, issues = []) {
+  const fallback = issues.reduce((counts, issue) => {
+    if (issue.type === '문구 차이') counts.textDifference += 1
+    if (issue.type === 'Figma에만 있음') counts.figmaOnly += 1
+    if (issue.type === 'Web에만 있음') counts.webOnly += 1
+    if (issue.type === '비주얼 차이') counts.visualDifference += 1
+    return counts
+  }, { textDifference: 0, figmaOnly: 0, webOnly: 0, visualDifference: 0 })
+
   return {
-    name: image.name,
-    width: image.width,
-    height: image.height,
-    hasImageData: Boolean(image.dataUrl),
-    omittedReason: image.omittedReason,
+    total: normalizeCount(summary.total, issues.length),
+    textDifference: normalizeCount(summary.textDifference, fallback.textDifference),
+    figmaOnly: normalizeCount(summary.figmaOnly, fallback.figmaOnly),
+    webOnly: normalizeCount(summary.webOnly, fallback.webOnly),
+    visualDifference: normalizeCount(summary.visualDifference, fallback.visualDifference),
   }
+}
+
+function normalizeMockupIssueType(value) {
+  if (value === 'Figma에만 있음' || value === '시안에만 있음') return 'Figma에만 있음'
+  if (value === 'Web에만 있음' || value === '웹에만 있음') return 'Web에만 있음'
+  if (value === '비주얼 차이' || value === '이미지 확인' || value === '레이아웃 확인') return '비주얼 차이'
+  if (value === '문구 차이') return '문구 차이'
+  return '비주얼 차이'
+}
+
+function normalizeMockupRegion(value) {
+  return ['top', 'upper', 'middle', 'lower', 'bottom', 'unknown'].includes(value) ? value : 'unknown'
+}
+
+function normalizeMockupBox(value) {
+  if (!value || typeof value !== 'object') return null
+
+  const x = Number(value.x)
+  const y = Number(value.y)
+  const width = Number(value.width)
+  const height = Number(value.height)
+  if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return null
+
+  const safeX = clampBoxRatio(x)
+  const safeY = clampBoxRatio(y)
+  const safeWidth = Math.min(clampBoxRatio(width), 1 - safeX)
+  const safeHeight = Math.min(clampBoxRatio(height), 1 - safeY)
+  if (safeWidth <= 0 || safeHeight <= 0) return null
+
+  return {
+    x: roundBoxRatio(safeX),
+    y: roundBoxRatio(safeY),
+    width: roundBoxRatio(safeWidth),
+    height: roundBoxRatio(safeHeight),
+  }
+}
+
+function clampBoxRatio(value) {
+  return Math.max(0, Math.min(1, Number(value)))
+}
+
+function roundBoxRatio(value) {
+  return Math.round(value * 10000) / 10000
+}
+
+function filterMinorMockupTextIssues(issues) {
+  return issues.filter((issue) => {
+    if (issue.type !== '문구 차이') return true
+    if (!issue.figma || !issue.web) return true
+    if (hasCriticalMockupTextDifference(issue.figma, issue.web)) return true
+    return !isMinorMockupTextDifference(issue.figma, issue.web)
+  })
+}
+
+function isMinorMockupTextDifference(figmaText, webText) {
+  return normalizeMinorMockupText(figmaText) === normalizeMinorMockupText(webText)
+}
+
+function normalizeMinorMockupText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[\s\u00a0]+/g, '')
+    .replace(/[.,:;。．，、：；]/g, '')
+}
+
+function hasCriticalMockupTextDifference(figmaText, webText) {
+  const figma = normalizeCriticalMockupText(figmaText)
+  const web = normalizeCriticalMockupText(webText)
+  const criticalPairs = [
+    ['금융상품', '금융프로그램'],
+    ['상품', '프로그램'],
+    ['운용리스', '리스'],
+    ['구매상담', '프로모션'],
+    ['할부', '리스'],
+  ]
+
+  return criticalPairs.some(([first, second]) => hasCriticalPairDifference(figma, web, first, second))
+}
+
+function normalizeCriticalMockupText(value) {
+  return String(value || '').toLowerCase().replace(/[\s\u00a0]+/g, '')
+}
+
+function hasCriticalPairDifference(firstText, secondText, firstTerm, secondTerm) {
+  const firstHasFirst = firstText.includes(firstTerm)
+  const firstHasSecond = includesCriticalTerm(firstText, secondTerm, firstTerm)
+  const secondHasFirst = secondText.includes(firstTerm)
+  const secondHasSecond = includesCriticalTerm(secondText, secondTerm, firstTerm)
+
+  return (firstHasFirst && secondHasSecond && !secondHasFirst)
+    || (firstHasSecond && secondHasFirst && !firstHasFirst)
+}
+
+function includesCriticalTerm(text, term, longerTerm) {
+  if (term !== '리스') return text.includes(term)
+  return text.replaceAll(longerTerm, '').includes(term)
+}
+
+function normalizeCount(value, fallback) {
+  const number = Number(value)
+  return Number.isFinite(number) && number >= 0 ? Math.min(Math.round(number), MAX_MOCKUP_AI_ISSUES) : fallback
 }
 
 function parseAiQaJson(rawText) {
@@ -279,43 +472,6 @@ function parseAiQaJson(rawText) {
       return null
     }
   }
-}
-
-function normalizeAiQaResult(result) {
-  const items = Array.isArray(result.items) ? result.items.slice(0, MAX_AI_ITEMS).map((item) => ({
-    type: normalizeAiItemType(item?.type),
-    area: normalizeAiArea(item?.area),
-    title: limitText(item?.title || '확인 필요', 120),
-    figma: limitText(item?.figma || '', 300),
-    web: limitText(item?.web || '', 300),
-    reason: limitText(item?.reason || '', 360),
-    evidence: limitText(item?.evidence || item?.basis || '', 180),
-    priority: normalizePriority(item?.priority),
-  })) : []
-
-  return {
-    summary: limitText(result.summary || 'AI 검수 결과가 생성되었습니다.', 400),
-    confidence: normalizeConfidence(result.confidence),
-    items,
-  }
-}
-
-function normalizeAiItemType(value) {
-  const allowed = ['문구 차이', '시안에만 있음', '웹에만 있음', '버튼/링크 확인', '이미지 확인', '레이아웃 확인', '참고']
-  return allowed.includes(value) ? value : '참고'
-}
-
-function normalizeAiArea(value) {
-  const allowed = ['상단 영역', '주요 콘텐츠 영역', '하단 안내 영역', '푸터/디스클레이머', '위치 확인 필요']
-  return allowed.includes(value) ? value : '위치 확인 필요'
-}
-
-function normalizePriority(value) {
-  return ['high', 'medium', 'low'].includes(value) ? value : 'medium'
-}
-
-function normalizeConfidence(value) {
-  return ['high', 'medium', 'low'].includes(value) ? value : 'medium'
 }
 
 function mapOpenAiError(error) {

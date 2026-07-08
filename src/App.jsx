@@ -239,15 +239,16 @@ function App() {
     }
 
     try {
-      const texts = extractFigmaTextHints(value)
-      const ctaHints = extractFigmaCtaHints(value)
+      const parsed = parseFigmaJsonInput(value)
+      const texts = extractFigmaTextHints(parsed)
+      const ctaHints = extractFigmaCtaHints(parsed)
       setFigmaElements(texts)
       setFigmaCtaHints(ctaHints)
       setFigmaError('')
-    } catch {
+    } catch (error) {
       setFigmaElements([])
       setFigmaCtaHints([])
-      setFigmaError('JSON 형식을 확인해 주세요. Figma REST 응답 또는 document 노드를 지원합니다.')
+      setFigmaError(createFigmaJsonParseErrorMessage(error, value))
     }
   }
 
@@ -380,8 +381,36 @@ function createAiImageDataUrl(dataUrl) {
   return typeof dataUrl === 'string' && dataUrl.length <= AI_IMAGE_DATA_URL_MAX_LENGTH ? dataUrl : ''
 }
 
-function extractFigmaTextHints(value) {
-  const parsed = JSON.parse(value)
+function parseFigmaJsonInput(value) {
+  return JSON.parse(value)
+}
+
+function createFigmaJsonParseErrorMessage(error, source) {
+  const location = getJsonParseErrorLocation(error, source)
+  const locationText = location ? ` (${location.line}행 ${location.column}열)` : ''
+  const detail = error instanceof Error && error.message ? ` 상세: ${error.message}` : ''
+  return `JSON 형식을 확인해 주세요${locationText}.${detail} 문자열 안 실제 줄바꿈이 들어간 JSON일 수 있습니다. 플러그인을 최신 버전으로 다시 추출해 주세요.`
+}
+
+function getJsonParseErrorLocation(error, source) {
+  const message = error instanceof Error ? error.message : String(error || '')
+  const lineColumnMatch = message.match(/line\s+(\d+)\s+column\s+(\d+)/i)
+  if (lineColumnMatch) {
+    return { line: Number(lineColumnMatch[1]), column: Number(lineColumnMatch[2]) }
+  }
+
+  const positionMatch = message.match(/position\s+(\d+)/i)
+  if (!positionMatch) return null
+
+  const position = Number(positionMatch[1])
+  if (!Number.isFinite(position)) return null
+
+  const text = String(source || '').slice(0, position)
+  const lines = text.split(/\r\n|\n|\r/)
+  return { line: lines.length, column: lines[lines.length - 1].length + 1 }
+}
+
+function extractFigmaTextHints(parsed) {
   const hints = []
   const seen = new Set()
 
@@ -418,8 +447,7 @@ function extractFigmaTextHints(value) {
   return hints
 }
 
-function extractFigmaCtaHints(value) {
-  const parsed = JSON.parse(value)
+function extractFigmaCtaHints(parsed) {
   const candidates = []
   const visibleBounds = []
   const seen = new Set()

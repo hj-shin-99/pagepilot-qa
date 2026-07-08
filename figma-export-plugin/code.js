@@ -141,44 +141,58 @@ function createPagePilotExport() {
   sortExportCollections(context)
   var qaModel = createQaModel(selection, context)
 
-  return {
-    ok: true,
-    data: {
-      schema: 'pagepilot-qa.design-export.v1',
-      source: {
-        tool: 'figma-plugin',
-        plugin: 'PagePilot QA Design Export',
-        localOnly: true,
-        network: 'disabled',
-        exportedAt: new Date().toISOString(),
-        page: {
-          id: figma.currentPage.id,
-          name: figma.currentPage.name,
-        },
-        selectionCount: selection.length,
-      },
-      summary: {
-        selectedRootCount: selection.length,
-        textCount: context.textNodes.length,
-        ctaCandidateCount: context.ctaCandidates.length,
-        imageCandidateCount: context.imageCandidates.length,
-        sectionCount: context.sections.length,
-      },
-      document: {
+  var exportData = {
+    schema: 'pagepilot-qa.design-export.v1',
+    source: {
+      tool: 'figma-plugin',
+      plugin: 'PagePilot QA Design Export',
+      localOnly: true,
+      network: 'disabled',
+      exportedAt: new Date().toISOString(),
+      page: {
         id: figma.currentPage.id,
         name: figma.currentPage.name,
-        type: 'PAGE',
-        children: selectedNodes,
       },
-      textNodes: context.textNodes,
-      ctaCandidates: context.ctaCandidates,
-      imageCandidates: context.imageCandidates,
-      sections: context.sections,
-      texts: context.textNodes,
-      ctas: context.ctaCandidates,
-      images: context.imageCandidates,
-      qaModel: qaModel,
+      selectionCount: selection.length,
     },
+    summary: {
+      selectedRootCount: selection.length,
+      textCount: context.textNodes.length,
+      ctaCandidateCount: context.ctaCandidates.length,
+      imageCandidateCount: context.imageCandidates.length,
+      sectionCount: context.sections.length,
+    },
+    document: {
+      id: figma.currentPage.id,
+      name: figma.currentPage.name,
+      type: 'PAGE',
+      children: selectedNodes,
+    },
+    textNodes: context.textNodes,
+    ctaCandidates: context.ctaCandidates,
+    imageCandidates: context.imageCandidates,
+    sections: context.sections,
+    texts: context.textNodes,
+    ctas: context.ctaCandidates,
+    images: context.imageCandidates,
+    qaModel: qaModel,
+  }
+
+  try {
+    var jsonText = JSON.stringify(exportData, null, 2)
+    JSON.parse(jsonText)
+
+    return {
+      ok: true,
+      data: exportData,
+      json: jsonText,
+      jsonValid: true,
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      error: 'JSON 생성 또는 유효성 검증에 실패했습니다: ' + (error && error.message ? error.message : 'Unknown error'),
+    }
   }
 }
 

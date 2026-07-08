@@ -183,9 +183,15 @@
           return
         }
 
+        var validationError = validateJson(latestJson)
+        if (validationError) {
+          setStatus('JSON 유효성 검증 실패: ' + validationError, 'error')
+          return
+        }
+
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(latestJson).then(function () {
-            setStatus('JSON을 클립보드에 복사했습니다.', 'success')
+            setStatus('JSON을 클립보드에 복사했습니다. JSON 유효성 확인 완료', 'success')
           }).catch(function () {
             copyJsonWithSelectionFallback()
           })
@@ -200,6 +206,12 @@
           return
         }
 
+        var validationError = validateJson(latestJson)
+        if (validationError) {
+          setStatus('JSON 유효성 검증 실패: ' + validationError, 'error')
+          return
+        }
+
         var urlApi = window.URL || window.webkitURL
         var blob = new Blob([latestJson], { type: 'application/json;charset=utf-8' })
         var url = urlApi.createObjectURL(blob)
@@ -210,7 +222,7 @@
         link.click()
         document.body.removeChild(link)
         urlApi.revokeObjectURL(url)
-        setStatus('JSON 파일 다운로드를 시작했습니다.', 'success')
+        setStatus('JSON 파일 다운로드를 시작했습니다. JSON 유효성 확인 완료', 'success')
       })
 
       window.onmessage = function (event) {
@@ -228,16 +240,35 @@
           return
         }
 
-        latestJson = JSON.stringify(message.payload.data, null, 2)
+        latestJson = message.payload.json || JSON.stringify(message.payload.data, null, 2)
+        var validationError = validateJson(latestJson)
+        if (validationError) {
+          latestJson = ''
+          jsonOutput.value = ''
+          copyButton.disabled = true
+          downloadButton.disabled = true
+          setStatus('JSON 유효성 검증 실패: ' + validationError, 'error')
+          return
+        }
+
         jsonOutput.value = latestJson
         copyButton.disabled = false
         downloadButton.disabled = false
 
         var summary = message.payload.data.summary
         setStatus(
-          'Export 완료: 텍스트 ' + summary.textCount + '개, CTA 후보 ' + summary.ctaCandidateCount + '개, 이미지/아이콘 후보 ' + summary.imageCandidateCount + '개',
+          'Export 완료: 텍스트 ' + summary.textCount + '개, CTA 후보 ' + summary.ctaCandidateCount + '개, 이미지/아이콘 후보 ' + summary.imageCandidateCount + '개 · JSON 유효성 확인 완료',
           'success'
         )
+      }
+
+      function validateJson(value) {
+        try {
+          JSON.parse(value)
+          return ''
+        } catch (error) {
+          return error && error.message ? error.message : 'Unknown parse error'
+        }
       }
 
       function copyJsonWithSelectionFallback() {
@@ -255,7 +286,7 @@
         }
 
         if (copied) {
-          setStatus('JSON을 클립보드에 복사했습니다.', 'success')
+          setStatus('JSON을 클립보드에 복사했습니다. JSON 유효성 확인 완료', 'success')
         } else {
           setStatus('복사에 실패했습니다. textarea에서 직접 복사해 주세요.', 'error')
         }

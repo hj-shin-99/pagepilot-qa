@@ -33,7 +33,7 @@ function InputPanel({
 
       <h1>PagePilot QA</h1>
       <p className="lead-text">
-        URL, Figma JSON, 시안 이미지를 기반으로 Tech QA와 AI 시안 비교 QA를 실행합니다.
+        URL과 Figma 시안 이미지로 Tech QA와 AI 디자인 QA 체크리스트를 생성합니다.
       </p>
 
       <form className="scan-form" onSubmit={handleSubmit}>
@@ -53,25 +53,6 @@ function InputPanel({
           {isScanning ? '검사 중...' : '검사 시작'}
         </button>
       </form>
-
-      <section className="panel-section" aria-label="Figma JSON 입력">
-        <div className="section-title-row compact-title-row">
-          <h3>Figma JSON</h3>
-          <span>붙여넣기 또는 .json</span>
-        </div>
-        <textarea
-          className="figma-textarea"
-          value={figmaJson}
-          placeholder='{"document":{"children":[...]}}'
-          rows="7"
-          onChange={(event) => onFigmaTextChange(event.target.value)}
-        />
-        <label className="file-drop-label" htmlFor="figma-json-file">
-          JSON 파일 선택
-          <input id="figma-json-file" type="file" accept="application/json,.json" onChange={onFigmaFileSelect} />
-        </label>
-        {figmaError ? <p className="input-error">{figmaError}</p> : null}
-      </section>
 
       <section className="panel-section" aria-label="Figma 시안 이미지 입력">
         <div className="section-title-row compact-title-row">
@@ -97,6 +78,25 @@ function InputPanel({
             </button>
           </div>
         ) : null}
+      </section>
+
+      <section className="panel-section" aria-label="고급 옵션">
+        <details className="advanced-options">
+          <summary>고급 옵션: Figma JSON 힌트</summary>
+          <p className="panel-note">선택 사항입니다. JSON은 AI 비교의 보조 힌트로만 사용됩니다.</p>
+          <textarea
+            className="figma-textarea"
+            value={figmaJson}
+            placeholder='{"document":{"children":[...]}}'
+            rows="7"
+            onChange={(event) => onFigmaTextChange(event.target.value)}
+          />
+          <label className="file-drop-label" htmlFor="figma-json-file">
+            JSON 파일 선택
+            <input id="figma-json-file" type="file" accept="application/json,.json" onChange={onFigmaFileSelect} />
+          </label>
+          {figmaError ? <p className="input-error">{figmaError}</p> : null}
+        </details>
       </section>
         </>
       )}

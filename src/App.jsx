@@ -30,6 +30,7 @@ function App() {
   const [url, setUrl] = useState('')
   const [figmaJson, setFigmaJson] = useState('')
   const [figmaElements, setFigmaElements] = useState([])
+  const [figmaCtaHints, setFigmaCtaHints] = useState([])
   const [designImages, setDesignImages] = useState([])
   const [result, setResult] = useState(null)
   const [scanState, setScanState] = useState('idle')
@@ -44,7 +45,6 @@ function App() {
 
   const summary = useMemo(() => (result ? createResultSummary(result) : ''), [result])
   const statusCounts = useMemo(() => (result ? getStatusCounts(result.checks) : null), [result])
-  const webElements = useMemo(() => result?.designElements || [], [result])
   const isScanning = scanState === 'scanning'
 
   const handleFigmaTextChange = (value) => {
@@ -98,7 +98,7 @@ function App() {
     setInputError('')
     setResult(null)
     setScanState('scanning')
-    setActiveTab('tech')
+      setActiveTab('mockup')
 
     try {
       const response = await fetch('/api/scan', {
@@ -134,6 +134,7 @@ function App() {
     setResult(item.result)
     setFigmaJson('')
     setFigmaElements([])
+    setFigmaCtaHints([])
     setDesignImages([])
     setScanState('complete')
     setInputError('')
@@ -191,7 +192,7 @@ function App() {
       const response = await fetch('/api/ai-mockup-qa', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(createAiMockupQaRequestPayload({ result: scanResult, figmaElements, webElements: scanResult.designElements || [], designImages })),
+        body: JSON.stringify(createAiMockupQaRequestPayload({ result: scanResult, figmaElements, figmaCtaHints, webElements: scanResult.designElements || [], designImages })),
         signal: controller.signal,
       })
       console.log('[Mockup AI QA Front] response received')
@@ -217,6 +218,7 @@ function App() {
       }
 
       const aiResult = normalizeAiMockupQaFrontendResult(payload.result)
+      aiResult.model = payload.model || payload.result?.model || ''
       setAiQa({ state: 'complete', result: aiResult, error: '', rawText: '', resultKey })
     } catch (error) {
       const message = error?.name === 'AbortError'
@@ -231,16 +233,20 @@ function App() {
   function updateFigmaElements(value) {
     if (!value.trim()) {
       setFigmaElements([])
+      setFigmaCtaHints([])
       setFigmaError('')
       return
     }
 
     try {
       const texts = extractFigmaTextHints(value)
+      const ctaHints = extractFigmaCtaHints(value)
       setFigmaElements(texts)
+      setFigmaCtaHints(ctaHints)
       setFigmaError('')
     } catch {
       setFigmaElements([])
+      setFigmaCtaHints([])
       setFigmaError('JSON 형식을 확인해 주세요. Figma REST 응답 또는 document 노드를 지원합니다.')
     }
   }
@@ -288,7 +294,9 @@ function App() {
               <MockupQaPanel
                 aiQa={aiQa}
                 designImages={designImages}
+                figmaHintCount={figmaElements.length}
                 result={result}
+                webHintCount={(result.designElements || []).length}
                 onRunAiQa={handleRunAiQa}
               />
             ) : null}
@@ -336,7 +344,7 @@ function createTopIssueSummaries(result) {
   return summaries.length > 0 ? summaries : ['Tech QA 주요 항목 정상']
 }
 
-function createAiMockupQaRequestPayload({ result, figmaElements, webElements, designImages }) {
+function createAiMockupQaRequestPayload({ result, figmaElements, figmaCtaHints, webElements, designImages }) {
   return {
     pageTitle: result.pageTitle || '',
     url: result.targetUrl || '',
@@ -344,6 +352,8 @@ function createAiMockupQaRequestPayload({ result, figmaElements, webElements, de
     figmaImageDataUrl: createAiImageDataUrl(designImages[0]?.previewUrl || ''),
     figmaTexts: createAiTextHints(figmaElements),
     webTexts: createAiTextHints(webElements),
+    figmaCtaHints: Array.isArray(figmaCtaHints) ? figmaCtaHints : [],
+    webCtaHints: Array.isArray(result.webCtaHints) ? result.webCtaHints : [],
   }
 }
 
@@ -382,24 +392,116 @@ function extractFigmaTextHints(value) {
     hints.push(cleaned)
   }
 
-  function visit(node) {
+  function visit(node, parentHidden = false) {
     if (!node || typeof node !== 'object' || hints.length >= AI_TEXT_HINT_LIMIT) return
-    if (typeof node.characters === 'string') addText(node.characters)
-    if (typeof node.text === 'string') addText(node.text)
-    if (node.type === 'TEXT' && typeof node.name === 'string') addText(node.name)
 
     if (Array.isArray(node)) {
-      node.forEach(visit)
+      node.forEach((child) => visit(child, parentHidden))
       return
     }
 
-    if (Array.isArray(node.children)) node.children.forEach(visit)
-    if (node.document) visit(node.document)
-    if (node.nodes) visit(node.nodes)
+    const hidden = parentHidden || isHiddenFigmaJsonNode(node)
+    if (hidden) return
+
+    if (node.type === 'TEXT' && hasUsableFigmaJsonBox(node)) {
+      if (typeof node.characters === 'string') addText(node.characters)
+      if (typeof node.text === 'string') addText(node.text)
+      if (typeof node.name === 'string') addText(node.name)
+    }
+
+    if (Array.isArray(node.children)) node.children.forEach((child) => visit(child, hidden))
+    if (node.document) visit(node.document, hidden)
+    if (node.nodes) visit(node.nodes, hidden)
   }
 
   visit(parsed)
   return hints
+}
+
+function extractFigmaCtaHints(value) {
+  const parsed = JSON.parse(value)
+  const candidates = []
+  const visibleBounds = []
+  const seen = new Set()
+
+  function visit(node, context = { hidden: false, layerPath: [] }) {
+    if (!node || typeof node !== 'object') return
+
+    if (Array.isArray(node)) {
+      node.forEach((child) => visit(child, context))
+      return
+    }
+
+    const hidden = context.hidden || isHiddenFigmaJsonNode(node)
+    if (hidden) return
+
+    const name = cleanAiText(node.name || node.title || '')
+    const layerPath = [...context.layerPath, name || node.type || 'Layer'].filter(Boolean)
+    const box = getFigmaJsonBox(node)
+    if (box) visibleBounds.push(box)
+
+    const text = cleanAiText(typeof node.characters === 'string' ? node.characters : node.text || node.label || '')
+    const pathText = layerPath.join(' / ')
+    if (text && box && isFigmaCtaCandidate(text, pathText)) {
+      const key = `${normalizeCtaCompareText(text)}:${pathText}`
+      if (!seen.has(key)) {
+        seen.add(key)
+        candidates.push({ text, layerPath: pathText, y: box.y })
+      }
+    }
+
+    if (Array.isArray(node.children)) node.children.forEach((child) => visit(child, { hidden, layerPath }))
+    if (node.document) visit(node.document, { hidden, layerPath })
+    if (node.nodes) visit(node.nodes, { hidden, layerPath })
+  }
+
+  visit(parsed)
+  const pageHeight = Math.max(...visibleBounds.map((box) => box.y + box.height), 1)
+  return candidates.slice(0, 40).map((candidate) => {
+    const yRatio = Math.max(0, Math.min(1, candidate.y / pageHeight))
+    return {
+      text: candidate.text,
+      area: getAreaFromYRatio(yRatio),
+      layerPath: candidate.layerPath,
+      yRatio: Math.round(yRatio * 1000) / 1000,
+    }
+  })
+}
+
+function getFigmaJsonBox(node) {
+  const box = node.absoluteBoundingBox || node.absoluteRenderBounds || node.bounds || null
+  if (!box || Number(box.width) <= 0 || Number(box.height) <= 0) return null
+  return {
+    y: Number(box.y) || 0,
+    height: Number(box.height) || 0,
+  }
+}
+
+function isFigmaCtaCandidate(text, layerPath) {
+  return /button|btn|cta|basic-button|link-button/i.test(layerPath)
+    || /바로가기|신청|상담|예약|프로모션|자세히|구매/i.test(text)
+}
+
+function normalizeCtaCompareText(value) {
+  return String(value || '').toLowerCase().replace(/[\s\u00a0.,:;!?'"“”‘’()[\]{}<>_/\\-]/g, '')
+}
+
+function getAreaFromYRatio(value) {
+  if (value < 0.33) return 'top'
+  if (value < 0.66) return 'middle'
+  return 'bottom'
+}
+
+function isHiddenFigmaJsonNode(node) {
+  if (node.visible === false) return true
+  if (Number(node.opacity) === 0) return true
+  return false
+}
+
+function hasUsableFigmaJsonBox(node) {
+  const box = node.absoluteBoundingBox || node.absoluteRenderBounds || null
+  if (!box) return false
+  return Number(box.width) > 0 && Number(box.height) > 0
 }
 
 function getAiResultKey(result) {

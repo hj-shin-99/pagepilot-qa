@@ -125,14 +125,17 @@ function createPagePilotExport() {
   for (var selectionIndex = 0; selectionIndex < selection.length; selectionIndex += 1) {
     var selectedRoot = selection[selectionIndex]
     var rootBox = getAbsoluteBoundingBox(selectedRoot)
-    selectedNodes.push(serializeNode(selectedRoot, context, {
+    var selectedNode = serializeNode(selectedRoot, context, {
       rootBox: rootBox,
       path: [],
       depth: 0,
       section: null,
       buttonContainer: null,
       hidden: false,
-    }))
+    })
+    if (selectedNode) {
+      selectedNodes.push(selectedNode)
+    }
   }
 
   sortExportCollections(context)
@@ -195,10 +198,14 @@ function filterExportableRoots(nodes) {
 }
 
 function isExportableRoot(node) {
-  return Boolean(node && 'children' in node)
+  return Boolean(node && 'children' in node && isNodeExportVisible(node) && hasUsableAbsoluteBoundingBox(node))
 }
 
 function serializeNode(node, context, traversal) {
+  if (!isNodeExportableInTraversal(node, traversal)) {
+    return null
+  }
+
   var currentPath = traversal.path.slice(0)
   currentPath.push(node.name || '')
   var currentTraversal = {
@@ -207,7 +214,7 @@ function serializeNode(node, context, traversal) {
     depth: traversal.depth,
     section: traversal.section,
     buttonContainer: traversal.buttonContainer,
-    hidden: traversal.hidden || node.visible === false || readNumber(node.opacity, 1) < 0.1,
+    hidden: traversal.hidden,
   }
   var baseNode = createBaseNode(node, currentTraversal)
   var currentSection = currentTraversal.section
@@ -260,14 +267,17 @@ function serializeNode(node, context, traversal) {
   if ('children' in node && Array.isArray(node.children)) {
     baseNode.children = []
     for (var childIndex = 0; childIndex < node.children.length; childIndex += 1) {
-      baseNode.children.push(serializeNode(node.children[childIndex], context, {
+      var childNode = serializeNode(node.children[childIndex], context, {
         rootBox: currentTraversal.rootBox,
         path: currentPath,
         depth: currentTraversal.depth + 1,
         section: currentSection,
         buttonContainer: currentTraversal.buttonContainer,
         hidden: currentTraversal.hidden,
-      }))
+      })
+      if (childNode) {
+        baseNode.children.push(childNode)
+      }
     }
   }
 
@@ -606,7 +616,7 @@ function isUsefulQaSection(section, pageBox) {
   return (section.height >= 250 && widthRatio >= 0.5) || hasSemanticSectionName(name) || SECTION_NAME_PATTERNS.test(name)
 }
 
-function getQaSectionLabel(section, pageBox, order) {
+function getQaSectionLabel(section, pageBox) {
   var searchableName = String((section.sourceName || section.name || '') + ' ' + getLayerPathText(section.layerPath)).toLowerCase()
   var yRatio = pageBox.height > 0 ? (section.y - pageBox.y) / pageBox.height : 0
 
@@ -664,7 +674,7 @@ function createQaText(textNode, qaSections) {
 }
 
 function isUsefulQaText(textNode) {
-  if (!textNode || textNode.visible === false || readNumber(textNode.opacity, 1) < 0.1) return false
+  if (!textNode || textNode.visible === false || readNumber(textNode.opacity, 1) <= 0) return false
   if (!textNode.text || normalizeText(textNode.text).length < 2) return false
   if (readNumber(textNode.fontSize, 0) < 7) return false
   if (isDecorativeLayerPath(textNode.layerPath)) return false
@@ -819,12 +829,6 @@ function getQaImageKind(imageNode, pageBox) {
   if (/하단\s*배너|bottom\s*banner|banner|배너/.test(name)) return 'bannerImage'
   if (hasImageFill(imageNode) || /image|img|photo|thumbnail|card|사진|이미지|썸네일|카드/.test(name)) return 'contentImage'
   return 'iconOrGraphic'
-}
-
-function isLargeVisibleArea(item, pageBox, minRatio) {
-  var pageArea = pageBox.width * pageBox.height
-  if (pageArea <= 0) return false
-  return (item.width * item.height) / pageArea >= minRatio
 }
 
 function findQaSectionForItem(item, sections) {
@@ -1011,18 +1015,6 @@ function getBoxOverlapRatio(first, second) {
   var smallerArea = Math.min(first.width * first.height, second.width * second.height)
   if (smallerArea <= 0) return 0
   return overlapArea / smallerArea
-}
-
-function dedupeByIdAndText(items) {
-  var seen = {}
-  for (var index = items.length - 1; index >= 0; index -= 1) {
-    var key = items[index].id + ':' + items[index].normalizedText
-    if (seen[key]) {
-      items.splice(index, 1)
-    } else {
-      seen[key] = true
-    }
-  }
 }
 
 function getLooseSectionLabel(positionRatio) {
@@ -1267,7 +1259,7 @@ function isImageCandidate(node) {
   var box = getAbsoluteBoundingBox(node)
   var name = node.name || ''
 
-  if (node.visible === false || box.width < 80 || box.height < 60 || DECORATIVE_LAYER_PATTERNS.test(name)) {
+  if (!isNodeExportVisible(node) || box.width < 80 || box.height < 60 || DECORATIVE_LAYER_PATTERNS.test(name)) {
     return false
   }
 
@@ -1436,6 +1428,42 @@ function getAbsoluteBoundingBox(node) {
     width: roundNumber(readNumber(box.width, 0)),
     height: roundNumber(readNumber(box.height, 0)),
   }
+}
+
+function isNodeExportableInTraversal(node, traversal) {
+  if (!node || traversal.hidden || !isNodeExportVisible(node) || !hasUsableAbsoluteBoundingBox(node)) {
+    return false
+  }
+
+  if (traversal.depth === 0) {
+    return true
+  }
+
+  return overlapsRootBox(getAbsoluteBoundingBox(node), traversal.rootBox)
+}
+
+function isNodeExportVisible(node) {
+  return Boolean(node && node.visible !== false && readNumber(node.opacity, 1) > 0)
+}
+
+function hasUsableAbsoluteBoundingBox(node) {
+  if (!node || !node.absoluteBoundingBox) {
+    return false
+  }
+
+  var box = getAbsoluteBoundingBox(node)
+  return box.width > 0 && box.height > 0
+}
+
+function overlapsRootBox(box, rootBox) {
+  if (!box || !rootBox || rootBox.width <= 0 || rootBox.height <= 0) {
+    return false
+  }
+
+  return box.x < rootBox.x + rootBox.width
+    && box.x + box.width > rootBox.x
+    && box.y < rootBox.y + rootBox.height
+    && box.y + box.height > rootBox.y
 }
 
 function readMixedNumber(value) {

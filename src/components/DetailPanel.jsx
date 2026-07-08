@@ -36,11 +36,12 @@ function DetailPanel({ result }) {
               <li className={`issue-row ${image.status}`} key={`${image.index}-${image.src}`}>
                 <span className="issue-path">{image.src || `Image ${image.index}`}</span>
                 <span className="issue-message">{image.message}</span>
+                <TechIssueMeta item={image} />
               </li>
             ))}
             {result.consoleMessages.map((message) => (
               <li className={`issue-row ${message.level === 'error' ? 'error' : 'warn'}`} key={`${message.source}-${message.message}`}>
-                <span className="issue-path">{message.level.toUpperCase()} · {message.source}</span>
+                <span className="issue-path">{message.level.toUpperCase()} · {message.source}{message.lineNumber !== null && message.lineNumber !== undefined ? `:${message.lineNumber}` : ''}</span>
                 <span className="issue-message">{message.message}</span>
               </li>
             ))}
@@ -71,13 +72,42 @@ function DetailPanel({ result }) {
               </span>
             </li>
             <li className="evidence-row">
-              <span className="evidence-label">Missing href</span>
+              <span className="evidence-label">Missing URL</span>
               <span className="evidence-value">{result.missingHrefLinks.length}개</span>
             </li>
           </ul>
+          {result.missingHrefLinks.length > 0 ? (
+            <details className="tech-detail-list">
+              <summary>URL 누락 링크/버튼 상세 보기</summary>
+              <ul className="issue-list">
+                {result.missingHrefLinks.map((item, index) => (
+                  <li className="issue-row warn" key={`${index}-${item.selector}-${item.label}`}>
+                    <span className="issue-path">{item.label || item.ariaLabel || `${item.kind} ${index + 1}`}</span>
+                    <span className="issue-message">{item.kind} · {item.selector || 'selector 없음'}</span>
+                    <TechIssueMeta item={item} />
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
         </article>
       </div>
     </section>
+  )
+}
+
+function TechIssueMeta({ item }) {
+  const box = item.boundingBox
+
+  return (
+    <dl className="tech-issue-meta">
+      {item.domPath ? <div><dt>DOM path</dt><dd>{item.domPath}</dd></div> : null}
+      {item.section ? <div><dt>Section</dt><dd>{item.section}</dd></div> : null}
+      {Number.isFinite(Number(item.y)) ? <div><dt>Y</dt><dd>{Math.round(Number(item.y))}px</dd></div> : null}
+      {box ? <div><dt>Bounding box</dt><dd>x {box.x}, y {box.y}, w {box.width}, h {box.height}</dd></div> : null}
+      {item.text ? <div><dt>Text</dt><dd>{item.text}</dd></div> : null}
+      {item.ariaLabel ? <div><dt>ARIA</dt><dd>{item.ariaLabel}</dd></div> : null}
+    </dl>
   )
 }
 

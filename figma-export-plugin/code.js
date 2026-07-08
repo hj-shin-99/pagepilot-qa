@@ -1,4 +1,5 @@
 /* global figma, __html__ */
+/* PagePilot Export v0.1.1 / build 2026-07-08-parsefix */
 
 var CTA_KEYWORDS = [
   'button',
@@ -70,6 +71,9 @@ var NOTE_TEXT_PATTERNS = /※|disclaimer|footer|유의|고지|약관|저작권|c
 var NAV_TEXT_PATTERNS = /gnb|nav|menu|navigation|header|메뉴|네비|내비|탭/i
 var BUTTON_LAYER_PATTERNS = /button|btn|cta|link-button|basic-button|primary|secondary|버튼/i
 var REAL_BUTTON_TEXT_PATTERNS = /^(프로모션\s*바로가기|구매상담\s*바로가기|바로가기|더\s*알아보기|상담\s*신청|자세히\s*보기|더\s*보기|신청하기|구매하기|문의하기|learn\s*more|read\s*more|view\s*more|contact\s*us|apply\s*now)$/i
+var PAGEPILOT_EXPORT_VERSION = 'v0.1.1'
+var PAGEPILOT_EXPORT_BUILD = '2026-07-08-parsefix'
+var PAGEPILOT_EXPORT_LABEL = 'PagePilot Export ' + PAGEPILOT_EXPORT_VERSION + ' / build ' + PAGEPILOT_EXPORT_BUILD
 
 var IMAGE_LIKE_TYPES = [
   'FRAME',
@@ -95,10 +99,11 @@ figma.ui.onmessage = function (message) {
   }
 
   var exportResult = createPagePilotExport()
+  console.log(PAGEPILOT_EXPORT_LABEL, 'jsonValid:', Boolean(exportResult.jsonValid))
   figma.ui.postMessage({ type: 'export-result', payload: exportResult })
 
   if (exportResult.ok) {
-    figma.notify('PagePilot QA JSON exported: ' + exportResult.data.summary.textCount + ' text nodes')
+    figma.notify(PAGEPILOT_EXPORT_LABEL + ': ' + exportResult.data.summary.textCount + ' text nodes')
   } else {
     figma.notify(exportResult.error, { error: true })
   }
@@ -143,9 +148,15 @@ function createPagePilotExport() {
 
   var exportData = {
     schema: 'pagepilot-qa.design-export.v1',
+    exportVersion: PAGEPILOT_EXPORT_VERSION,
+    exportBuild: PAGEPILOT_EXPORT_BUILD,
+    exportLabel: PAGEPILOT_EXPORT_LABEL,
     source: {
       tool: 'figma-plugin',
       plugin: 'PagePilot QA Design Export',
+      pluginVersion: PAGEPILOT_EXPORT_VERSION,
+      pluginBuild: PAGEPILOT_EXPORT_BUILD,
+      pluginLabel: PAGEPILOT_EXPORT_LABEL,
       localOnly: true,
       network: 'disabled',
       exportedAt: new Date().toISOString(),
@@ -187,6 +198,9 @@ function createPagePilotExport() {
       data: exportData,
       json: jsonText,
       jsonValid: true,
+      exportVersion: PAGEPILOT_EXPORT_VERSION,
+      exportBuild: PAGEPILOT_EXPORT_BUILD,
+      exportLabel: PAGEPILOT_EXPORT_LABEL,
     }
   } catch (error) {
     return {

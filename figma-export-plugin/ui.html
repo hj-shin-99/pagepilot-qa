@@ -1,4 +1,5 @@
 <!doctype html>
+<!-- PagePilot Export v0.1.1 / build 2026-07-08-parsefix -->
 <html lang="ko">
   <head>
     <meta charset="utf-8" />
@@ -139,6 +140,12 @@
         background: var(--figma-color-bg-secondary, #eef2f7);
         padding: 2px 5px;
       }
+
+      .version-line {
+        color: var(--figma-color-text-secondary, #5f6b7a);
+        font-size: 11px;
+        font-weight: 700;
+      }
     </style>
   </head>
   <body>
@@ -146,6 +153,7 @@
       <header>
         <h1>PagePilot QA Design Export</h1>
         <p>선택한 프레임/섹션의 텍스트, CTA 후보, 이미지/아이콘 후보를 외부 전송 없이 로컬 JSON으로 만듭니다.</p>
+        <div class="version-line" id="pluginVersion">PagePilot Export v0.1.1 / build 2026-07-08-parsefix</div>
       </header>
 
       <section class="panel actions" aria-label="export actions">
@@ -170,8 +178,10 @@
       var downloadButton = document.getElementById('downloadButton')
       var jsonOutput = document.getElementById('jsonOutput')
       var statusBox = document.getElementById('status')
+      var pluginVersion = document.getElementById('pluginVersion')
 
       var latestJson = ''
+      var uiExportLabel = 'PagePilot Export v0.1.1 / build 2026-07-08-parsefix'
 
       exportButton.addEventListener('click', function () {
         setStatus('선택한 노드를 로컬에서 읽는 중입니다', 'info')
@@ -256,8 +266,10 @@
         downloadButton.disabled = false
 
         var summary = message.payload.data.summary
+        var exportLabel = message.payload.exportLabel || message.payload.data.exportLabel || message.payload.data.source.pluginLabel || 'unknown runtime'
+        pluginVersion.textContent = uiExportLabel + ' / runtime: ' + exportLabel
         setStatus(
-          'Export 완료: 텍스트 ' + summary.textCount + '개, CTA 후보 ' + summary.ctaCandidateCount + '개, 이미지/아이콘 후보 ' + summary.imageCandidateCount + '개 · JSON 유효성 확인 완료',
+          'Export 완료: 텍스트 ' + summary.textCount + '개, CTA 후보 ' + summary.ctaCandidateCount + '개, 이미지/아이콘 후보 ' + summary.imageCandidateCount + '개 · JSON 유효성 확인 완료 · ' + exportLabel,
           'success'
         )
       }

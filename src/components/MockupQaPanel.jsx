@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 const summaryCards = [
   { key: '수정 필요', label: '수정 필요' },
@@ -8,11 +8,30 @@ const summaryCards = [
 
 const issueUserStatuses = ['미확인', '수정 요청', '확인 완료', '무시']
 
+const aiLoadingStages = [
+  '페이지 접속 및 캡처 중',
+  'Tech QA 분석 중',
+  'Figma JSON 힌트 분석 중',
+  'AI 시안 비교 중',
+  'AI 2차 검증 중',
+  '결과 정리 중',
+]
+
 function MockupQaPanel({ aiQa, designImages, figmaHintCount, result, webHintCount, onRunAiQa }) {
+  const isRunning = aiQa?.state === 'running'
   const [selectedIssueIndex, setSelectedIssueIndex] = useState(0)
   const [showAllIssues, setShowAllIssues] = useState(false)
   const [copyStatus, setCopyStatus] = useState('')
   const [issueStatusState, setIssueStatusState] = useState({ key: '', map: {} })
+  const [runningNow, setRunningNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    if (!isRunning) return undefined
+
+    const timerId = window.setInterval(() => setRunningNow(Date.now()), 1000)
+    return () => window.clearInterval(timerId)
+  }, [isRunning])
+
   const issues = Array.isArray(aiQa?.result?.issues) ? aiQa.result.issues.slice(0, 10) : []
   const summary = aiQa?.result?.summary && typeof aiQa.result.summary === 'object' ? aiQa.result.summary : aiQa?.result?.counts || {}
   const ignoredDifferences = Array.isArray(aiQa?.result?.ignoredDifferences) ? aiQa.result.ignoredDifferences : []
@@ -22,7 +41,6 @@ function MockupQaPanel({ aiQa, designImages, figmaHintCount, result, webHintCoun
   const actionableIssues = issues.filter((issue) => issue.status !== '무시 가능' && issue.priorityLevel !== 'low')
   const ignoredIssues = issues.filter((issue) => issue.status === '무시 가능')
   const visibleIssues = showAllIssues ? actionableIssues : actionableIssues.slice(0, 5)
-  const isRunning = aiQa?.state === 'running'
   const isComplete = aiQa?.state === 'complete'
   const hasFigmaImage = Boolean(designImages[0]?.previewUrl)
   const hasWebImage = Boolean(result?.webScreenshot?.dataUrl)
@@ -32,6 +50,9 @@ function MockupQaPanel({ aiQa, designImages, figmaHintCount, result, webHintCoun
   const hasMoreIssues = actionableIssues.length > 5
   const storageKey = getIssueStatusStorageKey(result)
   const deploymentText = getDeploymentSummary({ summary, checks: result?.checks || [] })
+  const currentStageIndex = getAiLoadingStageIndex(aiQa?.startedAt, runningNow, isRunning)
+  const currentStage = aiLoadingStages[currentStageIndex]
+  const progressPercent = Math.round(((currentStageIndex + 1) / aiLoadingStages.length) * 100)
 
   const issueStatusMap = issueStatusState.key === storageKey ? issueStatusState.map : loadIssueStatusMap(storageKey)
 
@@ -69,8 +90,8 @@ function MockupQaPanel({ aiQa, designImages, figmaHintCount, result, webHintCoun
         <div className="ai-summary-box">
           {isRunning ? (
             <>
-              <strong>AI가 시안과 웹 캡처를 비교 중입니다.</strong>
-              <span>업로드한 Figma 시안 이미지와 웹 fullPage screenshot을 OpenAI Vision으로 비교합니다.</span>
+              <strong>{currentStage}</strong>
+              <span>Playwright 결과는 수집됐고, AI가 시안 이미지/웹 캡처/JSON 힌트를 비교하고 있습니다.</span>
             </>
           ) : isComplete ? (
             <>
@@ -85,6 +106,8 @@ function MockupQaPanel({ aiQa, designImages, figmaHintCount, result, webHintCoun
           )}
         </div>
 
+        {isRunning ? <AiLoadingState currentStageIndex={currentStageIndex} progressPercent={progressPercent} /> : null}
+
         <div className="ai-summary-pills" aria-label="전달 이미지 상태">
           <span>Web 이미지 {hasWebImage ? '있음' : '없음'}</span>
           <span>Figma 이미지 {hasFigmaImage ? '있음' : '없음'}</span>
@@ -96,6 +119,8 @@ function MockupQaPanel({ aiQa, designImages, figmaHintCount, result, webHintCoun
 
         {aiQa?.error ? <p className="ai-error-message">AI 분석 실패: {aiQa.error} 기존 Tech QA와 기계식 수집 결과는 계속 확인할 수 있습니다.</p> : null}
       </article>
+
+      {isRunning ? <AiSkeletonChecklist /> : null}
 
       {isComplete ? (
         <article className="detail-card ai-result-card">
@@ -228,6 +253,55 @@ function MockupQaPanel({ aiQa, designImages, figmaHintCount, result, webHintCoun
       ) : null}
     </section>
   )
+}
+
+function AiLoadingState({ currentStageIndex, progressPercent }) {
+  return (
+    <div className="ai-loading-card" role="status" aria-label="AI 분석 진행 상태">
+      <div className="ai-progress-track" aria-hidden="true">
+        <span style={{ width: `${progressPercent}%` }} />
+      </div>
+      <ol className="ai-stage-list">
+        {aiLoadingStages.map((stage, index) => (
+          <li className={index === currentStageIndex ? 'is-active' : index < currentStageIndex ? 'is-complete' : ''} key={stage}>
+            {stage}
+          </li>
+        ))}
+      </ol>
+    </div>
+  )
+}
+
+function AiSkeletonChecklist() {
+  return (
+    <article className="detail-card ai-result-card ai-skeleton-card" aria-label="AI QA 결과 준비 중">
+      <div className="section-title-row">
+        <div>
+          <h3>AI QA 체크리스트 준비 중</h3>
+          <p className="panel-note relaxed-note">결과가 비어 보이지 않도록 분석 후보를 정리하는 동안 임시 카드를 표시합니다.</p>
+        </div>
+        <span>AI 분석 중</span>
+      </div>
+      <div className="ai-skeleton-list" aria-hidden="true">
+        {[0, 1, 2].map((item) => (
+          <div className="ai-skeleton-row" key={item}>
+            <span />
+            <strong />
+            <p />
+          </div>
+        ))}
+      </div>
+    </article>
+  )
+}
+
+function getAiLoadingStageIndex(startedAt, now, isRunning) {
+  if (!isRunning) return 0
+  const elapsedSeconds = Math.max(0, (Number(now) - Number(startedAt || now)) / 1000)
+  if (elapsedSeconds < 1.5) return 2
+  if (elapsedSeconds < 12) return 3
+  if (elapsedSeconds < 32) return 4
+  return 5
 }
 
 function ImageComparisonPane({ imageAlt, imageSrc, label, placeholder, selectedArea }) {

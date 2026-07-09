@@ -98,7 +98,7 @@ function App() {
     setInputError('')
     setResult(null)
     setScanState('scanning')
-      setActiveTab('mockup')
+    setActiveTab('mockup')
 
     try {
       const response = await fetch('/api/scan', {
@@ -183,7 +183,7 @@ function App() {
     const resultKey = getAiResultKey(scanResult)
     if (!force && aiQa.resultKey === resultKey && aiQa.state !== 'idle') return
 
-    setAiQa({ state: 'running', result: null, error: '', rawText: '', resultKey })
+    setAiQa({ state: 'running', result: null, error: '', rawText: '', resultKey, startedAt: Date.now() })
 
     const controller = new AbortController()
     const timeoutId = window.setTimeout(() => controller.abort(), AI_MOCKUP_QA_TIMEOUT_MS)

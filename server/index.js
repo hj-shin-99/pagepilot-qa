@@ -23,6 +23,21 @@ const DESKTOP_DESIGN_VIEWPORT = { width: 1920, height: 1080 }
 const DESKTOP_SCREENSHOT_SCALE = 2
 const NAVIGATION_TIMEOUT_MS = 15000
 const LINK_TIMEOUT_MS = 7000
+const NAV_CTA_CONTEXT_PATTERNS = [
+  'global navigation',
+  'navigation',
+  'nav',
+  'gnb',
+  'header',
+  'search',
+  'menu',
+  'bar items',
+]
+const HERO_CTA_TEXT_PATTERNS = [
+  '사전예약하기',
+  '프로모션 바로가기',
+  '온라인 구매 상담',
+]
 
 const app = express()
 
@@ -176,6 +191,11 @@ function normalizeCtaHints(value, source) {
     if (seen.has(key)) return
     seen.add(key)
 
+    const contextText = [item?.layerPath, item?.name, item?.selector, item?.ariaLabel, item?.label]
+      .map((part) => limitText(part || '', 220))
+      .filter(Boolean)
+      .join(' ')
+
     hints.push({
       text,
       href,
@@ -185,6 +205,7 @@ function normalizeCtaHints(value, source) {
       visible: item?.visible !== false,
       layerPath: source === 'figma' ? limitText(item?.layerPath || '', 220) : '',
       yRatio: Number.isFinite(Number(item?.yRatio)) ? Math.max(0, Math.min(1, Number(item.yRatio))) : null,
+      navCandidate: isNavigationCtaContext(contextText) && !isHeroCtaText(text),
     })
   })
 
@@ -434,6 +455,10 @@ function getMockupAiQaSystemPrompt() {
     '중요하지 않은 차이는 버린다.',
     'Figma JSON과 Web DOM 텍스트는 참고용 힌트일 뿐이며 절대 기준이 아니다.',
     'JSON에만 존재하고 Figma 시안 이미지에 보이지 않는 항목은 이슈로 만들지 않는다.',
+    'Global navigation/navigation/nav/gnb/header/search/menu/bar items 영역의 메뉴/검색/헤더 CTA 차이는 기본 이슈에서 제외하거나 낮은 우선순위로 둔다.',
+    '단, Hero CTA인 사전예약하기, 프로모션 바로가기, 온라인 구매 상담 차이는 유지한다.',
+    '문구 이슈는 Figma JSON, Web DOM, 이미지 OCR/Vision 중 한 소스만 다르게 읽은 경우 수정 필요로 만들지 말고 확인 필요 이하로 낮춘다.',
+    '숫자, 금액, 월 납입금 차이는 위 OCR 완화 규칙으로 제거하지 않는다.',
     '각 이슈는 시안: A / 현재: B 형태로 짧게 작성한다.',
     '확실하지 않은 것은 status를 확인 필요로 표시하고 장황하게 설명하지 않는다.',
     'issues 배열은 최대 5개까지만 반환한다.',
@@ -465,6 +490,10 @@ function createMockupAiQaPrompt(payload) {
     'Figma JSON은 참고용 힌트일 뿐이며, JSON에만 존재하고 시안 이미지에 보이지 않는 항목은 이슈로 만들지 마세요.',
     'Web DOM visible text와 textMismatchHints도 참고 힌트이며, 이미지 비교 판단보다 우선하지 않습니다.',
     'CTA 버튼 차이는 figmaCtaHints와 webCtaHints의 같은 area 구성 차이를 중요하게 참고하세요.',
+    'Global navigation/navigation/nav/gnb/header/search/menu/bar items 영역의 메뉴/검색/헤더 CTA 차이는 기본 이슈에서 제외하거나 낮은 우선순위로 두세요.',
+    '단, Hero CTA인 사전예약하기, 프로모션 바로가기, 온라인 구매 상담 차이는 유지하세요.',
+    '문구 이슈는 Figma JSON, Web DOM, 이미지 OCR/Vision 중 한 소스만 다르게 읽은 경우 수정 필요로 만들지 말고 확인 필요 이하로 낮추세요.',
+    '숫자, 금액, 월 납입금 차이는 위 OCR 완화 규칙으로 제거하지 마세요.',
     '메인 Hero 이미지가 다른 장면이면 텍스트 차이와 별개로 이미지 이슈를 만드세요.',
     '각 이슈는 “시안: A / 현재: B” 형태로 짧게 작성하세요.',
     '수정 필요성이 애매하거나 확실하지 않은 것은 “확인 필요”로 표시하세요.',
@@ -482,6 +511,7 @@ function getMockupAiQaVerificationSystemPrompt() {
     '아래 이슈 목록은 1차 AI가 찾은 QA 후보이며 사용자에게 보여주기 전에 반드시 오탐을 제거한다.',
     '문구 이슈는 figmaTextHints와 webTextHints에 동일하거나 거의 같은 문구가 있으면 제거한다.',
     '작은 글씨 또는 OCR 추정으로 만든 이슈는 제거하거나 확인 필요로 낮춘다.',
+    'Figma JSON/Web DOM/Vision 중 한 소스만 다르게 읽은 문구 이슈는 오탐 가능성으로 제거하거나 확인 필요 이하로 낮춘다.',
     '숫자/금액 차이는 유지한다.',
     '최종적으로 실제 수정이 필요한 핵심 이슈만 최대 5개 남긴다.',
     '반드시 JSON으로만 응답한다.',
@@ -533,6 +563,7 @@ function createMockupAiQaVerificationPrompt(payload, firstPassResult) {
     '아래 이슈 목록은 1차 AI가 찾은 QA 후보입니다. 실제 사용자에게 보여주기 전에 오탐을 제거하세요.',
     '특히 문구 이슈는 figmaTextHints와 webTextHints에 동일하거나 거의 같은 문구가 있으면 제거하세요.',
     '작은 글씨/OCR 추정으로 만든 이슈는 제거하거나 확인 필요로 낮추세요.',
+    'Figma JSON/Web DOM/Vision 중 한 소스만 다르게 읽은 문구 이슈는 오탐 가능성으로 제거하거나 확인 필요 이하로 낮추세요.',
     '숫자/금액 차이는 유지하세요. 예: 47만원 vs 50만원은 유지합니다.',
     '최종적으로 실제 수정이 필요한 핵심 이슈만 최대 5개 남기세요.',
     '반드시 아래 JSON 형식으로만 응답하세요.',
@@ -574,8 +605,8 @@ function normalizeMockupAiQaResult(result, payload = {}, options = {}) {
 
 function createCtaComparisonResult(payload = {}) {
   try {
-    const figmaHints = Array.isArray(payload.figmaCtaHints) ? payload.figmaCtaHints : []
-    const webHints = Array.isArray(payload.webCtaHints) ? payload.webCtaHints : []
+    const figmaHints = filterDefaultCtaHints(Array.isArray(payload.figmaCtaHints) ? payload.figmaCtaHints : [])
+    const webHints = filterDefaultCtaHints(Array.isArray(payload.webCtaHints) ? payload.webCtaHints : [])
     if (figmaHints.length === 0 || webHints.length === 0) return { issues: [], removedIssues: [], ignoredDifferences: [], error: '' }
 
     const issues = MOCKUP_AI_AREAS.flatMap((area) => createCtaAreaIssues(area, figmaHints, webHints))
@@ -587,6 +618,26 @@ function createCtaComparisonResult(payload = {}) {
     console.log('[Mockup AI QA] CTA comparison failed:', error instanceof Error ? error.message : error)
     return { issues: [], removedIssues: [], ignoredDifferences: [], error: 'cta_compare_failed' }
   }
+}
+
+function filterDefaultCtaHints(hints) {
+  return hints.filter((hint) => isHeroCtaText(hint?.text) || !isNavigationCtaHint(hint))
+}
+
+function isNavigationCtaHint(hint) {
+  if (!hint || isHeroCtaText(hint.text)) return false
+  if (hint.navCandidate) return true
+  return isNavigationCtaContext(`${hint.layerPath || ''} ${hint.name || ''} ${hint.selector || ''}`)
+}
+
+function isNavigationCtaContext(value) {
+  const text = String(value || '').toLowerCase()
+  return NAV_CTA_CONTEXT_PATTERNS.some((pattern) => text.includes(pattern))
+}
+
+function isHeroCtaText(value) {
+  const text = normalizeComparableQaText(value)
+  return HERO_CTA_TEXT_PATTERNS.some((pattern) => text.includes(normalizeComparableQaText(pattern)))
 }
 
 function createCtaAreaIssues(area, figmaHints, webHints) {
@@ -712,6 +763,10 @@ function areDuplicateMockupIssues(first, second) {
   if (first.type === second.type && first.area === second.area) {
     if (first.type === 'CTA') return true
     if (first.type === '이미지' && /hero|히어로|메인|kv/i.test(getIssueSearchText(first) + getIssueSearchText(second))) return true
+
+    const firstTitle = normalizeComparableQaText(first.title)
+    const secondTitle = normalizeComparableQaText(second.title)
+    if (getQaTextSimilarity(firstTitle, secondTitle) >= 0.76) return true
   }
 
   const firstText = normalizeComparableQaText(`${first.title} ${first.figma} ${first.web}`)
@@ -737,10 +792,12 @@ function sortFinalMockupIssues(issues) {
 
 function getFinalIssueRank(issue) {
   const text = getIssueSearchText(issue)
+  if (issue.priorityLevel === 'low') return 9
   if (issue.area === 'top' && (issue.type === '문구' || issue.type === '이미지' || /hero|히어로|메인|kv/i.test(text))) return 0
-  if (issue.type === 'CTA') return 1
+  if (issue.type === 'CTA' && !isNavigationIssueText(text)) return 1
   if (issue.type === '금액' || /가격|금액|월\s*납입|월납입|만원|프로모션|조건/i.test(text)) return 2
   if (issue.type === '섹션' || /섹션|누락|추가/i.test(text)) return 3
+  if (isNavigationIssueText(text)) return 8
   return 4
 }
 
@@ -895,12 +952,24 @@ function postProcessMockupIssues(issues, payload = {}) {
       return
     }
 
+    const hasNumberDifference = hasMeaningfulNumberDifference(issue.figma, issue.web)
+
+    if (!hasNumberDifference && isSuspiciousLongCurrentValue(issue)) {
+      keptIssues.push(applyIssuePriorityRules({
+        ...issue,
+        status: '무시 가능',
+        confidence: Math.min(Number(issue.confidence) || 0.5, 0.55),
+        memo: appendMemoBasis(issue.memo, '현재 값이 DOM/OCR에서 길게 결합된 것으로 보여 기본 목록에서 제외했습니다.'),
+        verification: issue.verification === 'kept' ? 'downgraded' : issue.verification,
+      }))
+      return
+    }
+
     if (!isTextOrMoneyIssue(issue)) {
       keptIssues.push(applyIssuePriorityRules(issue))
       return
     }
 
-    const hasNumberDifference = hasMeaningfulNumberDifference(issue.figma, issue.web)
     const normalizedFigma = normalizeComparableQaText(issue.figma)
     const normalizedWeb = normalizeComparableQaText(issue.web)
 
@@ -910,6 +979,12 @@ function postProcessMockupIssues(issues, payload = {}) {
     }
 
     if (issue.type === '문구' && !hasNumberDifference) {
+      const sourceCheckedIssue = applyThreeSourceTextVerification(issue, figmaTextHints, webTextHints)
+      if (sourceCheckedIssue !== issue) {
+        keptIssues.push(applyIssuePriorityRules(sourceCheckedIssue))
+        return
+      }
+
       const figmaInWeb = findSimilarTextHint(issue.figma, webTextHints)
       const webInFigma = findSimilarTextHint(issue.web, figmaTextHints)
       const sharedHint = findSharedSimilarHint(figmaTextHints, webTextHints, issue)
@@ -946,6 +1021,95 @@ function postProcessMockupIssues(issues, payload = {}) {
   return { issues: keptIssues, removedIssues }
 }
 
+function applyThreeSourceTextVerification(issue, figmaTextHints, webTextHints) {
+  const figmaSource = findBestTextSource(issue, figmaTextHints)
+  const webSource = findBestTextSource(issue, webTextHints)
+  const visionSource = issue.web || ''
+
+  if (!figmaSource || !webSource || !visionSource) return issue
+
+  const figmaWebSimilar = areQaTextsSimilar(figmaSource, webSource, 0.9)
+  const figmaVisionSimilar = areQaTextsSimilar(figmaSource, visionSource, 0.9)
+  const webVisionSimilar = areQaTextsSimilar(webSource, visionSource, 0.9)
+
+  if (figmaWebSimilar && figmaVisionSimilar && webVisionSimilar) {
+    return {
+      ...issue,
+      status: '무시 가능',
+      confidence: Math.min(Number(issue.confidence) || 0.5, 0.55),
+      memo: appendMemoBasis(issue.memo, '텍스트 소스 3개가 동일/유사해 OCR 오탐 가능성이 높습니다.'),
+      verification: issue.verification === 'kept' ? 'downgraded' : issue.verification,
+    }
+  }
+
+  if (figmaWebSimilar && !webVisionSimilar) {
+    return {
+      ...issue,
+      status: '무시 가능',
+      confidence: Math.min(Number(issue.confidence) || 0.5, 0.62),
+      memo: appendMemoBasis(issue.memo, 'Figma JSON과 Web DOM 문구가 동일/유사해 OCR 오탐 가능성이 높습니다.'),
+      verification: issue.verification === 'kept' ? 'downgraded' : issue.verification,
+    }
+  }
+
+  if (figmaVisionSimilar && !webVisionSimilar) {
+    return {
+      ...issue,
+      status: '무시 가능',
+      confidence: Math.min(Number(issue.confidence) || 0.5, 0.62),
+      memo: appendMemoBasis(issue.memo, 'Figma JSON과 Vision 판단이 동일/유사해 DOM/OCR 소스 차이로 판단했습니다.'),
+      verification: issue.verification === 'kept' ? 'downgraded' : issue.verification,
+    }
+  }
+
+  if (!figmaWebSimilar && !figmaVisionSimilar && !webVisionSimilar) {
+    return {
+      ...issue,
+      status: '확인 필요',
+      confidence: Math.min(Number(issue.confidence) || 0.5, 0.7),
+      memo: appendMemoBasis(issue.memo, '텍스트 소스 간 인식 차이로 수동 확인 필요'),
+      verification: issue.verification === 'kept' ? 'downgraded' : issue.verification,
+    }
+  }
+
+  return issue
+}
+
+function findBestTextSource(issue, hints) {
+  let bestHint = ''
+  let bestScore = 0
+  const issueValues = [issue.figma, issue.web, issue.title]
+    .map((value) => normalizeComparableQaText(value))
+    .filter((value) => value.length >= 6)
+  if (issueValues.length === 0) return ''
+
+  hints.forEach((hint) => {
+    const normalizedHint = normalizeComparableQaText(hint)
+    if (!normalizedHint || normalizedHint.length < 6) return
+
+    const score = Math.max(...issueValues.map((value) => getQaTextSimilarity(value, normalizedHint)))
+    if (score > bestScore) {
+      bestScore = score
+      bestHint = hint
+    }
+  })
+
+  return bestScore >= 0.45 ? bestHint : ''
+}
+
+function areQaTextsSimilar(firstText, secondText, threshold = 0.9) {
+  return getQaTextSimilarity(normalizeComparableQaText(firstText), normalizeComparableQaText(secondText)) >= threshold
+}
+
+function isSuspiciousLongCurrentValue(issue) {
+  if (!issue || issue.type === '이미지') return false
+  const webText = String(issue.web || '')
+  if (webText.length < 170) return false
+  const figmaText = String(issue.figma || '')
+  if (figmaText && webText.length < figmaText.length * 2.4) return false
+  return /\s/.test(webText) || /[|/·•]/.test(webText)
+}
+
 function applyIssuePriorityRules(issue) {
   const text = getIssueSearchText(issue)
   const isHighPriority = hasHighPrioritySignal(issue, text)
@@ -960,7 +1124,7 @@ function applyIssuePriorityRules(issue) {
     ...issue,
     status: Number(issue.confidence) < 0.65 ? '무시 가능' : downgradedStatus,
     priorityLevel: 'low',
-    memo: `${issue.memo || ''} Footer/legal/안내성 정보로 판단되어 낮은 우선순위로 분류했습니다.`.trim(),
+    memo: appendMemoBasis(issue.memo, 'GNB/header/footer/legal/단순 표현 차이로 판단되어 낮은 우선순위로 분류했습니다.'),
   }
 }
 
@@ -969,13 +1133,22 @@ function getIssueSearchText(issue) {
 }
 
 function hasHighPrioritySignal(issue, text) {
+  if (isHeroCtaText(text)) return true
+  if (isNavigationIssueText(text)) return false
   if (issue?.area === 'top' && /(메인|kv|hero|히어로|배너|프로모션|혜택|가격|금액|월\s*납입|월납입|만원|cta|버튼|신청|예약|구매|상담)/i.test(text)) return true
-  if (issue?.type === 'CTA' || issue?.type === '금액') return true
+  if (issue?.type === 'CTA') return !isNavigationIssueText(text)
+  if (issue?.type === '금액') return true
   return /(메인\s*kv|kv|hero|히어로|cta|버튼|누락|개수|가격|금액|할인율|월\s*납입|월납입|만원|프로모션|혜택|구매\s*혜택|주요\s*섹션|섹션\s*누락)/i.test(text)
 }
 
 function hasLowPrioritySignal(text) {
-  return /(사업자등록번호|상호명|대표자|고객센터|기준금리|공시|약관|주소|전화|팩스|copyright|footer|법률|유의사항|디스클레이머|disclaimer|legal)/i.test(text)
+  return isNavigationIssueText(text)
+    || /(사업자등록번호|상호명|대표자|고객센터|기준금리|공시|약관|주소|전화|팩스|copyright|footer|법률|유의사항|디스클레이머|disclaimer|legal|단순\s*표현|ocr\s*오탐|오탐\s*가능)/i.test(text)
+}
+
+function isNavigationIssueText(text) {
+  if (isHeroCtaText(text)) return false
+  return isNavigationCtaContext(text) || /(gnb|header|nav|navigation|global\s*navigation|menu|search|bar\s*items|상단\s*메뉴|전체\s*메뉴|검색)/i.test(String(text || ''))
 }
 
 function isTextOrMoneyIssue(issue) {

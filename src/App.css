@@ -2482,6 +2482,188 @@
   }
 }
 
+.scan-stage-list,
+.ai-stage-list {
+  display: grid;
+  gap: 8px;
+  margin: 18px 0 0;
+  padding: 0;
+  list-style: none;
+  text-align: left;
+}
+
+.scan-stage-list li,
+.ai-stage-list li {
+  position: relative;
+  padding-left: 22px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.scan-stage-list li::before,
+.ai-stage-list li::before {
+  content: '';
+  position: absolute;
+  top: 0.45em;
+  left: 2px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #cbd5e1;
+}
+
+.scan-stage-list li.is-active,
+.ai-stage-list li.is-active,
+.ai-stage-list li.is-complete {
+  color: var(--ink);
+}
+
+.scan-stage-list li.is-active::before,
+.ai-stage-list li.is-active::before {
+  background: var(--accent);
+  box-shadow: 0 0 0 5px rgba(56, 189, 248, 0.16);
+}
+
+.ai-stage-list li.is-complete::before {
+  background: #10b981;
+}
+
+.ai-loading-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #dbeafe;
+  border-radius: 16px;
+  background: #f8fbff;
+}
+
+.ai-progress-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e2e8f0;
+}
+
+.ai-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #38bdf8, #1c69d4);
+  transition: width 400ms ease;
+}
+
+.ai-skeleton-card {
+  overflow: hidden;
+}
+
+.ai-skeleton-list {
+  display: grid;
+  gap: 10px;
+}
+
+.ai-skeleton-row {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid #eef0f3;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.ai-skeleton-row span,
+.ai-skeleton-row strong,
+.ai-skeleton-row p {
+  display: block;
+  margin: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #eef2f7 0%, #f8fafc 50%, #eef2f7 100%);
+  background-size: 220% 100%;
+  animation: skeleton-shimmer 1400ms ease-in-out infinite;
+}
+
+.ai-skeleton-row span {
+  width: 82px;
+  height: 22px;
+}
+
+.ai-skeleton-row strong {
+  width: 48%;
+  height: 18px;
+}
+
+.ai-skeleton-row p {
+  width: 74%;
+  height: 14px;
+}
+
+.check-title-with-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.check-help {
+  position: relative;
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: #1d4ed8;
+  background: #dbeafe;
+  font-size: 12px;
+  font-weight: 950;
+  cursor: help;
+}
+
+.check-help-tooltip {
+  position: absolute;
+  z-index: 5;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  width: min(280px, 70vw);
+  padding: 10px 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 12px;
+  color: #0f172a;
+  background: #ffffff;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.5;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 4px);
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.check-help:hover .check-help-tooltip,
+.check-help:focus .check-help-tooltip {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.check-detail-inline em {
+  display: block;
+  margin: 0 0 4px;
+  color: #475569;
+  font-style: normal;
+  font-weight: 900;
+}
+
+@keyframes skeleton-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
 /* Product UI refresh: minimal SaaS design layer */
 .app-shell {
   grid-template-columns: 360px minmax(0, 1fr);

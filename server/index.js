@@ -17,12 +17,13 @@ const MOCKUP_AI_STATUSES = ['수정 필요', '확인 필요', '무시 가능']
 const MOCKUP_AI_TYPES = ['문구', '이미지', 'CTA', '레이아웃', '섹션', '금액']
 const MOCKUP_AI_AREAS = ['top', 'middle', 'bottom', 'unknown']
 const MAX_TEXT_MISMATCH_HINTS = 20
-const MAX_LINKS_TO_CHECK = 30
+const MAX_LINKS_TO_CHECK = null
 const MAX_DESIGN_ELEMENTS = 120
 const DESKTOP_DESIGN_VIEWPORT = { width: 1920, height: 1080 }
 const DESKTOP_SCREENSHOT_SCALE = 2
 const NAVIGATION_TIMEOUT_MS = 15000
 const LINK_TIMEOUT_MS = 7000
+const LINK_CHECK_CONCURRENCY = 8
 const NAV_CTA_CONTEXT_PATTERNS = [
   'global navigation',
   'navigation',
@@ -458,6 +459,7 @@ function getMockupAiQaSystemPrompt() {
     'Global navigation/navigation/nav/gnb/header/search/menu/bar items 영역의 메뉴/검색/헤더 CTA 차이는 기본 이슈에서 제외하거나 낮은 우선순위로 둔다.',
     '단, Hero CTA인 사전예약하기, 프로모션 바로가기, 온라인 구매 상담 차이는 유지한다.',
     '문구 이슈는 Figma JSON, Web DOM, 이미지 OCR/Vision 중 한 소스만 다르게 읽은 경우 수정 필요로 만들지 말고 확인 필요 이하로 낮춘다.',
+    'Hero KV 문구와 Footer/Disclaimer/약관성 장문을 서로 매칭하지 않는다. 법적/약관 키워드는 제외 기준이 아니라 영역 오매칭 방지용 문맥 힌트로만 사용한다.',
     '숫자, 금액, 월 납입금 차이는 위 OCR 완화 규칙으로 제거하지 않는다.',
     '각 이슈는 시안: A / 현재: B 형태로 짧게 작성한다.',
     '확실하지 않은 것은 status를 확인 필요로 표시하고 장황하게 설명하지 않는다.',
@@ -493,6 +495,7 @@ function createMockupAiQaPrompt(payload) {
     'Global navigation/navigation/nav/gnb/header/search/menu/bar items 영역의 메뉴/검색/헤더 CTA 차이는 기본 이슈에서 제외하거나 낮은 우선순위로 두세요.',
     '단, Hero CTA인 사전예약하기, 프로모션 바로가기, 온라인 구매 상담 차이는 유지하세요.',
     '문구 이슈는 Figma JSON, Web DOM, 이미지 OCR/Vision 중 한 소스만 다르게 읽은 경우 수정 필요로 만들지 말고 확인 필요 이하로 낮추세요.',
+    'Hero KV 문구와 Footer/Disclaimer/약관성 장문을 서로 매칭하지 마세요. 법적/약관 키워드는 제외 기준이 아니라 영역 오매칭 방지용 문맥 힌트로만 사용하세요.',
     '숫자, 금액, 월 납입금 차이는 위 OCR 완화 규칙으로 제거하지 마세요.',
     '메인 Hero 이미지가 다른 장면이면 텍스트 차이와 별개로 이미지 이슈를 만드세요.',
     '각 이슈는 “시안: A / 현재: B” 형태로 짧게 작성하세요.',
@@ -512,6 +515,7 @@ function getMockupAiQaVerificationSystemPrompt() {
     '문구 이슈는 figmaTextHints와 webTextHints에 동일하거나 거의 같은 문구가 있으면 제거한다.',
     '작은 글씨 또는 OCR 추정으로 만든 이슈는 제거하거나 확인 필요로 낮춘다.',
     'Figma JSON/Web DOM/Vision 중 한 소스만 다르게 읽은 문구 이슈는 오탐 가능성으로 제거하거나 확인 필요 이하로 낮춘다.',
+    'Hero KV와 Footer/Disclaimer/약관성 장문처럼 영역이 크게 다른 문구끼리 매칭된 이슈는 오탐으로 제거하거나 확인 필요 이하로 낮춘다.',
     '숫자/금액 차이는 유지한다.',
     '최종적으로 실제 수정이 필요한 핵심 이슈만 최대 5개 남긴다.',
     '반드시 JSON으로만 응답한다.',
@@ -564,6 +568,7 @@ function createMockupAiQaVerificationPrompt(payload, firstPassResult) {
     '특히 문구 이슈는 figmaTextHints와 webTextHints에 동일하거나 거의 같은 문구가 있으면 제거하세요.',
     '작은 글씨/OCR 추정으로 만든 이슈는 제거하거나 확인 필요로 낮추세요.',
     'Figma JSON/Web DOM/Vision 중 한 소스만 다르게 읽은 문구 이슈는 오탐 가능성으로 제거하거나 확인 필요 이하로 낮추세요.',
+    'Hero KV와 Footer/Disclaimer/약관성 장문처럼 영역이 크게 다른 문구끼리 매칭된 이슈는 오탐으로 제거하거나 확인 필요 이하로 낮추세요.',
     '숫자/금액 차이는 유지하세요. 예: 47만원 vs 50만원은 유지합니다.',
     '최종적으로 실제 수정이 필요한 핵심 이슈만 최대 5개 남기세요.',
     '반드시 아래 JSON 형식으로만 응답하세요.',
@@ -979,6 +984,12 @@ function postProcessMockupIssues(issues, payload = {}) {
     }
 
     if (issue.type === '문구' && !hasNumberDifference) {
+      const contextCheckedIssue = applyTextMismatchContextGuard(issue)
+      if (contextCheckedIssue !== issue) {
+        keptIssues.push(applyIssuePriorityRules(contextCheckedIssue))
+        return
+      }
+
       const sourceCheckedIssue = applyThreeSourceTextVerification(issue, figmaTextHints, webTextHints)
       if (sourceCheckedIssue !== issue) {
         keptIssues.push(applyIssuePriorityRules(sourceCheckedIssue))
@@ -1019,6 +1030,76 @@ function postProcessMockupIssues(issues, payload = {}) {
   })
 
   return { issues: keptIssues, removedIssues }
+}
+
+function applyTextMismatchContextGuard(issue) {
+  if (!issue || issue.type !== '문구') return issue
+
+  const figmaContext = getTextMismatchContext(issue.figma)
+  const webContext = getTextMismatchContext(issue.web)
+  if (figmaContext === 'disclaimer' && webContext === 'disclaimer') return issue
+  if (figmaContext === 'hero' && webContext === 'hero') return issue
+
+  const farApartByBox = areIssueBoxesFarApart(issue)
+  const crossHeroDisclaimer = (figmaContext === 'hero' && webContext === 'disclaimer') || (figmaContext === 'disclaimer' && webContext === 'hero')
+  const imbalancedLongText = hasImbalancedTextLength(issue.figma, issue.web) && !hasMeaningfulTextOverlap(issue.figma, issue.web)
+
+  if (crossHeroDisclaimer || (farApartByBox && imbalancedLongText)) {
+    return {
+      ...issue,
+      status: '무시 가능',
+      confidence: Math.min(Number(issue.confidence) || 0.5, 0.55),
+      memo: appendMemoBasis(issue.memo, 'Hero/Footer 또는 약관성 장문 간 오매칭 가능성이 높아 기본 목록에서 제외했습니다.'),
+      verification: issue.verification === 'kept' ? 'downgraded' : issue.verification,
+    }
+  }
+
+  if ((farApartByBox || imbalancedLongText) && issue.status === '수정 필요') {
+    return {
+      ...issue,
+      status: '확인 필요',
+      confidence: Math.min(Number(issue.confidence) || 0.5, 0.68),
+      memo: appendMemoBasis(issue.memo, '텍스트 위치/길이 차이가 커 오매칭 가능성 수동 확인 필요'),
+      verification: issue.verification === 'kept' ? 'downgraded' : issue.verification,
+    }
+  }
+
+  return issue
+}
+
+function getTextMismatchContext(value) {
+  const text = String(value || '')
+  const normalized = text.toLowerCase()
+  const length = normalizeComparableQaText(text).length
+  const hasLegalContext = /운용리스|중도해지|위약금|약관|유의사항|공시|금리|사업자|대표자|주소|고객센터|디스클레이머|disclaimer|legal|copyright|개인정보|준법|심의필/i.test(text)
+  const hasHeroContext = /hero|kv|메인|스마트|프로모션|혜택|지금\s*만나|만나보세요|월\s*\d+|bmw/i.test(normalized)
+
+  if (hasLegalContext && length >= 70) return 'disclaimer'
+  if (hasHeroContext && length <= 80) return 'hero'
+  return 'unknown'
+}
+
+function areIssueBoxesFarApart(issue) {
+  const figmaY = getBoxCenterY(issue?.figmaBox)
+  const webY = getBoxCenterY(issue?.webBox)
+  if (!Number.isFinite(figmaY) || !Number.isFinite(webY)) return false
+  return Math.abs(figmaY - webY) > 0.42
+}
+
+function getBoxCenterY(box) {
+  if (!box || typeof box !== 'object') return Number.NaN
+  const y = Number(box.y)
+  const height = Number(box.height)
+  if (!Number.isFinite(y)) return Number.NaN
+  return y + (Number.isFinite(height) ? height / 2 : 0)
+}
+
+function hasImbalancedTextLength(firstText, secondText) {
+  const firstLength = normalizeComparableQaText(firstText).length
+  const secondLength = normalizeComparableQaText(secondText).length
+  const shorter = Math.min(firstLength, secondLength)
+  const longer = Math.max(firstLength, secondLength)
+  return shorter > 0 && shorter <= 80 && longer >= 150 && longer / shorter >= 2.8
 }
 
 function applyThreeSourceTextVerification(issue, figmaTextHints, webTextHints) {
@@ -1143,7 +1224,7 @@ function hasHighPrioritySignal(issue, text) {
 
 function hasLowPrioritySignal(text) {
   return isNavigationIssueText(text)
-    || /(사업자등록번호|상호명|대표자|고객센터|기준금리|공시|약관|주소|전화|팩스|copyright|footer|법률|유의사항|디스클레이머|disclaimer|legal|단순\s*표현|ocr\s*오탐|오탐\s*가능)/i.test(text)
+    || /(단순\s*표현|ocr\s*오탐|오탐\s*가능|오매칭\s*가능)/i.test(text)
 }
 
 function isNavigationIssueText(text) {
@@ -1350,6 +1431,8 @@ async function scanUrl(targetUrl) {
   const browser = await chromium.launch({ headless: true })
   const consoleMessages = []
   const failedImageRequests = new Map()
+  const failedResourceRequests = []
+  const badResourceResponses = []
   let mainResponse = null
   let mainError = ''
   let pageTitle
@@ -1368,7 +1451,7 @@ async function scanUrl(targetUrl) {
     await blockPostRequests(context)
 
     const page = await context.newPage()
-    attachCollectors(page, consoleMessages, failedImageRequests)
+    attachCollectors(page, consoleMessages, failedImageRequests, failedResourceRequests, badResourceResponses)
 
     try {
       mainResponse = await page.goto(targetUrl, {
@@ -1394,7 +1477,7 @@ async function scanUrl(targetUrl) {
   const safePageTitle = pageTitle || ''
   const snapshot = domSnapshot || createEmptyDomSnapshot()
   const safeMobileResult = mobileResult || createMobileFallback()
-  const linksToCheck = snapshot.links.filter((link) => link.url).slice(0, MAX_LINKS_TO_CHECK)
+  const linksToCheck = getLinksToCheck(snapshot.links)
   const linkStatuses = await checkLinkStatuses(linksToCheck)
   const images = mergeImageFailures(snapshot.images, failedImageRequests)
   const missingHrefLinks = snapshot.interactionTargets.filter((target) => !target.href)
@@ -1409,6 +1492,15 @@ async function scanUrl(targetUrl) {
     linkStatuses,
     counts: snapshot.counts,
     mobileResult: safeMobileResult,
+    metaInfo: snapshot.metaInfo,
+    missingAltImages: snapshot.missingAltImages,
+    formInfo: snapshot.formInfo,
+    externalBlankLinks: snapshot.externalBlankLinks,
+    duplicateIds: snapshot.duplicateIds,
+    headingInfo: snapshot.headingInfo,
+    largeResources: snapshot.largeResources,
+    networkIssues: failedResourceRequests.concat(badResourceResponses),
+    unlabeledClickables: snapshot.unlabeledClickables,
   })
 
   return {
@@ -1420,7 +1512,7 @@ async function scanUrl(targetUrl) {
     navigationError: mainError,
     checks,
     links: linkStatuses,
-    uncheckedLinkCount: Math.max(snapshot.links.filter((link) => link.url).length - MAX_LINKS_TO_CHECK, 0),
+    uncheckedLinkCount: 0,
     missingHrefLinks,
     images,
     designElements: snapshot.designElements,
@@ -1479,7 +1571,7 @@ async function blockPostRequests(context) {
   })
 }
 
-function attachCollectors(page, consoleMessages, failedImageRequests) {
+function attachCollectors(page, consoleMessages, failedImageRequests, failedResourceRequests = [], badResourceResponses = []) {
   page.on('console', (message) => {
     if (message.type() === 'error') {
       const location = message.location()
@@ -1502,9 +1594,36 @@ function attachCollectors(page, consoleMessages, failedImageRequests) {
   })
 
   page.on('requestfailed', (request) => {
+    const failureText = request.failure()?.errorText || 'request failed'
     if (request.resourceType() === 'image') {
-      failedImageRequests.set(request.url(), request.failure()?.errorText || 'image request failed')
+      failedImageRequests.set(request.url(), failureText || 'image request failed')
     }
+
+    if (request.method().toUpperCase() === 'POST' || /blockedbyclient/i.test(failureText)) return
+    if (failedResourceRequests.length >= 30) return
+
+    failedResourceRequests.push({
+      url: request.url(),
+      type: request.resourceType(),
+      method: request.method(),
+      message: failureText,
+    })
+  })
+
+  page.on('response', (response) => {
+    const statusCode = response.status()
+    if (statusCode < 400 || badResourceResponses.length >= 30) return
+
+    const request = response.request()
+    if (request.resourceType() === 'document') return
+
+    badResourceResponses.push({
+      url: response.url(),
+      type: request.resourceType(),
+      method: request.method(),
+      statusCode,
+      message: getLinkNote(statusCode),
+    })
   })
 }
 
@@ -1582,6 +1701,14 @@ async function safeDomSnapshot(page, targetUrl) {
         ...entry,
       }))
       const webCtaHints = collectWebCtaHints()
+      const metaInfo = collectMetaInfo()
+      const missingAltImages = images.filter((image) => !normalizeText(image.alt)).slice(0, 30)
+      const formInfo = collectFormInfo()
+      const externalBlankLinks = collectExternalBlankLinks(links, baseUrl)
+      const duplicateIds = collectDuplicateIds()
+      const headingInfo = collectHeadingInfo()
+      const largeResources = collectLargeResources()
+      const unlabeledClickables = collectUnlabeledClickables().slice(0, 30)
 
       return {
         links,
@@ -1590,11 +1717,174 @@ async function safeDomSnapshot(page, targetUrl) {
         images,
         designElements,
         webCtaHints,
+        metaInfo,
+        missingAltImages,
+        formInfo,
+        externalBlankLinks,
+        duplicateIds,
+        headingInfo,
+        largeResources,
+        unlabeledClickables,
         counts: {
           anchors: links.length,
           buttons: buttonTargets.length,
           missingHrefs: links.concat(buttonTargets).filter((target) => !target.href).length,
         },
+      }
+
+      function collectMetaInfo() {
+        return {
+          title: normalizeText(document.title),
+          description: getMetaContent('meta[name="description"]'),
+          canonical: document.querySelector('link[rel~="canonical"]')?.getAttribute('href')?.trim() || '',
+          ogTitle: getMetaContent('meta[property="og:title"]'),
+          ogDescription: getMetaContent('meta[property="og:description"]'),
+          ogImage: getMetaContent('meta[property="og:image"]'),
+        }
+      }
+
+      function getMetaContent(selector) {
+        return normalizeText(document.querySelector(selector)?.getAttribute('content') || '')
+      }
+
+      function collectFormInfo() {
+        const controls = Array.from(document.querySelectorAll('input:not([type="hidden"]), select, textarea'))
+        const missingLabels = controls
+          .filter((control) => isVisibleElement(control) && !hasControlLabel(control))
+          .map((control, index) => ({
+            label: getElementLabel(control, `Form control ${index + 1}`),
+            type: control.getAttribute('type') || control.tagName.toLowerCase(),
+            name: control.getAttribute('name') || '',
+            required: control.required === true,
+            selector: getCssSelector(control),
+            domPath: getElementPath(control),
+            boundingBox: getPageRect(control),
+          }))
+
+        return {
+          total: controls.length,
+          requiredCount: controls.filter((control) => control.required === true).length,
+          missingLabels: missingLabels.slice(0, 30),
+        }
+      }
+
+      function hasControlLabel(control) {
+        if (normalizeText(control.getAttribute('aria-label') || '')) return true
+        if (normalizeText(control.getAttribute('aria-labelledby') || '')) return true
+        const id = control.getAttribute('id') || ''
+        if (id && document.querySelector(`label[for="${cssEscape(id)}"]`)) return true
+        return Boolean(control.closest('label'))
+      }
+
+      function collectExternalBlankLinks(linkItems, baseUrlValue) {
+        let baseOrigin = ''
+        try {
+          baseOrigin = new URL(baseUrlValue).origin
+        } catch {
+          baseOrigin = ''
+        }
+
+        return linkItems.filter((link) => {
+          const anchor = safeQuerySelector(link.selector)
+          if (!anchor || anchor.getAttribute('target') !== '_blank') return false
+          if (!isExternalUrl(link.url, baseOrigin)) return false
+          const rel = (anchor.getAttribute('rel') || '').toLowerCase()
+          return !rel.includes('noopener') || !rel.includes('noreferrer')
+        }).map((link) => {
+          const anchor = safeQuerySelector(link.selector)
+          return {
+            ...link,
+            target: '_blank',
+            rel: anchor?.getAttribute('rel') || '',
+          }
+        }).slice(0, 30)
+      }
+
+      function isExternalUrl(url, baseOrigin) {
+        if (!url || !baseOrigin) return false
+        try {
+          return new URL(url).origin !== baseOrigin
+        } catch {
+          return false
+        }
+      }
+
+      function safeQuerySelector(selector) {
+        if (!selector) return null
+        try {
+          return document.querySelector(selector)
+        } catch {
+          return null
+        }
+      }
+
+      function collectDuplicateIds() {
+        const idMap = new Map()
+        Array.from(document.querySelectorAll('[id]')).forEach((element) => {
+          const id = element.getAttribute('id') || ''
+          if (!id) return
+          const entries = idMap.get(id) || []
+          entries.push({ selector: getCssSelector(element), domPath: getElementPath(element) })
+          idMap.set(id, entries)
+        })
+
+        return Array.from(idMap.entries())
+          .filter(([, entries]) => entries.length > 1)
+          .map(([id, entries]) => ({ id, label: id, count: entries.length, selector: entries.map((entry) => entry.selector).join(' | '), domPath: entries.map((entry) => entry.domPath).join(' | ') }))
+          .slice(0, 30)
+      }
+
+      function collectHeadingInfo() {
+        const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6')).map((heading) => ({
+          level: Number(heading.tagName.slice(1)),
+          text: normalizeText(heading.innerText || heading.textContent || ''),
+          selector: getCssSelector(heading),
+          domPath: getElementPath(heading),
+        }))
+        const skipped = []
+        let previousLevel = null
+        headings.forEach((heading) => {
+          if (previousLevel !== null && heading.level - previousLevel > 1) skipped.push(heading)
+          previousLevel = heading.level
+        })
+
+        return {
+          h1Count: headings.filter((heading) => heading.level === 1).length,
+          headings: headings.slice(0, 40),
+          skipped: skipped.slice(0, 20),
+        }
+      }
+
+      function collectLargeResources() {
+        const entries = typeof performance?.getEntriesByType === 'function' ? performance.getEntriesByType('resource') : []
+        return entries.map((entry) => {
+          const sizeBytes = Math.max(Number(entry.transferSize) || 0, Number(entry.encodedBodySize) || 0, Number(entry.decodedBodySize) || 0)
+          return {
+            url: entry.name || '',
+            type: entry.initiatorType || 'resource',
+            sizeBytes,
+          }
+        }).filter((entry) => entry.sizeBytes >= 1024 * 1024).slice(0, 30)
+      }
+
+      function collectUnlabeledClickables() {
+        return Array.from(document.querySelectorAll('a, button, [role="button"], input[type="button"], input[type="submit"], [onclick]'))
+          .filter((element) => isVisibleElement(element) && !getAccessibleLabel(element))
+          .map((element, index) => ({
+            label: `Clickable ${index + 1}`,
+            type: element.tagName.toLowerCase(),
+            selector: getCssSelector(element),
+            domPath: getElementPath(element),
+            boundingBox: getPageRect(element),
+          }))
+      }
+
+      function getAccessibleLabel(element) {
+        return normalizeText(element.innerText || element.textContent || element.value || '')
+          || normalizeText(element.getAttribute('aria-label') || '')
+          || normalizeText(element.getAttribute('aria-labelledby') || '')
+          || normalizeText(element.getAttribute('title') || '')
+          || normalizeText(element.querySelector('img')?.getAttribute('alt') || '')
       }
 
       function collectWebCtaHints() {
@@ -1919,10 +2209,21 @@ async function scanMobile(browser, targetUrl) {
       waitUntil: 'domcontentloaded',
       timeout: NAVIGATION_TIMEOUT_MS,
     })
+    const widthInfo = await page.evaluate(() => {
+      const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 390
+      const documentWidth = Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth || 0, viewportWidth)
+      return {
+        viewportWidth,
+        documentWidth,
+        hasHorizontalOverflow: documentWidth > viewportWidth + 2,
+      }
+    }).catch(() => ({ viewportWidth: 390, documentWidth: 390, hasHorizontalOverflow: false }))
+
     return {
       accessible: Boolean(response && response.ok()),
       statusCode: response?.status() ?? null,
       viewport: { width: 390, height: 844 },
+      ...widthInfo,
       note: response?.ok() ? '모바일 viewport 접속 가능' : '모바일 viewport 응답 확인 필요',
     }
   } catch (error) {
@@ -1930,6 +2231,9 @@ async function scanMobile(browser, targetUrl) {
       accessible: false,
       statusCode: null,
       viewport: { width: 390, height: 844 },
+      viewportWidth: 390,
+      documentWidth: 390,
+      hasHorizontalOverflow: false,
       note: error instanceof Error ? error.message : '모바일 viewport 접속 실패',
     }
   } finally {
@@ -1941,7 +2245,7 @@ async function checkLinkStatuses(links) {
   const api = await playwrightRequest.newContext({ ignoreHTTPSErrors: true })
 
   try {
-    return await mapWithLimit(links, 5, async (link) => {
+    return await mapWithLimit(links, LINK_CHECK_CONCURRENCY, async (link) => {
       try {
         const response = await api.get(link.url, {
           timeout: LINK_TIMEOUT_MS,
@@ -1967,6 +2271,30 @@ async function checkLinkStatuses(links) {
   } finally {
     await api.dispose()
   }
+}
+
+function getLinksToCheck(links = []) {
+  const inspectableLinks = links.filter((link) => link.url)
+  const sortedLinks = sortLinksForStatusCheck(inspectableLinks)
+  if (!Number.isFinite(MAX_LINKS_TO_CHECK)) return sortedLinks
+  return sortedLinks.slice(0, MAX_LINKS_TO_CHECK)
+}
+
+function sortLinksForStatusCheck(links) {
+  return links.slice().sort((first, second) => {
+    const rankDiff = getLinkCheckPriority(first) - getLinkCheckPriority(second)
+    if (rankDiff !== 0) return rankDiff
+    return Number(first.index || 0) - Number(second.index || 0)
+  })
+}
+
+function getLinkCheckPriority(link) {
+  const text = `${link.label || ''} ${link.text || ''} ${link.href || ''} ${link.url || ''} ${link.selector || ''} ${link.domPath || ''} ${link.section || ''}`.toLowerCase()
+  if (/cta|button|btn|프로모션|상품|구매상담|구매\s*상담|온라인견적|온라인\s*견적|상담|신청|예약|바로가기|더\s*알아보기|자세히/.test(text)) return 0
+  if (/promo|product|estimate|consult|buy|shop/.test(text)) return 1
+  if (/gnb|header|nav|navigation|menu|search|상단\s*메뉴|전체\s*메뉴/.test(text) || link.section === 'top') return 2
+  if (/footer|legal|copyright|약관|유의|고지|disclaimer|푸터/.test(text) || link.section === 'bottom') return 3
+  return 2
 }
 
 async function mapWithLimit(items, limit, mapper) {
@@ -2009,12 +2337,24 @@ function buildChecks({
   linkStatuses,
   counts,
   mobileResult,
+  metaInfo = {},
+  missingAltImages = [],
+  formInfo = { total: 0, requiredCount: 0, missingLabels: [] },
+  externalBlankLinks = [],
+  duplicateIds = [],
+  headingInfo = { h1Count: 0, headings: [], skipped: [] },
+  largeResources = [],
+  networkIssues = [],
+  unlabeledClickables = [],
 }) {
   const httpStatus = mainResponse?.status() ?? null
   const brokenImages = images.filter((image) => image.status === 'error')
   const missingHrefCount = missingHrefLinks.length
   const badLinks = linkStatuses.filter((link) => link.status === 'error')
   const warningLinks = linkStatuses.filter((link) => link.status === 'warn')
+  const missingMetaFields = getMissingMetaFields(metaInfo)
+  const formMissingLabels = Array.isArray(formInfo.missingLabels) ? formInfo.missingLabels : []
+  const headingItems = createHeadingIssueItems(headingInfo)
 
   return [
     {
@@ -2074,7 +2414,7 @@ function buildChecks({
       title: '404/500 계열 링크 여부',
       status: badLinks.length > 0 ? 'error' : warningLinks.length > 0 ? 'warn' : 'ok',
       value: `${badLinks.length}개 오류`,
-      detail: `${linkStatuses.length}개 링크 응답 상태를 확인했습니다.`,
+      detail: `전체 링크 ${linkStatuses.length}개 응답 상태를 확인했습니다.`,
       items: badLinks.concat(warningLinks),
     },
     {
@@ -2091,7 +2431,112 @@ function buildChecks({
       value: mobileResult.statusCode ? String(mobileResult.statusCode) : '응답 없음',
       detail: mobileResult.note,
     },
+    {
+      id: 'meta',
+      title: '메타 정보 검사',
+      status: missingMetaFields.length > 0 ? 'warn' : 'ok',
+      value: missingMetaFields.length > 0 ? `${missingMetaFields.length}개 확인 필요` : '기본 메타 설정됨',
+      detail: missingMetaFields.length > 0 ? `누락 가능성이 있는 메타 정보: ${missingMetaFields.join(', ')}` : '검색/공유용 기본 메타 정보가 확인되었습니다.',
+      items: missingMetaFields.map((field) => ({ label: field, message: '메타 정보 누락 가능성 확인 필요' })),
+    },
+    {
+      id: 'image-alt',
+      title: '이미지 alt 검사',
+      status: missingAltImages.length > 0 ? 'warn' : 'ok',
+      value: `${missingAltImages.length}개 확인 필요`,
+      detail: missingAltImages.length > 0 ? 'alt가 비어 있는 이미지가 있습니다. 장식용 이미지일 수 있으나 확인이 필요합니다.' : 'alt가 비어 있는 이미지가 감지되지 않았습니다.',
+      items: missingAltImages,
+    },
+    {
+      id: 'forms',
+      title: '폼 기본 검사',
+      status: formMissingLabels.length > 0 ? 'warn' : 'ok',
+      value: formInfo.total > 0 ? `폼 요소 ${formInfo.total}개 / required ${formInfo.requiredCount || 0}개` : '폼 요소 없음',
+      detail: formInfo.total > 0
+        ? formMissingLabels.length > 0 ? 'label 또는 aria-label이 없는 입력 요소가 있어 확인이 필요합니다.' : '폼 입력 요소의 기본 라벨 정보가 확인되었습니다.'
+        : 'input/select/textarea 요소가 감지되지 않았습니다.',
+      items: formMissingLabels,
+    },
+    {
+      id: 'external-links',
+      title: '외부 링크 보안 속성 검사',
+      status: externalBlankLinks.length > 0 ? 'warn' : 'ok',
+      value: `${externalBlankLinks.length}개 확인 필요`,
+      detail: externalBlankLinks.length > 0 ? '새 창으로 열리는 외부 링크 중 rel 보안 속성 확인이 필요한 항목이 있습니다.' : '새 창 외부 링크의 기본 보안 속성이 확인되었습니다.',
+      items: externalBlankLinks,
+    },
+    {
+      id: 'duplicate-ids',
+      title: '중복 ID 검사',
+      status: duplicateIds.length > 0 ? 'warn' : 'ok',
+      value: `${duplicateIds.length}개 확인 필요`,
+      detail: duplicateIds.length > 0 ? '동일한 id가 여러 번 사용된 항목이 있어 확인이 필요합니다.' : '중복 id가 감지되지 않았습니다.',
+      items: duplicateIds,
+    },
+    {
+      id: 'headings',
+      title: '헤딩 구조 검사',
+      status: headingItems.length > 0 ? 'warn' : 'ok',
+      value: `h1 ${headingInfo.h1Count || 0}개`,
+      detail: headingItems.length > 0 ? 'h1 개수 또는 h2/h3 순서에서 확인이 필요한 구조가 있습니다.' : '기본 헤딩 구조가 확인되었습니다.',
+      items: headingItems,
+    },
+    {
+      id: 'resource-size',
+      title: '리소스 용량 참고 검사',
+      status: largeResources.length > 0 ? 'warn' : 'ok',
+      value: `${largeResources.length}개 확인 필요`,
+      detail: largeResources.length > 0 ? '1MB 이상으로 추정되는 큰 리소스가 있어 로딩 속도 확인이 필요합니다.' : '1MB 이상으로 수집된 리소스가 없습니다.',
+      items: largeResources,
+    },
+    {
+      id: 'network-failures',
+      title: '네트워크 실패 요청',
+      status: networkIssues.length > 0 ? 'warn' : 'ok',
+      value: `${networkIssues.length}건 확인 필요`,
+      detail: networkIssues.length > 0 ? '일부 페이지 구성 리소스 요청이 실패하거나 오류 응답을 반환했습니다.' : '수집된 네트워크 실패 요청이 없습니다.',
+      items: networkIssues,
+    },
+    {
+      id: 'mobile-overflow',
+      title: '모바일 가로 스크롤 검사',
+      status: mobileResult.hasHorizontalOverflow ? 'warn' : 'ok',
+      value: mobileResult.hasHorizontalOverflow ? `${mobileResult.documentWidth}px / viewport ${mobileResult.viewportWidth}px` : '가로 넘침 없음',
+      detail: mobileResult.hasHorizontalOverflow ? '모바일 화면 너비보다 문서가 넓어 가로 스크롤이 생길 수 있습니다.' : '모바일 viewport 기준 가로 넘침이 감지되지 않았습니다.',
+    },
+    {
+      id: 'unlabeled-clickables',
+      title: '클릭 가능 요소 텍스트 검사',
+      status: unlabeledClickables.length > 0 ? 'warn' : 'ok',
+      value: `${unlabeledClickables.length}개 확인 필요`,
+      detail: unlabeledClickables.length > 0 ? '텍스트나 aria-label이 없는 클릭 가능 요소가 있어 목적 확인이 필요합니다.' : '클릭 가능 요소의 텍스트 또는 접근성 라벨이 확인되었습니다.',
+      items: unlabeledClickables,
+    },
   ]
+}
+
+function getMissingMetaFields(metaInfo = {}) {
+  return [
+    ['title', metaInfo.title],
+    ['meta description', metaInfo.description],
+    ['canonical URL', metaInfo.canonical],
+    ['og:title', metaInfo.ogTitle],
+    ['og:description', metaInfo.ogDescription],
+    ['og:image', metaInfo.ogImage],
+  ].filter(([, value]) => !value).map(([label]) => label)
+}
+
+function createHeadingIssueItems(headingInfo = {}) {
+  const items = []
+  const h1Count = Number(headingInfo.h1Count || 0)
+  if (h1Count === 0) items.push({ label: 'h1 없음', message: '페이지 대표 제목인 h1이 감지되지 않았습니다.' })
+  if (h1Count > 1) items.push({ label: 'h1 여러 개', message: `h1이 ${h1Count}개 감지되었습니다.` })
+  if (Array.isArray(headingInfo.skipped)) {
+    headingInfo.skipped.forEach((heading) => {
+      items.push({ ...heading, label: heading.text || `h${heading.level}`, message: '헤딩 단계가 과하게 건너뛴 것으로 보입니다.' })
+    })
+  }
+  return items.slice(0, 30)
 }
 
 function getHttpStatus(statusCode) {
@@ -2123,6 +2568,14 @@ function createEmptyDomSnapshot() {
     images: [],
     designElements: [],
     webCtaHints: [],
+    metaInfo: {},
+    missingAltImages: [],
+    formInfo: { total: 0, requiredCount: 0, missingLabels: [] },
+    externalBlankLinks: [],
+    duplicateIds: [],
+    headingInfo: { h1Count: 0, headings: [], skipped: [] },
+    largeResources: [],
+    unlabeledClickables: [],
     counts: { anchors: 0, buttons: 0, missingHrefs: 0 },
   }
 }
@@ -2146,6 +2599,9 @@ function createMobileFallback() {
     accessible: false,
     statusCode: null,
     viewport: { width: 390, height: 844 },
+    viewportWidth: 390,
+    documentWidth: 390,
+    hasHorizontalOverflow: false,
     note: '모바일 검사를 실행하지 못했습니다.',
   }
 }

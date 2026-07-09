@@ -6,11 +6,8 @@ function DetailPanel({ result }) {
       <article className="detail-card">
         <div className="section-title-row">
           <h3>링크 응답 상태</h3>
-          <span>최대 {result.links.length}개 확인</span>
+          <span>전체 링크 {result.links.length}개 확인</span>
         </div>
-        {result.uncheckedLinkCount > 0 ? (
-          <p className="panel-note">추가 링크 {result.uncheckedLinkCount}개는 검사 시간 보호를 위해 상태 확인을 생략했습니다.</p>
-        ) : null}
         <ul className="table-list">
           {result.links.length > 0 ? result.links.map((link) => (
             <li className="table-row" key={`${link.index}-${link.url}`}>

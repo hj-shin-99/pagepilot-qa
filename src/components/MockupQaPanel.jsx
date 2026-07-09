@@ -3,26 +3,22 @@ import { useEffect, useState } from 'react'
 const summaryCards = [
   { key: '수정 필요', label: '수정 필요' },
   { key: '확인 필요', label: '확인 필요' },
-  { key: '무시 가능', label: '무시 가능' },
 ]
-
-const issueUserStatuses = ['미확인', '수정 요청', '확인 완료', '무시']
 
 const aiLoadingStages = [
   '페이지 접속 및 캡처 중',
   'Tech QA 분석 중',
-  'Figma JSON 힌트 분석 중',
+  'Figma JSON 분석 중',
   'AI 시안 비교 중',
   'AI 2차 검증 중',
   '결과 정리 중',
 ]
 
-function MockupQaPanel({ aiQa, designImages, figmaHintCount, result, webHintCount, onRunAiQa }) {
+function MockupQaPanel({ aiQa, designImages, result, onRunAiQa }) {
   const isRunning = aiQa?.state === 'running'
   const [selectedIssueIndex, setSelectedIssueIndex] = useState(0)
   const [showAllIssues, setShowAllIssues] = useState(false)
   const [copyStatus, setCopyStatus] = useState('')
-  const [issueStatusState, setIssueStatusState] = useState({ key: '', map: {} })
   const [runningNow, setRunningNow] = useState(() => Date.now())
 
   useEffect(() => {
@@ -34,12 +30,7 @@ function MockupQaPanel({ aiQa, designImages, figmaHintCount, result, webHintCoun
 
   const issues = Array.isArray(aiQa?.result?.issues) ? aiQa.result.issues.slice(0, 10) : []
   const summary = aiQa?.result?.summary && typeof aiQa.result.summary === 'object' ? aiQa.result.summary : aiQa?.result?.counts || {}
-  const ignoredDifferences = Array.isArray(aiQa?.result?.ignoredDifferences) ? aiQa.result.ignoredDifferences : []
-  const removedIssues = Array.isArray(aiQa?.result?.removedIssues) ? aiQa.result.removedIssues : []
-  const debugCounts = aiQa?.result?.debug && typeof aiQa.result.debug === 'object' ? aiQa.result.debug : null
-  const lowPriorityIssues = issues.filter((issue) => issue.priorityLevel === 'low')
   const actionableIssues = issues.filter((issue) => issue.status !== '무시 가능' && issue.priorityLevel !== 'low')
-  const ignoredIssues = issues.filter((issue) => issue.status === '무시 가능')
   const visibleIssues = showAllIssues ? actionableIssues : actionableIssues.slice(0, 5)
   const isComplete = aiQa?.state === 'complete'
   const hasFigmaImage = Boolean(designImages[0]?.previewUrl)
@@ -48,21 +39,10 @@ function MockupQaPanel({ aiQa, designImages, figmaHintCount, result, webHintCoun
   const activeIssueIndex = visibleIssues[selectedIssueIndex] ? selectedIssueIndex : 0
   const selectedIssue = visibleIssues[activeIssueIndex] || actionableIssues[0] || null
   const hasMoreIssues = actionableIssues.length > 5
-  const storageKey = getIssueStatusStorageKey(result)
   const deploymentText = getDeploymentSummary({ summary, checks: result?.checks || [] })
   const currentStageIndex = getAiLoadingStageIndex(aiQa?.startedAt, runningNow, isRunning)
   const currentStage = aiLoadingStages[currentStageIndex]
   const progressPercent = Math.round(((currentStageIndex + 1) / aiLoadingStages.length) * 100)
-
-  const issueStatusMap = issueStatusState.key === storageKey ? issueStatusState.map : loadIssueStatusMap(storageKey)
-
-  const handleIssueUserStatusChange = (issue, status) => {
-    const issueKey = getIssueKey(issue)
-    const nextStatusMap = { ...issueStatusMap, [issueKey]: status }
-    setIssueStatusState({ key: storageKey, map: nextStatusMap })
-    saveIssueStatusMap(storageKey, nextStatusMap)
-  }
-
   const handleCopyQaComment = async () => {
     const text = createQaCommentText(visibleIssues.length > 0 ? visibleIssues : actionableIssues, summary)
     try {
@@ -91,7 +71,7 @@ function MockupQaPanel({ aiQa, designImages, figmaHintCount, result, webHintCoun
           {isRunning ? (
             <>
               <strong>{currentStage}</strong>
-              <span>Playwright 결과는 수집됐고, AI가 시안 이미지/웹 캡처/JSON 힌트를 비교하고 있습니다.</span>
+              <span>Playwright 결과는 수집됐고, AI가 시안 이미지/웹 캡처/JSON을 비교하고 있습니다.</span>
             </>
           ) : isComplete ? (
             <>
@@ -135,7 +115,7 @@ function MockupQaPanel({ aiQa, designImages, figmaHintCount, result, webHintCoun
             {summaryCards.map((card) => (
               <div className="mockup-ai-summary-card" key={card.key}>
                 <span>{card.label}</span>
-                <strong>{Number(summary[card.key === '수정 필요' ? 'fixNeeded' : card.key === '확인 필요' ? 'checkNeeded' : 'ignored'] || 0)}</strong>
+                <strong>{Number(summary[card.key === '수정 필요' ? 'fixNeeded' : 'checkNeeded'] || 0)}</strong>
               </div>
             ))}
           </div>
@@ -193,11 +173,9 @@ function MockupQaPanel({ aiQa, designImages, figmaHintCount, result, webHintCoun
                 <AiIssueCard
                   isSelected={index === activeIssueIndex}
                   issue={issue}
-                  userStatus={issueStatusMap[getIssueKey(issue)] || '미확인'}
                   key={`${index}-${issue.title}-${issue.area}`}
                   number={index + 1}
                   onSelect={() => setSelectedIssueIndex(index)}
-                  onUserStatusChange={(status) => handleIssueUserStatusChange(issue, status)}
                 />
                 ))}
               </ul>
@@ -211,46 +189,6 @@ function MockupQaPanel({ aiQa, designImages, figmaHintCount, result, webHintCoun
         </article>
       ) : null}
 
-      {isComplete && (lowPriorityIssues.length > 0 || ignoredIssues.length > 0 || removedIssues.length > 0) ? (
-        <article className="detail-card ai-result-card ignored-issues-card">
-          <details>
-            <summary>낮은 우선순위/오탐 의심 항목 보기 ({lowPriorityIssues.length + ignoredIssues.length + removedIssues.length}건)</summary>
-            <ul className="ignored-difference-list">
-              {lowPriorityIssues.map((issue, index) => <li key={`low-${index}-${issue.title}`}>{issue.title}: {issue.memo || issue.figma || issue.web}</li>)}
-              {ignoredIssues.map((issue, index) => <li key={`${index}-${issue.title}`}>{issue.title}: {issue.memo || issue.figma || issue.web}</li>)}
-              {removedIssues.map((issue, index) => <li key={`removed-${index}-${issue.title}`}>{issue.title}: {issue.reason}</li>)}
-            </ul>
-          </details>
-        </article>
-      ) : null}
-
-      {isComplete ? (
-        <article className="detail-card ai-result-card json-reference-card">
-          <details>
-            <summary>JSON/DOM 참고 결과 보기</summary>
-            <p className="panel-note relaxed-note">고급 참고 정보입니다. Figma JSON과 Web DOM은 AI 판단 보조용이며 단독 이슈 기준이 아닙니다.</p>
-            <div className="json-reference-meta">
-              <span>JSON 힌트 {figmaHintCount || 0}개</span>
-              <span>DOM 힌트 {webHintCount || 0}개</span>
-            </div>
-            {debugCounts ? (
-              <div className="json-reference-meta debug-counts" aria-label="AI debug counts">
-                <span>webCtaHints {debugCounts.webCtaHints || 0}</span>
-                <span>figmaCtaHints {debugCounts.figmaCtaHints || 0}</span>
-                <span>visionIssues {debugCounts.visionIssues || 0}</span>
-                <span>ctaIssues {debugCounts.ctaIssues || 0}</span>
-                <span>imageIssues {debugCounts.imageIssues || 0}</span>
-                <span>finalIssues {debugCounts.finalIssues || 0}</span>
-              </div>
-            ) : null}
-            {ignoredDifferences.length > 0 ? (
-              <ul className="ignored-difference-list">
-                {ignoredDifferences.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}
-              </ul>
-            ) : <p className="empty-row">무시된 사소한 차이 또는 JSON 단독 이슈가 없습니다.</p>}
-          </details>
-        </article>
-      ) : null}
     </section>
   )
 }
@@ -322,7 +260,7 @@ function ImageComparisonPane({ imageAlt, imageSrc, label, placeholder, selectedA
   )
 }
 
-function AiIssueCard({ isSelected, issue, number, onSelect, onUserStatusChange, userStatus }) {
+function AiIssueCard({ isSelected, issue, number, onSelect }) {
   return (
     <li className={`ai-issue-row mockup-ai-issue-card ${getStatusClass(issue.status)} ${isSelected ? 'is-selected' : ''}`}>
       <span className="ai-issue-number">{number}</span>
@@ -342,18 +280,6 @@ function AiIssueCard({ isSelected, issue, number, onSelect, onUserStatusChange, 
             <div><dt>Confidence</dt><dd>{formatConfidence(issue.confidence)}</dd></div>
           </dl>
         </details>
-        <div className="issue-status-actions" aria-label="이슈 상태 변경">
-          {issueUserStatuses.map((status) => (
-            <button
-              className={userStatus === status ? 'is-active' : ''}
-              key={status}
-              type="button"
-              onClick={() => onUserStatusChange(status)}
-            >
-              {status}
-            </button>
-          ))}
-        </div>
       </div>
     </li>
   )
@@ -382,30 +308,6 @@ function createQaCommentText(issues, summary) {
   })
 
   return lines.join('\n').trim()
-}
-
-function getIssueStatusStorageKey(result) {
-  return `pagepilot-ai-issue-status:${result?.targetUrl || 'unknown'}:${result?.scannedAt || 'latest'}`
-}
-
-function getIssueKey(issue) {
-  return `${issue.area || 'unknown'}:${issue.type || 'unknown'}:${issue.title || ''}:${issue.figma || ''}:${issue.web || ''}`
-}
-
-function loadIssueStatusMap(storageKey) {
-  try {
-    return JSON.parse(window.localStorage.getItem(storageKey) || '{}')
-  } catch {
-    return {}
-  }
-}
-
-function saveIssueStatusMap(storageKey, value) {
-  try {
-    window.localStorage.setItem(storageKey, JSON.stringify(value))
-  } catch {
-    // localStorage may be unavailable in private or restricted contexts.
-  }
 }
 
 function getStatusClass(status) {

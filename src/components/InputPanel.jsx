@@ -80,10 +80,12 @@ function InputPanel({
         ) : null}
       </section>
 
-      <section className="panel-section" aria-label="고급 옵션">
-        <details className="advanced-options">
-          <summary>고급 옵션: Figma JSON 힌트</summary>
-          <p className="panel-note">선택 사항입니다. JSON은 AI 비교의 보조 힌트로만 사용됩니다.</p>
+      <section className="panel-section advanced-options" aria-label="Figma JSON 입력">
+        <div className="section-title-row compact-title-row">
+          <h3>Figma JSON</h3>
+          <span>선택 사항</span>
+        </div>
+          <p className="panel-note">선택 사항입니다. JSON을 함께 입력하면 비교 정확도를 보완합니다.</p>
           <textarea
             className="figma-textarea"
             value={figmaJson}
@@ -96,7 +98,6 @@ function InputPanel({
             <input id="figma-json-file" type="file" accept="application/json,.json" onChange={onFigmaFileSelect} />
           </label>
           {figmaError ? <p className="input-error">{figmaError}</p> : null}
-        </details>
       </section>
         </>
       )}

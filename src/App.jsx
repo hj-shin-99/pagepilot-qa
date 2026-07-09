@@ -295,9 +295,7 @@ function App() {
               <MockupQaPanel
                 aiQa={aiQa}
                 designImages={designImages}
-                figmaHintCount={figmaElements.length}
                 result={result}
-                webHintCount={(result.designElements || []).length}
                 onRunAiQa={handleRunAiQa}
               />
             ) : null}

@@ -33,7 +33,7 @@ function InputPanel({
 
       <h1>PagePilot QA</h1>
       <p className="lead-text">
-        URL과 Figma 시안 이미지로 Tech QA와 AI 디자인 QA 체크리스트를 생성합니다.
+        AI가 URL과 Figma 시안을 비교해 배포 전 QA 항목을 정리합니다.
       </p>
 
       <form className="scan-form" onSubmit={handleSubmit}>
@@ -85,7 +85,7 @@ function InputPanel({
           <h3>Figma JSON</h3>
           <span>선택 사항</span>
         </div>
-          <p className="panel-note">선택 사항입니다. JSON을 함께 입력하면 비교 정확도를 보완합니다.</p>
+          <p className="panel-note">JSON을 함께 입력하면 텍스트와 CTA 비교 정확도를 보완합니다.</p>
           <textarea
             className="figma-textarea"
             value={figmaJson}

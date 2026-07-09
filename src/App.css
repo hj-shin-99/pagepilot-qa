@@ -2595,6 +2595,35 @@
   }
 }
 
+/* Loading copy alignment polish. */
+.empty-state.is-scanning > div::after {
+  width: min(100%, 340px);
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.scan-stage-list {
+  width: fit-content;
+  max-width: min(100%, 280px);
+  margin: 18px auto 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.scan-stage-list li {
+  width: fit-content;
+  min-width: 210px;
+  margin: 0 auto;
+  padding-left: 20px;
+  text-align: left;
+}
+
+.scan-stage-list li::before {
+  left: 0;
+}
+
 /* Final practical UI overrides: display-only changes. */
 .primary-button,
 .primary-button:hover,

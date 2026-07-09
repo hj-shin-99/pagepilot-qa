@@ -37,9 +37,7 @@ function MockupQaPanel({ aiQa, designImages, result, onRunAiQa }) {
   const hasWebImage = Boolean(result?.webScreenshot?.dataUrl)
   const issueCount = Number(summary.total || issues.length)
   const activeIssueIndex = visibleIssues[selectedIssueIndex] ? selectedIssueIndex : 0
-  const selectedIssue = visibleIssues[activeIssueIndex] || actionableIssues[0] || null
   const hasMoreIssues = actionableIssues.length > 5
-  const deploymentText = getDeploymentSummary({ summary, checks: result?.checks || [] })
   const currentStageIndex = getAiLoadingStageIndex(aiQa?.startedAt, runningNow, isRunning)
   const currentStage = aiLoadingStages[currentStageIndex]
   const progressPercent = Math.round(((currentStageIndex + 1) / aiLoadingStages.length) * 100)
@@ -95,8 +93,6 @@ function MockupQaPanel({ aiQa, designImages, result, onRunAiQa }) {
           {aiQa?.result?.verification ? <span>{aiQa.result.verification.fallback ? 'AI 검증 fallback 사용' : '2차 AI 검증 완료'}</span> : null}
         </div>
 
-        {isComplete ? <p className="deployment-summary">{deploymentText}</p> : null}
-
         {aiQa?.error ? <p className="ai-error-message">AI 분석 실패: {aiQa.error} 기존 Tech QA와 기계식 수집 결과는 계속 확인할 수 있습니다.</p> : null}
       </article>
 
@@ -127,11 +123,9 @@ function MockupQaPanel({ aiQa, designImages, result, onRunAiQa }) {
           <div className="section-title-row">
             <div>
               <h3>이미지 비교</h3>
-              <p className="panel-note relaxed-note">이미지는 스크롤하여 전체 시안을 확인할 수 있습니다. 부정확한 빨간 박스는 표시하지 않습니다.</p>
+              <p className="panel-note relaxed-note">이미지는 스크롤하여 전체 시안을 확인할 수 있습니다.</p>
             </div>
-            <span>{selectedIssue ? `AI 판단 영역: ${selectedIssue.area || 'unknown'}` : '선택 이슈 없음'}</span>
           </div>
-          <p className="mockup-ai-location-note">정확한 좌표가 불명확한 경우 마커를 표시하지 않습니다.</p>
           <div className="compare-scroll-shell">
             <div className="compare-grid">
               <ImageComparisonPane
@@ -139,14 +133,12 @@ function MockupQaPanel({ aiQa, designImages, result, onRunAiQa }) {
                 imageSrc={designImages[0]?.previewUrl}
                 label="Figma 시안"
                 placeholder="Figma 시안 이미지를 업로드해 주세요."
-                selectedArea={selectedIssue?.area}
               />
               <ImageComparisonPane
                 imageAlt="Web 캡처 이미지"
                 imageSrc={result?.webScreenshot?.dataUrl}
                 label="Web 캡처"
                 placeholder="URL 검사를 실행하면 웹 캡처가 표시됩니다."
-                selectedArea={selectedIssue?.area}
               />
             </div>
           </div>
@@ -242,12 +234,11 @@ function getAiLoadingStageIndex(startedAt, now, isRunning) {
   return 5
 }
 
-function ImageComparisonPane({ imageAlt, imageSrc, label, placeholder, selectedArea }) {
+function ImageComparisonPane({ imageAlt, imageSrc, label, placeholder }) {
   return (
     <section className="comparison-pane" aria-label={label}>
       <div className="comparison-pane-head">
         <strong>{label}</strong>
-        <span>AI 판단 영역: {selectedArea || 'unknown'}</span>
       </div>
       <div className="comparison-image-frame mockup-ai-image-frame">
         {imageSrc ? (
@@ -283,14 +274,6 @@ function AiIssueCard({ isSelected, issue, number, onSelect }) {
       </div>
     </li>
   )
-}
-
-function getDeploymentSummary({ summary, checks }) {
-  const techNeedsAttention = checks.some((check) => ['access', 'http-status', 'console-errors', 'images'].includes(check.id) && check.status === 'error')
-  const designText = Number(summary.fixNeeded || 0) > 0
-    ? '배포 전 수정 권장'
-    : Number(summary.checkNeeded || 0) > 0 ? '확인 후 배포 가능' : '특이사항 없음'
-  return techNeedsAttention ? `${designText} · 기술 QA 확인 필요` : designText
 }
 
 function createQaCommentText(issues, summary) {

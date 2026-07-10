@@ -11,12 +11,16 @@ const AI_QA_TIMEOUT_MS = 60000
 const MAX_AI_IMAGE_DATA_URL_LENGTH = 50_000_000
 const MAX_MOCKUP_AI_TEXT_HINTS = 100
 const MAX_MOCKUP_AI_TEXT_LENGTH = 160
-const MAX_MOCKUP_AI_ISSUES = 10
+const MAX_MOCKUP_AI_ISSUES = 5
 const MAX_CTA_HINTS = 40
+const MAX_AI_ELEMENT_SUMMARY_ITEMS = 80
+const MAX_AI_SECTION_SUMMARY_ITEMS = 24
+const MAX_AI_CROP_PAIRS = 3
 const MOCKUP_AI_STATUSES = ['수정 필요', '확인 필요', '무시 가능']
 const MOCKUP_AI_TYPES = ['문구', '이미지', 'CTA', '레이아웃', '섹션', '금액']
 const MOCKUP_AI_AREAS = ['top', 'middle', 'bottom', 'unknown']
 const MAX_TEXT_MISMATCH_HINTS = 20
+const MAX_TEXT_QA_CANDIDATES = 8
 const MAX_LINKS_TO_CHECK = null
 const MAX_DESIGN_ELEMENTS = 120
 const DESKTOP_DESIGN_VIEWPORT = { width: 1920, height: 1080 }
@@ -34,11 +38,8 @@ const NAV_CTA_CONTEXT_PATTERNS = [
   'menu',
   'bar items',
 ]
-const HERO_CTA_TEXT_PATTERNS = [
-  '사전예약하기',
-  '프로모션 바로가기',
-  '온라인 구매 상담',
-]
+const PAGE_UNDERSTANDING_TYPES = ['home', 'landing', 'promotion', 'product-detail', 'calculator', 'form', 'listing', 'article', 'policy', 'other']
+const SECTION_ROLES = ['hero', 'navigation', 'promotion', 'product', 'form', 'calculator', 'content', 'table', 'legal', 'footer', 'other']
 
 const app = express()
 
@@ -94,24 +95,7 @@ app.post('/api/ai-mockup-qa', async (req, res) => {
 
   try {
     const client = new OpenAI({ apiKey, timeout: AI_QA_TIMEOUT_MS })
-    console.log('[Mockup AI QA] calling OpenAI')
-    const rawText = await requestMockupAiQa(client, payload)
-    console.log('[Mockup AI QA] response received')
-
-    const parsed = parseAiQaJson(rawText)
-    if (!parsed) {
-      console.log('[Mockup AI QA] sending response')
-      res.status(502).json({ message: 'OpenAI 응답 JSON을 해석하지 못했습니다.', code: 'parse_error' })
-      return
-    }
-
-    console.log('[Mockup AI QA] raw issues:', parsed.issues)
-    const firstPassResult = normalizeMockupAiQaResult(parsed, payload)
-    const { result: visionResult, verification } = await createVerifiedMockupAiQaResult(client, payload, firstPassResult)
-    const ctaResult = createCtaComparisonResult(payload)
-    const imageResult = await createImageOnlyMockupQaResult(client, payload)
-    const result = createFinalMockupQaResult({ visionResult, ctaResult, imageResult, payload })
-    result.verification = verification
+    const result = await createMockupAiQaV3Result(client, payload)
     result.model = AI_QA_MODEL
     console.log('[Mockup AI QA] filtered issues:', result.issues)
     console.log('[Mockup AI QA] issues:', result.issues.map((issue) => ({ title: issue.title, status: issue.status, area: issue.area })))
@@ -124,9 +108,11 @@ app.post('/api/ai-mockup-qa', async (req, res) => {
   }
 })
 
-app.listen(PORT, () => {
-  console.log(`PagePilot QA API listening on http://127.0.0.1:${PORT}`)
-})
+if (process.env.PAGEPILOT_NO_LISTEN !== '1') {
+  app.listen(PORT, () => {
+    console.log(`PagePilot QA API listening on http://127.0.0.1:${PORT}`)
+  })
+}
 
 function isHttpUrl(value) {
   try {
@@ -173,7 +159,63 @@ function createSafeMockupAiQaPayload(body = {}) {
     webTexts,
     figmaCtaHints: normalizeCtaHints(body.figmaCtaHints, 'figma'),
     webCtaHints: normalizeCtaHints(body.webCtaHints, 'web'),
+    figmaElementSummary: normalizeElementSummary(body.figmaElementSummary, 'figma'),
+    webElementSummary: normalizeElementSummary(body.webElementSummary, 'web'),
+    webDomSummary: normalizeWebDomSummary(body.webDomSummary),
     textMismatchHints: createTextMismatchHints(figmaTexts, webTexts),
+  }
+}
+
+function normalizeElementSummary(value, source) {
+  if (!Array.isArray(value)) return []
+  const seen = new Set()
+  const items = []
+
+  value.forEach((item, index) => {
+    if (!item || typeof item !== 'object') return
+    const text = limitStrictText(item.text || item.label || item.name || '', 180)
+    const role = normalizeSectionRole(item.role || item.kind || item.qaImportance || item.tag || 'other')
+    const area = normalizeMockupArea(item.area || getAreaFromYRatio(item.yRatio ?? item.positionRatio))
+    const yRatio = normalizeYRatio(item.yRatio ?? item.positionRatio)
+    const sectionId = limitText(item.sectionId || '', 80)
+    const sectionTitle = limitText(item.sectionTitle || item.sectionName || item.section || '', 120)
+    const selector = source === 'web' ? limitText(item.selector || item.layerPath || '', 180) : ''
+    const layerPath = source === 'figma' ? limitText(item.layerPath || '', 220) : limitText(item.layerPath || '', 160)
+    const key = `${text}:${role}:${area}:${sectionId}:${sectionTitle}:${Math.round((yRatio ?? 0) * 100)}`
+    if ((!text && !sectionTitle && !layerPath) || seen.has(key)) return
+    seen.add(key)
+    items.push({
+      id: limitText(item.id || `${source}-element-${index + 1}`, 80),
+      text,
+      role,
+      tag: limitText(item.tag || '', 40),
+      href: limitText(item.href || '', 180),
+      selector,
+      layerPath,
+      sectionId,
+      sectionTitle,
+      area,
+      yRatio,
+      isCta: Boolean(item.isCta || item.isButton || role === 'button' || item.tag === 'button'),
+      isNavigation: Boolean(item.isNavigation),
+      isFooterDisclaimer: Boolean(item.isFooterDisclaimer),
+    })
+  })
+
+  return items.slice(0, MAX_AI_ELEMENT_SUMMARY_ITEMS)
+}
+
+function normalizeWebDomSummary(value) {
+  if (!value || typeof value !== 'object') return {}
+  return {
+    pageTitle: limitText(value.pageTitle || '', 140),
+    headings: normalizeElementSummary(value.headings, 'web').slice(0, 30),
+    visibleTextBlocks: normalizeElementSummary(value.visibleTextBlocks, 'web').slice(0, 60),
+    ctas: normalizeElementSummary(value.ctas, 'web').slice(0, 40),
+    formFields: normalizeElementSummary(value.formFields, 'web').slice(0, 40),
+    priceOrNumberCandidates: normalizeElementSummary(value.priceOrNumberCandidates, 'web').slice(0, 40),
+    images: normalizeElementSummary(value.images, 'web').slice(0, 40),
+    sections: normalizePrimarySections(value.sections, 'web'),
   }
 }
 
@@ -206,7 +248,7 @@ function normalizeCtaHints(value, source) {
       visible: item?.visible !== false,
       layerPath: source === 'figma' ? limitText(item?.layerPath || '', 220) : '',
       yRatio: Number.isFinite(Number(item?.yRatio)) ? Math.max(0, Math.min(1, Number(item.yRatio))) : null,
-      navCandidate: isNavigationCtaContext(contextText) && !isHeroCtaText(text),
+      navCandidate: isNavigationCtaContext(contextText),
     })
   })
 
@@ -332,31 +374,952 @@ function getComparableHintTokens(value) {
     .filter((token) => token.length >= 2 && !['상품', '프로그램', '리스'].includes(token))
 }
 
-async function requestMockupAiQa(client, payload) {
+async function createMockupAiQaV3Result(client, payload) {
+  const debug = createMockupAiDebugState(payload)
+  let pageUnderstanding = createFallbackPageUnderstanding(payload)
+  let pageUnderstandingFallback = true
+
+  try {
+    console.log('[Mockup AI QA] calling page understanding')
+    const rawUnderstanding = await requestPageUnderstanding(client, payload)
+    const parsedUnderstanding = parseAiQaJson(rawUnderstanding)
+    if (parsedUnderstanding) {
+      pageUnderstanding = normalizePageUnderstanding(parsedUnderstanding, payload)
+      pageUnderstandingFallback = false
+    }
+  } catch (error) {
+    console.log('[Mockup AI QA] page understanding failed:', error instanceof Error ? error.message : error)
+  }
+
+  const sectionMapping = createSectionMapping(pageUnderstanding, payload)
+  const cropComparisons = await createSectionCropComparisons(payload, sectionMapping)
+  debug.pageType = pageUnderstanding.pageType
+  debug.pagePurpose = pageUnderstanding.pagePurpose
+  debug.figmaSectionCount = pageUnderstanding.figmaStructure.primarySections.length
+  debug.webSectionCount = pageUnderstanding.webStructure.primarySections.length
+  debug.mappedSectionCount = sectionMapping.mappedSections.length
+  debug.unmappedFigmaSections = sectionMapping.unmappedFigmaSections.map((section) => section.id)
+  debug.unmappedWebSections = sectionMapping.unmappedWebSections.map((section) => section.id)
+  debug.cropPairCount = cropComparisons.length
+
+  const textResult = createTextQaComparisonResult(payload, { pageUnderstanding, sectionMapping })
+  debug.textIssueCount = textResult.issues.length
+
+  let evidenceResult
+  let evidenceFallback = false
+  try {
+    console.log('[Mockup AI QA] calling evidence-based comparison')
+    const rawComparison = await requestMockupAiQa(client, payload, { pageUnderstanding, sectionMapping, cropComparisons, textQaIssues: textResult.issues })
+    const parsedComparison = parseAiQaJson(rawComparison)
+    if (!parsedComparison) throw new Error('Evidence comparison JSON parse failed')
+    evidenceResult = normalizeMockupAiQaResult(parsedComparison, payload, { pageUnderstanding, sectionMapping })
+  } catch (error) {
+    evidenceFallback = true
+    console.log('[Mockup AI QA] evidence comparison failed:', error instanceof Error ? error.message : error)
+    evidenceResult = { issues: [], ignoredDifferences: [], removedIssues: [{ title: 'AI 비교 fallback', reason: '증거 기반 비교 응답을 해석하지 못했습니다.' }] }
+  }
+
+  const ctaResult = createCtaComparisonResult(payload, { pageUnderstanding, sectionMapping })
+  const imageResult = await createImageOnlyMockupQaResult(client, payload, { pageUnderstanding, sectionMapping, cropComparisons })
+  const candidateResult = createFinalMockupQaResult({ textResult, visionResult: evidenceResult, ctaResult, imageResult, payload })
+  debug.rawIssueCount = textResult.issues.length + evidenceResult.issues.length + ctaResult.issues.length + imageResult.issues.length
+  debug.dedupedIssueCount = candidateResult.issues.length
+
+  const { result: verifiedResult, verification } = await createVerifiedMockupAiQaResult(client, payload, candidateResult, { pageUnderstanding, sectionMapping })
+  const protectedResult = restoreProtectedTextIssues(verifiedResult, textResult.issues)
+  debug.verifiedIssueCount = protectedResult.issues.length
+  debug.removedMismatchCount = protectedResult.removedIssues.length
+  debug.finalIssueCount = protectedResult.issues.filter((issue) => issue.status !== '무시 가능' && issue.priorityLevel !== 'low').length
+  debug.issueEvidence = protectedResult.issues.map((issue) => ({
+    title: issue.title,
+    sourceAgreement: issue.evidence?.sourceAgreement ?? null,
+    confidence: issue.confidence,
+  }))
+
+  console.log('[Mockup AI QA] v0.3 debug:', debug)
+
+  return {
+    ...protectedResult,
+    verification: {
+      ...verification,
+      pageUnderstandingFallback,
+      evidenceFallback,
+    },
+    debug: {
+      ...(candidateResult.debug || {}),
+      ...debug,
+      ctaError: ctaResult?.error || '',
+      imageError: imageResult?.error || '',
+    },
+  }
+}
+
+function createMockupAiDebugState(payload) {
+  return {
+    pageType: 'other',
+    pagePurpose: '',
+    figmaSectionCount: 0,
+    webSectionCount: 0,
+    mappedSectionCount: 0,
+    unmappedFigmaSections: [],
+    unmappedWebSections: [],
+    rawIssueCount: 0,
+    verifiedIssueCount: 0,
+    removedMismatchCount: 0,
+    dedupedIssueCount: 0,
+    finalIssueCount: 0,
+    cropPairCount: 0,
+    textIssueCount: 0,
+    source: {
+      figmaTexts: payload.figmaTexts.length,
+      webTexts: payload.webTexts.length,
+      figmaElements: payload.figmaElementSummary.length,
+      webElements: payload.webElementSummary.length,
+    },
+    issueEvidence: [],
+  }
+}
+
+async function requestPageUnderstanding(client, payload) {
   const completion = await client.chat.completions.create({
     model: AI_QA_MODEL,
+    temperature: 0,
     messages: [
-      { role: 'system', content: getMockupAiQaSystemPrompt() },
+      { role: 'system', content: getPageUnderstandingSystemPrompt() },
       {
         role: 'user',
         content: [
-          { type: 'text', text: createMockupAiQaPrompt(payload) },
+          { type: 'text', text: createPageUnderstandingPrompt(payload) },
           { type: 'image_url', image_url: { url: payload.figmaImageDataUrl, detail: 'auto' } },
           { type: 'image_url', image_url: { url: payload.webScreenshotDataUrl, detail: 'auto' } },
         ],
       },
     ],
-    response_format: { type: 'json_object' },
-    max_completion_tokens: 2200,
+    response_format: createJsonSchemaResponseFormat('page_understanding', getPageUnderstandingSchema()),
+    max_completion_tokens: 1800,
   })
 
   return completion.choices?.[0]?.message?.content || ''
 }
 
-async function createVerifiedMockupAiQaResult(client, payload, firstPassResult) {
+function getPageUnderstandingSystemPrompt() {
+  return [
+    '너는 범용 웹페이지 QA를 위한 페이지 구조 분석 담당자다.',
+    '첫 번째 이미지는 Figma 시안이고 두 번째 이미지는 실제 웹 캡처다.',
+    '아직 차이를 보고하지 말고, 페이지 유형/목적/주요 섹션/비교 초점만 구조화한다.',
+    '특정 브랜드, 테스트 케이스, 정답 문구를 추정하지 않는다.',
+    'Figma JSON과 Web DOM은 이미지 판단을 보조하는 힌트이며 절대 기준이 아니다.',
+    '페이지 유형은 억지로 하나에 끼워 맞추지 말고 secondaryTraits로 보완한다.',
+    '섹션 role은 시각적 위치보다 제목, 주변 문맥, 요소 구성, DOM/layer path를 함께 보고 판단한다.',
+    '반드시 JSON으로만 응답한다.',
+  ].join('\n')
+}
+
+function createPageUnderstandingPrompt(payload) {
+  const hints = {
+    url: payload.url,
+    urlPath: getUrlPath(payload.url),
+    pageTitle: payload.pageTitle,
+    figma: createFigmaAiSummary(payload),
+    web: createWebAiSummary(payload),
+  }
+
+  return [
+    '입력 페이지를 먼저 이해하세요. 차이점 이슈는 아직 만들지 마세요.',
+    '페이지 유형 참고: home, landing, promotion, product-detail, calculator, form, listing, article, policy, other.',
+    '유형별 중요 대상은 페이지 목적에 따라 달라집니다. form은 필드/라벨/동의/버튼, product-detail은 상품명/이미지/사양/가격/CTA, policy는 조항/날짜/표/법적 고지를 중점으로 봅니다.',
+    '출력 JSON은 pageType, primaryPageType, secondaryTraits, pagePurpose, figmaStructure.primarySections, webStructure.primarySections, comparisonFocus, uncertainties를 포함하세요.',
+    'primarySections 항목은 id, role, title, area, approxYRatio, importantElements를 포함하세요.',
+    JSON.stringify(hints, null, 2),
+  ].join('\n\n')
+}
+
+function getPageUnderstandingSchema() {
+  return {
+    type: 'object',
+    properties: {
+      pageType: { type: 'string' },
+      primaryPageType: { type: 'string' },
+      secondaryTraits: { type: 'array', items: { type: 'string' } },
+      pagePurpose: { type: 'string' },
+      figmaStructure: { type: 'object' },
+      webStructure: { type: 'object' },
+      comparisonFocus: { type: 'array', items: { type: 'string' } },
+      uncertainties: { type: 'array', items: { type: 'string' } },
+    },
+  }
+}
+
+function createJsonSchemaResponseFormat(name, schema) {
+  return {
+    type: 'json_schema',
+    json_schema: {
+      name,
+      strict: false,
+      schema,
+    },
+  }
+}
+
+function createFigmaAiSummary(payload) {
+  return {
+    visibleTexts: payload.figmaTexts,
+    elements: payload.figmaElementSummary,
+    ctas: payload.figmaCtaHints,
+    sections: inferSectionsFromElements(payload.figmaElementSummary, 'figma'),
+    numberCandidates: payload.figmaElementSummary.filter((item) => hasNumberLikeText(item.text)).slice(0, 30),
+  }
+}
+
+function createWebAiSummary(payload) {
+  return {
+    pageTitle: payload.pageTitle || payload.webDomSummary.pageTitle || '',
+    visibleTexts: payload.webTexts,
+    elements: payload.webElementSummary,
+    ctas: payload.webCtaHints,
+    dom: payload.webDomSummary,
+    sections: payload.webDomSummary.sections?.length ? payload.webDomSummary.sections : inferSectionsFromElements(payload.webElementSummary, 'web'),
+    numberCandidates: payload.webElementSummary.filter((item) => hasNumberLikeText(item.text)).slice(0, 30),
+  }
+}
+
+function normalizePageUnderstanding(value, payload) {
+  const pageType = normalizePageType(value?.pageType || value?.primaryPageType)
+  const fallback = createFallbackPageUnderstanding(payload)
+  return {
+    pageType,
+    primaryPageType: normalizePageType(value?.primaryPageType || pageType),
+    secondaryTraits: normalizeStringArray(value?.secondaryTraits).slice(0, 6),
+    pagePurpose: limitText(value?.pagePurpose || fallback.pagePurpose, 220),
+    figmaStructure: {
+      primarySections: normalizePrimarySections(value?.figmaStructure?.primarySections, 'figma', fallback.figmaStructure.primarySections),
+    },
+    webStructure: {
+      primarySections: normalizePrimarySections(value?.webStructure?.primarySections, 'web', fallback.webStructure.primarySections),
+    },
+    comparisonFocus: normalizeStringArray(value?.comparisonFocus).slice(0, 12),
+    uncertainties: normalizeStringArray(value?.uncertainties).slice(0, 12),
+  }
+}
+
+function createFallbackPageUnderstanding(payload) {
+  const inferredType = inferPageTypeFromHints(payload)
+  return {
+    pageType: inferredType,
+    primaryPageType: inferredType,
+    secondaryTraits: [],
+    pagePurpose: payload.pageTitle ? `${payload.pageTitle} 페이지의 주요 콘텐츠와 사용자 행동을 확인하는 페이지` : '입력된 웹페이지의 주요 콘텐츠와 사용자 행동을 확인하는 페이지',
+    figmaStructure: { primarySections: inferSectionsFromElements(payload.figmaElementSummary, 'figma') },
+    webStructure: { primarySections: payload.webDomSummary.sections?.length ? payload.webDomSummary.sections : inferSectionsFromElements(payload.webElementSummary, 'web') },
+    comparisonFocus: inferComparisonFocus(inferredType),
+    uncertainties: ['Page Understanding AI가 실패하거나 구조 정보가 부족해 힌트 기반 fallback을 사용했습니다.'],
+  }
+}
+
+function normalizePrimarySections(value, source, fallback = []) {
+  const sections = Array.isArray(value) ? value : []
+  const normalized = sections.map((section, index) => ({
+    id: limitText(section?.id || `${source}-section-${index + 1}`, 80),
+    role: normalizeSectionRole(section?.role),
+    title: limitText(section?.title || section?.name || section?.sectionTitle || `${source} section ${index + 1}`, 140),
+    area: normalizeMockupArea(section?.area || getAreaFromYRatio(section?.approxYRatio ?? section?.yRatio)),
+    approxYRatio: normalizeYRatio(section?.approxYRatio ?? section?.yRatio),
+    importantElements: normalizeStringArray(section?.importantElements).slice(0, 8),
+  })).filter((section) => section.title || section.role !== 'other')
+
+  return (normalized.length > 0 ? normalized : fallback).slice(0, MAX_AI_SECTION_SUMMARY_ITEMS)
+}
+
+function inferSectionsFromElements(elements, source) {
+  const sourceItems = Array.isArray(elements) ? elements : []
+  const groups = new Map()
+  sourceItems.forEach((item) => {
+    const area = normalizeMockupArea(item.area || getAreaFromYRatio(item.yRatio))
+    const title = limitText(item.sectionTitle || area, 120)
+    const role = inferSectionRoleFromText(`${item.role || ''} ${title} ${item.layerPath || ''} ${item.selector || ''}`)
+    const key = `${area}:${role}:${title || 'section'}`
+    const current = groups.get(key) || {
+      id: `${source}-section-${groups.size + 1}`,
+      role,
+      title: title || `${area} section`,
+      area,
+      approxYRatio: Number.isFinite(item.yRatio) ? item.yRatio : getAreaDefaultYRatio(area),
+      importantElements: new Set(),
+      count: 0,
+    }
+    current.count += 1
+    if (item.text) current.importantElements.add('text')
+    if (item.isCta || item.tag === 'button') current.importantElements.add('cta')
+    if (item.tag === 'img' || /image|img|visual|photo|video/i.test(item.role || item.layerPath || '')) current.importantElements.add('image')
+    if (hasNumberLikeText(item.text)) current.importantElements.add('price')
+    groups.set(key, current)
+  })
+
+  return Array.from(groups.values())
+    .sort((first, second) => first.approxYRatio - second.approxYRatio || second.count - first.count)
+    .slice(0, MAX_AI_SECTION_SUMMARY_ITEMS)
+    .map((section) => ({
+      id: section.id,
+      role: section.role,
+      title: section.title,
+      area: section.area,
+      approxYRatio: section.approxYRatio,
+      importantElements: Array.from(section.importantElements),
+    }))
+}
+
+function createSectionMapping(pageUnderstanding) {
+  const figmaSections = pageUnderstanding.figmaStructure.primarySections
+  const webSections = pageUnderstanding.webStructure.primarySections
+  const usedWebIds = new Set()
+  const mappedSections = []
+
+  figmaSections.forEach((figmaSection) => {
+    let best = null
+    let bestScore = 0
+    webSections.forEach((webSection) => {
+      if (usedWebIds.has(webSection.id)) return
+      const score = getSectionMatchScore(figmaSection, webSection)
+      if (score > bestScore) {
+        best = webSection
+        bestScore = score
+      }
+    })
+    if (best && bestScore >= 0.46) {
+      usedWebIds.add(best.id)
+      mappedSections.push({
+        figmaSectionId: figmaSection.id,
+        webSectionId: best.id,
+        figmaRole: figmaSection.role,
+        webRole: best.role,
+        role: figmaSection.role === best.role ? figmaSection.role : 'other',
+        figmaTitle: figmaSection.title,
+        webTitle: best.title,
+        area: figmaSection.area === best.area ? figmaSection.area : 'unknown',
+        figmaYRatio: figmaSection.approxYRatio,
+        webYRatio: best.approxYRatio,
+        confidence: Math.round(bestScore * 100) / 100,
+      })
+    }
+  })
+
+  return {
+    mappedSections,
+    unmappedFigmaSections: figmaSections.filter((section) => !mappedSections.some((match) => match.figmaSectionId === section.id)),
+    unmappedWebSections: webSections.filter((section) => !usedWebIds.has(section.id)),
+  }
+}
+
+function getSectionMatchScore(figmaSection, webSection) {
+  if (!figmaSection || !webSection) return 0
+  let score = 0
+  const incompatibleRoles = new Set(['navigation:legal', 'navigation:footer', 'hero:legal', 'form:footer', 'form:legal', 'product:navigation'])
+  if (incompatibleRoles.has(`${figmaSection.role}:${webSection.role}`) || incompatibleRoles.has(`${webSection.role}:${figmaSection.role}`)) return 0
+  if (figmaSection.role === webSection.role) score += 0.42
+  if (figmaSection.area === webSection.area && figmaSection.area !== 'unknown') score += 0.16
+  score += Math.max(0, 0.18 - Math.abs(Number(figmaSection.approxYRatio || 0) - Number(webSection.approxYRatio || 0)) * 0.22)
+  score += Math.min(0.22, getQaTextSimilarity(normalizeComparableQaText(figmaSection.title), normalizeComparableQaText(webSection.title)) * 0.22)
+  const figmaElements = new Set(figmaSection.importantElements || [])
+  const webElements = new Set(webSection.importantElements || [])
+  let overlap = 0
+  figmaElements.forEach((item) => {
+    if (webElements.has(item)) overlap += 1
+  })
+  if (figmaElements.size > 0 || webElements.size > 0) score += (overlap / Math.max(figmaElements.size, webElements.size, 1)) * 0.18
+  return Math.min(1, score)
+}
+
+async function createSectionCropComparisons(payload, sectionMapping) {
+  try {
+    const cropPlans = sectionMapping.mappedSections
+      .filter((match) => Number.isFinite(match.figmaYRatio) && Number.isFinite(match.webYRatio))
+      .sort((first, second) => second.confidence - first.confidence)
+      .slice(0, MAX_AI_CROP_PAIRS)
+      .map((match, index) => ({
+        id: `crop-${index + 1}`,
+        label: `${match.figmaTitle || match.figmaSectionId} / ${match.webTitle || match.webSectionId}`,
+        figmaYRatio: match.figmaYRatio,
+        webYRatio: match.webYRatio,
+        figmaSectionId: match.figmaSectionId,
+        webSectionId: match.webSectionId,
+      }))
+    if (cropPlans.length === 0) return []
+    return await cropImagePairs(payload.figmaImageDataUrl, payload.webScreenshotDataUrl, cropPlans)
+  } catch (error) {
+    console.log('[Mockup AI QA] crop failed:', error instanceof Error ? error.message : error)
+    return []
+  }
+}
+
+async function cropImagePairs(figmaDataUrl, webDataUrl, cropPlans) {
+  const browser = await chromium.launch({ headless: true })
+  try {
+    const page = await browser.newPage()
+    return await page.evaluate(async ({ figmaUrl, webUrl, plans }) => {
+      async function loadImage(src) {
+        return await new Promise((resolve, reject) => {
+          const image = new globalThis.Image()
+          image.onload = () => resolve(image)
+          image.onerror = () => reject(new Error('image load failed'))
+          image.src = src
+        })
+      }
+
+      function cropImage(image, yRatio) {
+        const height = Math.max(160, Math.min(image.naturalHeight, Math.round(image.naturalHeight * 0.28)))
+        const y = Math.max(0, Math.min(image.naturalHeight - height, Math.round(image.naturalHeight * Math.max(0, Math.min(1, yRatio)) - height * 0.25)))
+        const canvas = globalThis.document.createElement('canvas')
+        canvas.width = image.naturalWidth
+        canvas.height = height
+        const context = canvas.getContext('2d')
+        context.drawImage(image, 0, y, image.naturalWidth, height, 0, 0, image.naturalWidth, height)
+        return { dataUrl: canvas.toDataURL('image/png'), y, height, width: image.naturalWidth }
+      }
+
+      const figmaImage = await loadImage(figmaUrl)
+      const webImage = await loadImage(webUrl)
+      return plans.map((plan) => ({
+        ...plan,
+        figma: cropImage(figmaImage, plan.figmaYRatio),
+        web: cropImage(webImage, plan.webYRatio),
+      }))
+    }, { figmaUrl: figmaDataUrl, webUrl: webDataUrl, plans: cropPlans })
+  } finally {
+    await browser.close()
+  }
+}
+
+function createTextQaComparisonResult(payload = {}, context = {}) {
+  try {
+    const figmaItems = createStrictTextItems(payload, 'figma')
+    const webItems = createStrictTextItems(payload, 'web')
+    if (figmaItems.length === 0 || webItems.length === 0) return { issues: [], removedIssues: [], ignoredDifferences: [], error: '' }
+
+    const matches = createStrictTextMatches(figmaItems, webItems, context)
+    const matchedFigmaIds = new Set(matches.map((match) => match.figmaItem.id))
+    const matchedWebIds = new Set(matches.map((match) => match.webItem.id))
+    const issues = matches
+      .filter((match) => hasStrictRawTextDifference(match.figmaItem.strictText, match.webItem.strictText))
+      .map((match) => createStrictTextIssue(match, context))
+      .concat(createUnmatchedTextIssues(figmaItems, webItems, matchedFigmaIds, matchedWebIds, context))
+
+    const sortedIssues = sortFinalMockupIssues(issues.map((issue) => applyIssuePriorityRules(issue))).slice(0, MAX_TEXT_QA_CANDIDATES)
+    const summary = normalizeMockupSummary(sortedIssues, [], [])
+    return { summary, counts: summary, issues: sortedIssues, removedIssues: [], ignoredDifferences: [], error: '' }
+  } catch (error) {
+    console.log('[Mockup AI QA] Text QA comparison failed:', error instanceof Error ? error.message : error)
+    return { issues: [], removedIssues: [], ignoredDifferences: [], error: 'text_compare_failed' }
+  }
+}
+
+function createStrictTextItems(payload, source) {
+  const summaryItems = source === 'figma' ? payload.figmaElementSummary : payload.webElementSummary
+  const ctaHints = source === 'figma' ? payload.figmaCtaHints : payload.webCtaHints
+  const fallbackTexts = source === 'figma' ? payload.figmaTexts : payload.webTexts
+  const items = []
+  const seen = new Set()
+
+  ;(Array.isArray(summaryItems) ? summaryItems : []).forEach((item, index) => {
+    pushStrictTextItem(items, seen, normalizeStrictTextItem(item, source, index))
+  })
+
+  ;(Array.isArray(ctaHints) ? ctaHints : []).forEach((item, index) => {
+    pushStrictTextItem(items, seen, normalizeStrictTextItem({ ...item, isCta: true, role: 'cta', tag: 'button' }, source, index + 1000))
+  })
+
+  if (items.length === 0) {
+    ;(Array.isArray(fallbackTexts) ? fallbackTexts : []).forEach((text, index) => {
+      pushStrictTextItem(items, seen, normalizeStrictTextItem({ text }, source, index + 2000))
+    })
+  }
+
+  return items.filter(isStrictTextQaTarget).slice(0, MAX_AI_ELEMENT_SUMMARY_ITEMS)
+}
+
+function normalizeStrictTextItem(item, source, index) {
+  const text = String(item?.text || item?.label || item?.name || '').trim()
+  const yRatio = normalizeYRatio(item?.yRatio ?? item?.positionRatio)
+  const area = normalizeMockupArea(item?.area || getAreaFromYRatio(yRatio))
+  const contextText = `${item?.role || ''} ${item?.tag || ''} ${item?.layerPath || ''} ${item?.selector || ''} ${item?.sectionTitle || item?.sectionName || item?.section || ''}`
+  return {
+    id: limitText(item?.id || `${source}-text-${index + 1}`, 80),
+    source,
+    text,
+    strictText: text,
+    comparableText: normalizeStrictComparableText(text),
+    looseText: normalizeComparableQaText(text),
+    category: getStrictTextCategory(item, text),
+    elementRole: getStrictElementRole(item, text),
+    sectionRole: normalizeSectionRole(contextText),
+    tag: limitText(item?.tag || '', 40),
+    role: limitText(item?.role || '', 80),
+    href: limitText(item?.href || '', 180),
+    sectionId: limitText(item?.sectionId || '', 80),
+    sectionTitle: limitText(item?.sectionTitle || item?.sectionName || item?.section || '', 120),
+    area,
+    yRatio,
+    layerPath: limitText(item?.layerPath || '', 220),
+    selector: limitText(item?.selector || '', 180),
+    isCta: Boolean(item?.isCta),
+    isNavigation: Boolean(item?.isNavigation),
+    visible: item?.visible !== false,
+    width: Number.isFinite(Number(item?.width)) ? Number(item.width) : null,
+    height: Number.isFinite(Number(item?.height)) ? Number(item.height) : null,
+  }
+}
+
+function pushStrictTextItem(items, seen, item) {
+  if (!item.strictText) return
+  const key = `${item.strictText}:${item.category}:${item.area}:${item.sectionTitle}`
+  if (seen.has(key)) return
+  seen.add(key)
+  items.push(item)
+}
+
+function isStrictTextQaTarget(item) {
+  if (!item || !item.strictText) return false
+  if (item.category !== 'body') return true
+  return hasCriticalTextToken(item.strictText)
+}
+
+function getStrictTextCategory(item, text) {
+  const context = `${item?.role || ''} ${item?.tag || ''} ${item?.layerPath || ''} ${item?.selector || ''} ${item?.sectionTitle || ''}`.toLowerCase()
+  if (hasMoneyText(text)) return 'money'
+  if (hasPercentText(text)) return 'percent'
+  if (hasDateOrPeriodText(text)) return 'date-period'
+  if (hasModelNameText(text)) return 'model'
+  if (item?.isCta || /button|btn|cta|link-button|submit|role.?button/i.test(context)) return 'cta'
+  if (/^h[1-6]$/.test(String(item?.tag || '').toLowerCase()) || /title|heading|headline|제목|타이틀/i.test(context)) return 'title'
+  if (item?.href || /^a$/i.test(item?.tag || '') || /link|링크/i.test(context)) return 'link'
+  if (/button|btn|버튼/i.test(context)) return 'button'
+  if (/\d/.test(text)) return 'number'
+  return 'body'
+}
+
+function getStrictElementRole(item, text) {
+  const context = `${item?.role || ''} ${item?.tag || ''} ${item?.layerPath || ''} ${item?.selector || ''} ${item?.sectionTitle || ''}`.toLowerCase()
+  if (item?.isCta || /button|btn|cta|submit|role.?button|버튼/i.test(context)) return 'cta'
+  if (item?.href || /^a$/i.test(item?.tag || '') || /link|링크/i.test(context)) return 'link'
+  if (/^h[1-6]$/.test(String(item?.tag || '').toLowerCase()) || /title|heading|headline|제목|타이틀/i.test(context)) return 'heading'
+  if (/legal|disclaimer|약관|고지|유의|footer|푸터|copyright/i.test(context)) return 'legal'
+  if (/nav|gnb|menu|navigation|tab|탭/.test(context)) return 'navigation'
+  if (hasMoneyText(text) || hasPercentText(text) || hasDateOrPeriodText(text)) return 'quantitative'
+  return 'body'
+}
+
+function createStrictTextMatches(figmaItems, webItems, context = {}) {
+  const pairCandidates = []
+  figmaItems.forEach((figmaItem) => {
+    webItems.forEach((webItem) => {
+      const candidate = createStrictTextPairCandidate(figmaItem, webItem, context)
+      if (!candidate || candidate.matchConfidence === 'low') return
+      pairCandidates.push(candidate)
+    })
+  })
+
+  const usedFigmaIds = new Set()
+  const usedWebIds = new Set()
+  return pairCandidates
+    .sort((first, second) => second.matchScore - first.matchScore)
+    .filter((candidate) => {
+      if (usedFigmaIds.has(candidate.figmaItem.id) || usedWebIds.has(candidate.webItem.id)) return false
+      usedFigmaIds.add(candidate.figmaItem.id)
+      usedWebIds.add(candidate.webItem.id)
+      return true
+    })
+}
+
+function createStrictTextPairCandidate(figmaItem, webItem, context = {}) {
+  const mapping = findMappedSectionForTextItems(figmaItem, webItem, context.sectionMapping)
+  const scoreDetails = getStrictTextMatchScore(figmaItem, webItem, mapping)
+  const rejectReason = getStrictTextPairRejectReason(figmaItem, webItem, scoreDetails, mapping)
+  if (rejectReason) return null
+  const matchConfidence = getStrictTextMatchConfidence(scoreDetails.score, scoreDetails, mapping)
+  return {
+    figmaItem,
+    webItem,
+    mapping,
+    matchScore: scoreDetails.score,
+    matchConfidence,
+    protectedTextQa: matchConfidence === 'high',
+    scoreDetails,
+  }
+}
+
+function getStrictTextMatchScore(figmaItem, webItem, mapping) {
+  let score = 0
+  const sameMappedSection = Boolean(mapping?.sameMappedSection)
+  const compatibleRole = areStrictElementRolesCompatible(figmaItem, webItem)
+  const yDelta = getStrictYRatioDelta(figmaItem, webItem)
+  const sectionContextScore = getSectionContextScore(figmaItem, webItem)
+  const textShapeScore = getStrictTextShapeScore(figmaItem, webItem)
+
+  if (sameMappedSection) score += 0.34
+  if (figmaItem.area === webItem.area && figmaItem.area !== 'unknown') score += 0.1
+  if (compatibleRole) score += 0.18
+  if (Number.isFinite(yDelta)) score += Math.max(0, 0.14 - yDelta * 0.18)
+  score += sectionContextScore * 0.14
+  score += textShapeScore * 0.1
+  if (figmaItem.category === webItem.category) score += 0.08
+  if (shareImportantNonNumericToken(figmaItem.strictText, webItem.strictText)) score += 0.07
+
+  return {
+    score: Math.round(Math.min(1, score) * 100) / 100,
+    sameMappedSection,
+    compatibleRole,
+    yDelta,
+    sectionContextScore,
+    textShapeScore,
+  }
+}
+
+function createStrictTextIssue(match) {
+  const { figmaItem, webItem, mapping, matchConfidence, matchScore, protectedTextQa } = match
+  const category = getCombinedStrictTextCategory(figmaItem, webItem)
+  const type = getStrictTextIssueType(category)
+  const highPriority = isHighPriorityTextCategory(category)
+  const diffKind = getStrictRawTextDiffKind(figmaItem.strictText, webItem.strictText)
+  return {
+    id: `text-${category}-${normalizeComparableQaText(figmaItem.strictText).slice(0, 24)}`,
+    source: 'text-qa',
+    textQa: true,
+    protectedTextQa,
+    matchConfidence,
+    matchScore,
+    diffKind,
+    area: mapping?.area || figmaItem.area || webItem.area || 'unknown',
+    type,
+    status: highPriority && matchConfidence === 'high' && diffKind !== 'whitespace' ? '수정 필요' : '확인 필요',
+    priority: highPriority ? 1 : 8,
+    title: createStrictTextIssueTitle(category),
+    figma: figmaItem.strictText,
+    web: webItem.strictText,
+    figmaRawText: figmaItem.strictText,
+    webRawText: webItem.strictText,
+    figmaNormalizedText: figmaItem.looseText,
+    webNormalizedText: webItem.looseText,
+    reason: 'Figma JSON 텍스트와 Playwright DOM 텍스트가 문자열 기준으로 다릅니다.',
+    memo: 'Text QA는 숫자, 금액, 퍼센트, 날짜, 기간, 모델명, CTA, 버튼, 제목, 링크명을 의미 유사도가 아니라 실제 문자열 차이로 비교합니다.',
+    figmaSectionId: figmaItem.sectionId || mapping?.figmaSectionId || '',
+    webSectionId: webItem.sectionId || mapping?.webSectionId || '',
+    evidence: { visual: false, figmaJson: true, webDom: true, sourceAgreement: 2 },
+    confidence: matchConfidence === 'high' ? 0.96 : 0.78,
+    verification: 'kept',
+  }
+}
+
+function findMappedSectionForTextItems(figmaItem, webItem, sectionMapping = {}) {
+  const mappedSections = Array.isArray(sectionMapping.mappedSections) ? sectionMapping.mappedSections : []
+  const exact = mappedSections.find((match) => figmaItem.sectionId && webItem.sectionId && match.figmaSectionId === figmaItem.sectionId && match.webSectionId === webItem.sectionId)
+  if (exact) return { ...exact, sameMappedSection: true }
+  const sameArea = mappedSections.find((match) => match.area !== 'unknown' && match.area === figmaItem.area && match.area === webItem.area && areSectionRolesCompatible(figmaItem.sectionRole, webItem.sectionRole))
+  if (sameArea) return { ...sameArea, sameMappedSection: true }
+  return null
+}
+
+function getStrictTextPairRejectReason(figmaItem, webItem, scoreDetails, mapping) {
+  if (!figmaItem.visible || !webItem.visible) return 'hidden_or_invisible'
+  if (hasZeroSizeTextItem(figmaItem) || hasZeroSizeTextItem(webItem)) return 'zero_size'
+  if (isLayerNameLikeText(figmaItem.strictText) || isLayerNameLikeText(webItem.strictText)) return 'layer_name'
+  if (isShortCodeToLongTextMismatch(figmaItem.strictText, webItem.strictText)) return 'short_code_to_long_text'
+  if (!mapping?.sameMappedSection && !scoreDetails.compatibleRole) return 'different_section_and_role'
+  if (!areSectionRolesCompatible(figmaItem.sectionRole, webItem.sectionRole)) return 'incompatible_section_role'
+  if (!areStrictElementRolesCompatible(figmaItem, webItem)) return 'incompatible_element_role'
+  if (hasExcessiveTextLengthRatio(figmaItem.strictText, webItem.strictText)) return 'length_ratio'
+  if (hasQuantitativeToLongBodyMismatch(figmaItem, webItem)) return 'quantitative_to_body'
+  if (Number.isFinite(scoreDetails.yDelta) && scoreDetails.yDelta > 0.35 && !mapping?.sameMappedSection) return 'far_y_ratio'
+  if (scoreDetails.score < 0.5) return 'low_score'
+  return ''
+}
+
+function getStrictTextMatchConfidence(score, scoreDetails, mapping) {
+  if (mapping?.sameMappedSection && scoreDetails.compatibleRole && score >= 0.74 && (scoreDetails.yDelta <= 0.18 || !Number.isFinite(scoreDetails.yDelta))) return 'high'
+  if ((mapping?.sameMappedSection || scoreDetails.sectionContextScore >= 0.45) && scoreDetails.compatibleRole && score >= 0.58) return 'medium'
+  return 'low'
+}
+
+function hasStrictRawTextDifference(firstText, secondText) {
+  return getStrictRawTextDiffKind(firstText, secondText) !== 'none'
+}
+
+function getStrictRawTextDiffKind(firstText, secondText) {
+  const first = String(firstText || '')
+  const second = String(secondText || '')
+  if (first === second) return 'none'
+  if (normalizeLinebreakText(first) === normalizeLinebreakText(second)) return 'none'
+  if (normalizeRepeatedWhitespaceText(first) === normalizeRepeatedWhitespaceText(second)) return 'whitespace'
+  return 'content'
+}
+
+function normalizeLinebreakText(value) {
+  return String(value || '').replace(/\s*\r?\n\s*/g, ' ')
+}
+
+function normalizeRepeatedWhitespaceText(value) {
+  return normalizeLinebreakText(value).replace(/[\t ]{2,}/g, ' ')
+}
+
+function getStrictYRatioDelta(figmaItem, webItem) {
+  if (!Number.isFinite(figmaItem.yRatio) || !Number.isFinite(webItem.yRatio)) return Number.NaN
+  return Math.abs(figmaItem.yRatio - webItem.yRatio)
+}
+
+function getSectionContextScore(figmaItem, webItem) {
+  const sectionScore = getQaTextSimilarity(normalizeComparableQaText(figmaItem.sectionTitle), normalizeComparableQaText(webItem.sectionTitle))
+  const pathScore = getQaTextSimilarity(normalizeComparableQaText(figmaItem.layerPath), normalizeComparableQaText(webItem.selector || webItem.layerPath))
+  return Math.max(sectionScore, pathScore)
+}
+
+function getStrictTextShapeScore(figmaItem, webItem) {
+  let score = 0
+  if (figmaItem.category === webItem.category) score += 0.45
+  if (shareCriticalTextShape(figmaItem.strictText, webItem.strictText)) score += 0.25
+  score += getTokenOverlapScore(figmaItem.strictText, webItem.strictText) * 0.3
+  return Math.min(1, score)
+}
+
+function areSectionRolesCompatible(firstRole, secondRole) {
+  if (!firstRole || !secondRole || firstRole === 'other' || secondRole === 'other') return true
+  if (firstRole === secondRole) return true
+  const compatibleGroups = [
+    new Set(['hero', 'promotion', 'content']),
+    new Set(['product', 'promotion', 'content']),
+    new Set(['legal', 'footer']),
+    new Set(['form', 'calculator']),
+  ]
+  return compatibleGroups.some((group) => group.has(firstRole) && group.has(secondRole))
+}
+
+function areStrictElementRolesCompatible(figmaItem, webItem) {
+  const firstRole = figmaItem.elementRole
+  const secondRole = webItem.elementRole
+  if (firstRole === secondRole) return true
+  if (firstRole === 'quantitative' && ['body', 'quantitative'].includes(secondRole)) return true
+  if (secondRole === 'quantitative' && ['body', 'quantitative'].includes(firstRole)) return true
+  if (['cta', 'button', 'link'].includes(firstRole) || ['cta', 'button', 'link'].includes(secondRole)) return false
+  if (firstRole === 'heading' || secondRole === 'heading') return false
+  if ((firstRole === 'navigation' && secondRole !== 'navigation') || (secondRole === 'navigation' && firstRole !== 'navigation')) return false
+  if ((firstRole === 'legal' && !['legal', 'body'].includes(secondRole)) || (secondRole === 'legal' && !['legal', 'body'].includes(firstRole))) return false
+  return true
+}
+
+function hasZeroSizeTextItem(item) {
+  return item.width === 0 || item.height === 0
+}
+
+function hasExcessiveTextLengthRatio(firstText, secondText) {
+  const firstLength = normalizeComparableQaText(firstText).length
+  const secondLength = normalizeComparableQaText(secondText).length
+  const shorter = Math.min(firstLength, secondLength)
+  const longer = Math.max(firstLength, secondLength)
+  return shorter > 0 && shorter <= 8 && longer >= 32 && longer / shorter >= 4
+}
+
+function hasQuantitativeToLongBodyMismatch(figmaItem, webItem) {
+  const firstCritical = ['money', 'percent', 'date-period', 'number', 'model'].includes(figmaItem.category)
+  const secondCritical = ['money', 'percent', 'date-period', 'number', 'model'].includes(webItem.category)
+  const firstLongBody = figmaItem.category === 'body' && normalizeComparableQaText(figmaItem.strictText).length >= 50
+  const secondLongBody = webItem.category === 'body' && normalizeComparableQaText(webItem.strictText).length >= 50
+  return (firstCritical && secondLongBody) || (secondCritical && firstLongBody)
+}
+
+function isShortCodeToLongTextMismatch(firstText, secondText) {
+  return (isInternalCodeLikeText(firstText) && normalizeComparableQaText(secondText).length >= 12)
+    || (isInternalCodeLikeText(secondText) && normalizeComparableQaText(firstText).length >= 12)
+}
+
+function isInternalCodeLikeText(value) {
+  return /^(?:TAB|Tab|tab|FRAME|Frame|frame|BUTTON|Button|button|RECTANGLE|Rectangle|GROUP|Group)\s*\d{1,3}$/i.test(String(value || '').trim())
+}
+
+function isLayerNameLikeText(value) {
+  const text = String(value || '').trim()
+  if (!text) return true
+  if (isInternalCodeLikeText(text)) return true
+  if (/^(?:Frame|Group|Rectangle|Button|Text|Image|Layer|Component|Instance)\s*\d*$/i.test(text)) return true
+  if (/^[A-Z_]+\d{1,4}$/.test(text) && !hasModelNameText(text)) return true
+  return false
+}
+
+function createUnmatchedTextIssues(figmaItems, webItems, matchedFigmaIds, matchedWebIds, context = {}) {
+  const issues = []
+  figmaItems
+    .filter((item) => !matchedFigmaIds.has(item.id) && shouldCreateUnmatchedTextIssue(item, webItems, 'figma', context))
+    .slice(0, 2)
+    .forEach((item) => issues.push(createUnmatchedTextIssue(item, 'figma')))
+  webItems
+    .filter((item) => !matchedWebIds.has(item.id) && shouldCreateUnmatchedTextIssue(item, figmaItems, 'web', context))
+    .slice(0, 2)
+    .forEach((item) => issues.push(createUnmatchedTextIssue(item, 'web')))
+  return issues
+}
+
+function shouldCreateUnmatchedTextIssue(item, oppositeItems, source, context = {}) {
+  if (!item.visible || hasZeroSizeTextItem(item)) return false
+  if (isLayerNameLikeText(item.strictText)) return false
+  if (item.isNavigation || ['navigation', 'footer', 'legal'].includes(item.sectionRole)) return false
+  if (!isHighPriorityTextCategory(item.category)) return false
+  const hasSectionCounterpart = oppositeItems.some((opposite) => {
+    const mapping = source === 'figma'
+      ? findMappedSectionForTextItems(item, opposite, context.sectionMapping)
+      : findMappedSectionForTextItems(opposite, item, context.sectionMapping)
+    return Boolean(mapping?.sameMappedSection) && areStrictElementRolesCompatible(item, opposite)
+  })
+  return hasSectionCounterpart
+}
+
+function createUnmatchedTextIssue(item, source) {
+  const isFigmaOnly = source === 'figma'
+  const category = item.category
+  return {
+    id: `text-unmatched-${source}-${normalizeComparableQaText(item.strictText).slice(0, 24)}`,
+    source: 'text-qa',
+    textQa: true,
+    protectedTextQa: false,
+    matchConfidence: 'medium',
+    matchScore: 0.58,
+    diffKind: 'unmatched',
+    area: item.area || 'unknown',
+    type: getStrictTextIssueType(category),
+    status: '확인 필요',
+    priority: isHighPriorityTextCategory(category) ? 3 : 9,
+    title: isFigmaOnly ? '시안 문구 누락 가능성이 있습니다.' : '웹 추가 문구 가능성이 있습니다.',
+    figma: isFigmaOnly ? item.strictText : '대응 문구 확인 필요',
+    web: isFigmaOnly ? '대응 문구 확인 필요' : item.strictText,
+    figmaRawText: isFigmaOnly ? item.strictText : '',
+    webRawText: isFigmaOnly ? '' : item.strictText,
+    figmaNormalizedText: isFigmaOnly ? item.looseText : '',
+    webNormalizedText: isFigmaOnly ? '' : item.looseText,
+    reason: '동일 mapped section에 대응 요소 후보는 있으나 이 문구와 직접 매칭되는 텍스트를 찾지 못했습니다.',
+    memo: '매칭되지 않은 Text QA 후보는 이미지/섹션 문맥 확인이 필요하므로 최종 검증에서 제거될 수 있습니다.',
+    figmaSectionId: isFigmaOnly ? item.sectionId : '',
+    webSectionId: isFigmaOnly ? '' : item.sectionId,
+    evidence: { visual: false, figmaJson: isFigmaOnly, webDom: !isFigmaOnly, sourceAgreement: 1 },
+    confidence: 0.68,
+    verification: 'kept',
+  }
+}
+
+function getCombinedStrictTextCategory(figmaItem, webItem) {
+  const categories = [figmaItem.category, webItem.category]
+  return ['money', 'percent', 'date-period', 'model', 'cta', 'button', 'title', 'link', 'number']
+    .find((category) => categories.includes(category)) || figmaItem.category || webItem.category || 'body'
+}
+
+function createStrictTextIssueTitle(category) {
+  const titleByCategory = {
+    money: '금액 문구가 다릅니다.',
+    percent: '퍼센트 문구가 다릅니다.',
+    'date-period': '날짜/기간 문구가 다릅니다.',
+    model: '모델명이 다릅니다.',
+    cta: 'CTA 문구가 다릅니다.',
+    button: '버튼 문구가 다릅니다.',
+    title: '제목 문구가 다릅니다.',
+    link: '링크명이 다릅니다.',
+    number: '숫자 문구가 다릅니다.',
+  }
+  return titleByCategory[category] || '문구가 다릅니다.'
+}
+
+function getStrictTextIssueType(category) {
+  if (category === 'money' || category === 'percent' || category === 'date-period' || category === 'number') return '금액'
+  if (category === 'cta' || category === 'button' || category === 'link') return 'CTA'
+  return '문구'
+}
+
+function isHighPriorityTextCategory(category) {
+  return ['money', 'percent', 'date-period', 'model', 'cta', 'button', 'title', 'link', 'number'].includes(category)
+}
+
+function normalizeStrictComparableText(value) {
+  return String(value || '').normalize('NFKC')
+}
+
+function hasCriticalTextToken(value) {
+  return hasMoneyText(value) || hasPercentText(value) || hasDateOrPeriodText(value) || hasModelNameText(value) || /\d/.test(String(value || ''))
+}
+
+function hasMoneyText(value) {
+  return /(?:₩|원|만원|억원|KRW|USD|\$|€|¥)|\d[\d,]*(?:\.\d+)?\s*(?:원|만원|억원)/i.test(String(value || ''))
+}
+
+function hasPercentText(value) {
+  return /\d+(?:\.\d+)?\s*%|퍼센트|percent/i.test(String(value || ''))
+}
+
+function hasDateOrPeriodText(value) {
+  return /\d{4}[.\-/년]\s*\d{1,2}|\d{1,2}[.\-/월]\s*\d{1,2}|\d+\s*(?:일|개월|월|년|주|분기|days?|months?|years?)|기간|날짜|마감|부터|까지|~/.test(String(value || ''))
+}
+
+function hasModelNameText(value) {
+  return /\b[A-Z]{1,4}[- ]?\d{1,4}[A-Z0-9-]*\b|\b[A-Z]+\d+[A-Z0-9-]*\b|\b\d+[A-Z]{1,3}\b/.test(String(value || ''))
+}
+
+function getTokenOverlapScore(firstText, secondText) {
+  const firstTokens = getStrictComparableTokens(firstText)
+  const secondTokens = getStrictComparableTokens(secondText)
+  if (firstTokens.length === 0 || secondTokens.length === 0) return 0
+  const overlap = firstTokens.filter((token) => secondTokens.includes(token)).length
+  return overlap / Math.max(firstTokens.length, secondTokens.length)
+}
+
+function getStrictComparableTokens(value) {
+  return String(value || '')
+    .split(/[^0-9A-Za-z가-힣%₩$€¥]+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2)
+}
+
+function shareImportantNonNumericToken(firstText, secondText) {
+  const secondTokens = new Set(getStrictComparableTokens(secondText).filter((token) => !/^\d/.test(token)))
+  return getStrictComparableTokens(firstText).some((token) => !/^\d/.test(token) && secondTokens.has(token))
+}
+
+function shareCriticalTextShape(firstText, secondText) {
+  return (hasMoneyText(firstText) && hasMoneyText(secondText))
+    || (hasPercentText(firstText) && hasPercentText(secondText))
+    || (hasDateOrPeriodText(firstText) && hasDateOrPeriodText(secondText))
+    || (hasModelNameText(firstText) && hasModelNameText(secondText))
+}
+
+async function requestMockupAiQa(client, payload, context = {}) {
+  const completion = await client.chat.completions.create({
+    model: AI_QA_MODEL,
+    temperature: 0,
+    messages: [
+      { role: 'system', content: getMockupAiQaSystemPrompt() },
+      {
+        role: 'user',
+        content: createEvidenceComparisonContent(payload, context),
+      },
+    ],
+    response_format: createJsonSchemaResponseFormat('evidence_comparison', getEvidenceComparisonSchema()),
+    max_completion_tokens: 2600,
+  })
+
+  return completion.choices?.[0]?.message?.content || ''
+}
+
+function createEvidenceComparisonContent(payload, context = {}) {
+  const content = [
+    { type: 'text', text: createMockupAiQaPrompt(payload, context) },
+    { type: 'image_url', image_url: { url: payload.figmaImageDataUrl, detail: 'auto' } },
+    { type: 'image_url', image_url: { url: payload.webScreenshotDataUrl, detail: 'auto' } },
+  ]
+
+  ;(context.cropComparisons || []).forEach((crop, index) => {
+    content.push({ type: 'text', text: `구간 crop ${index + 1}: ${crop.label}. 먼저 Figma crop, 다음 Web crop입니다. figmaSectionId=${crop.figmaSectionId}, webSectionId=${crop.webSectionId}` })
+    content.push({ type: 'image_url', image_url: { url: crop.figma.dataUrl, detail: 'auto' } })
+    content.push({ type: 'image_url', image_url: { url: crop.web.dataUrl, detail: 'auto' } })
+  })
+
+  return content
+}
+
+async function createVerifiedMockupAiQaResult(client, payload, firstPassResult, context = {}) {
   try {
     console.log('[Mockup AI QA] calling OpenAI verification')
-    const rawText = await requestMockupAiQaVerification(client, payload, firstPassResult)
+    const rawText = await requestMockupAiQaVerification(client, payload, firstPassResult, context)
     const parsed = parseAiQaJson(rawText)
     if (!parsed) {
       return {
@@ -382,31 +1345,32 @@ async function createVerifiedMockupAiQaResult(client, payload, firstPassResult) 
   }
 }
 
-async function requestMockupAiQaVerification(client, payload, firstPassResult) {
+async function requestMockupAiQaVerification(client, payload, firstPassResult, context = {}) {
   const completion = await client.chat.completions.create({
     model: AI_QA_MODEL,
+    temperature: 0,
     messages: [
       { role: 'system', content: getMockupAiQaVerificationSystemPrompt() },
       {
         role: 'user',
         content: [
-          { type: 'text', text: createMockupAiQaVerificationPrompt(payload, firstPassResult) },
+          { type: 'text', text: createMockupAiQaVerificationPrompt(payload, firstPassResult, context) },
           { type: 'image_url', image_url: { url: payload.figmaImageDataUrl, detail: 'auto' } },
           { type: 'image_url', image_url: { url: payload.webScreenshotDataUrl, detail: 'auto' } },
         ],
       },
     ],
-    response_format: { type: 'json_object' },
-    max_completion_tokens: 1800,
+    response_format: createJsonSchemaResponseFormat('final_verification', getVerificationSchema()),
+    max_completion_tokens: 2200,
   })
 
   return completion.choices?.[0]?.message?.content || ''
 }
 
-async function createImageOnlyMockupQaResult(client, payload) {
+async function createImageOnlyMockupQaResult(client, payload, context = {}) {
   try {
     console.log('[Mockup AI QA] calling image-only comparison')
-    const rawText = await requestMockupImageOnlyQa(client, payload)
+    const rawText = await requestMockupImageOnlyQa(client, payload, context)
     const parsed = parseAiQaJson(rawText)
     if (!parsed) return { issues: [], removedIssues: [], ignoredDifferences: [], error: 'image_only_parse_error' }
 
@@ -425,21 +1389,22 @@ async function createImageOnlyMockupQaResult(client, payload) {
   }
 }
 
-async function requestMockupImageOnlyQa(client, payload) {
+async function requestMockupImageOnlyQa(client, payload, context = {}) {
   const completion = await client.chat.completions.create({
     model: AI_QA_MODEL,
+    temperature: 0,
     messages: [
       { role: 'system', content: getMockupImageOnlySystemPrompt() },
       {
         role: 'user',
         content: [
-          { type: 'text', text: createMockupImageOnlyPrompt(payload) },
+          { type: 'text', text: createMockupImageOnlyPrompt(payload, context) },
           { type: 'image_url', image_url: { url: payload.figmaImageDataUrl, detail: 'auto' } },
           { type: 'image_url', image_url: { url: payload.webScreenshotDataUrl, detail: 'auto' } },
         ],
       },
     ],
-    response_format: { type: 'json_object' },
+    response_format: createJsonSchemaResponseFormat('image_comparison', getEvidenceComparisonSchema()),
     max_completion_tokens: 1200,
   })
 
@@ -448,76 +1413,95 @@ async function requestMockupImageOnlyQa(client, payload) {
 
 function getMockupAiQaSystemPrompt() {
   return [
-    '너는 웹 QA 담당자다.',
+    '너는 범용 웹페이지 시안 비교 QA 담당자다.',
     '첫 번째 이미지는 Figma 시안이고 두 번째 이미지는 실제 웹 캡처다.',
     '사용자가 원하는 것은 분석 보고서가 아니라 수정 요청용 QA 체크리스트다.',
-    'Figma 시안 이미지와 실제 웹 캡처를 비교해 실제 운영자가 수정하거나 확인해야 할 핵심 차이만 최대 5건 작성한다.',
+    'Page Understanding 결과의 페이지 유형, 목적, comparisonFocus, section mapping을 먼저 따른다.',
+    '이 단계는 Vision 기반 이미지/레이아웃/구조 비교 담당이다. 텍스트 문구 차이는 별도 Text QA 결과를 우선한다.',
+    'Figma 시안 이미지와 실제 웹 캡처의 시각적 차이가 핵심이며 Figma JSON과 Web DOM은 섹션 문맥 보조 근거다.',
+    '서로 대응되는 섹션과 같은 역할의 요소만 비교한다. hero와 legal, form과 footer, product card와 navigation처럼 다른 역할을 억지로 매칭하지 않는다.',
+    '대응 섹션을 찾지 못하면 섹션 누락/추가 가능성을 검토하되 근거가 부족하면 이슈를 만들지 않거나 확인 필요로 낮춘다.',
+    '실제 운영자가 수정하거나 확인해야 할 핵심 차이만 최대 5건 작성한다. 5건을 채우려고 만들지 않는다.',
     '단순 줄바꿈, 미세한 자간, 폰트 렌더링 차이, 브라우저 안티앨리어싱, 공백, 마침표, 쉼표, 미세한 위치 차이, 이미지 크롭 차이는 무시한다.',
-    '중요하지 않은 차이는 버린다.',
+    '가격, 금액, 비율, 날짜, 기간, 모델명, CTA/버튼/제목/링크명 텍스트 차이는 Text QA가 문자열 기준으로 생성한다. Vision 단계에서 의미 유사도로 제거하지 않는다.',
+    '같은 역할과 같은 섹션의 주요 CTA는 위치, 시각적 버튼 형태, 누락 여부처럼 Vision으로 확인되는 차이를 비교한다.',
+    '대응되는 주요 시각 요소가 명확히 다를 경우 이미지 차이로 보고하되, 영상 프레임/캐러셀 상태 차이는 확인 필요 가능성을 고려한다.',
     'Figma JSON과 Web DOM 텍스트는 참고용 힌트일 뿐이며 절대 기준이 아니다.',
     'JSON에만 존재하고 Figma 시안 이미지에 보이지 않는 항목은 이슈로 만들지 않는다.',
-    'Global navigation/navigation/nav/gnb/header/search/menu/bar items 영역의 메뉴/검색/헤더 CTA 차이는 기본 이슈에서 제외하거나 낮은 우선순위로 둔다.',
-    '단, Hero CTA인 사전예약하기, 프로모션 바로가기, 온라인 구매 상담 차이는 유지한다.',
-    '문구 이슈는 Figma JSON, Web DOM, 이미지 OCR/Vision 중 한 소스만 다르게 읽은 경우 수정 필요로 만들지 말고 확인 필요 이하로 낮춘다.',
-    'Hero KV 문구와 Footer/Disclaimer/약관성 장문을 서로 매칭하지 않는다. 법적/약관 키워드는 제외 기준이 아니라 영역 오매칭 방지용 문맥 힌트로만 사용한다.',
-    '숫자, 금액, 월 납입금 차이는 위 OCR 완화 규칙으로 제거하지 않는다.',
+    'DOM에만 있고 웹 캡처 이미지에 보이지 않는 항목은 즉시 이슈로 만들지 않는다.',
+    'header/nav/footer의 반복 링크는 navigation으로 보고 main content CTA나 form action과 구분한다.',
+    '이미지 OCR로 텍스트 차이를 새로 만들지 않는다. 텍스트 차이는 Figma JSON과 Playwright DOM 기반 Text QA를 따른다.',
+    '법적/약관/푸터 키워드는 낮은 우선순위 제거 기준이 아니라 섹션 role과 오매칭 방지용 문맥 힌트로만 사용한다.',
     '각 이슈는 시안: A / 현재: B 형태로 짧게 작성한다.',
     '확실하지 않은 것은 status를 확인 필요로 표시하고 장황하게 설명하지 않는다.',
     'issues 배열은 최대 5개까지만 반환한다.',
     'status는 수정 필요, 확인 필요, 무시 가능 중 하나만 사용한다.',
     'type은 문구, 이미지, CTA, 레이아웃, 섹션, 금액 중 하나만 사용한다.',
     'area는 top, middle, bottom, unknown 중 하나만 사용한다.',
+    '각 이슈에는 reason, figmaSectionId, webSectionId, evidence.visual, evidence.figmaJson, evidence.webDom, evidence.sourceAgreement, confidence를 포함한다.',
     '정확한 normalized boundingBox를 모르면 figmaBox/webBox를 절대 만들지 않는다.',
     '반드시 JSON으로만 응답한다.',
   ].join('\n')
 }
 
-function createMockupAiQaPrompt(payload) {
+function createMockupAiQaPrompt(payload, context = {}) {
   const hints = {
     url: payload.url,
+    urlPath: getUrlPath(payload.url),
     pageTitle: payload.pageTitle,
-    figmaTexts: payload.figmaTexts,
-    webTexts: payload.webTexts,
+    pageUnderstanding: context.pageUnderstanding || createFallbackPageUnderstanding(payload),
+    sectionMapping: context.sectionMapping || { mappedSections: [], unmappedFigmaSections: [], unmappedWebSections: [] },
+    cropPairs: (context.cropComparisons || []).map((crop, index) => ({ index: index + 1, label: crop.label, figmaSectionId: crop.figmaSectionId, webSectionId: crop.webSectionId })),
+    figmaSummary: createFigmaAiSummary(payload),
+    webSummary: createWebAiSummary(payload),
+    textQaIssues: context.textQaIssues || [],
     figmaCtaHints: payload.figmaCtaHints,
     webCtaHints: payload.webCtaHints,
     textMismatchHints: payload.textMismatchHints,
   }
 
   return [
-    '왼쪽/첫 번째 이미지는 Figma 시안, 오른쪽/두 번째 이미지는 실제 웹 캡처입니다.',
-    '당신은 웹 QA 담당자입니다. 사용자가 원하는 것은 분석 보고서가 아니라 수정 요청용 QA 체크리스트입니다.',
-    'Figma 시안 이미지와 실제 웹 캡처를 비교해, 실제 운영자가 수정하거나 확인해야 할 핵심 차이만 최대 5건 작성하세요.',
-    '사소한 차이는 제외하세요. 단순 줄바꿈, 자간, 폰트 렌더링, 미세한 위치 차이, 이미지 크롭 차이는 제외하세요.',
-    '중요하지 않은 것은 버리세요.',
-    'Figma JSON은 참고용 힌트일 뿐이며, JSON에만 존재하고 시안 이미지에 보이지 않는 항목은 이슈로 만들지 마세요.',
-    'Web DOM visible text와 textMismatchHints도 참고 힌트이며, 이미지 비교 판단보다 우선하지 않습니다.',
-    'CTA 버튼 차이는 figmaCtaHints와 webCtaHints의 같은 area 구성 차이를 중요하게 참고하세요.',
-    'Global navigation/navigation/nav/gnb/header/search/menu/bar items 영역의 메뉴/검색/헤더 CTA 차이는 기본 이슈에서 제외하거나 낮은 우선순위로 두세요.',
-    '단, Hero CTA인 사전예약하기, 프로모션 바로가기, 온라인 구매 상담 차이는 유지하세요.',
-    '문구 이슈는 Figma JSON, Web DOM, 이미지 OCR/Vision 중 한 소스만 다르게 읽은 경우 수정 필요로 만들지 말고 확인 필요 이하로 낮추세요.',
-    'Hero KV 문구와 Footer/Disclaimer/약관성 장문을 서로 매칭하지 마세요. 법적/약관 키워드는 제외 기준이 아니라 영역 오매칭 방지용 문맥 힌트로만 사용하세요.',
-    '숫자, 금액, 월 납입금 차이는 위 OCR 완화 규칙으로 제거하지 마세요.',
-    '메인 Hero 이미지가 다른 장면이면 텍스트 차이와 별개로 이미지 이슈를 만드세요.',
+    '첫 번째 전체 이미지는 Figma 시안, 두 번째 전체 이미지는 실제 웹 캡처입니다. 이후 crop 이미지가 있으면 각 구간의 Figma/Web 쌍입니다.',
+    'Page Understanding과 sectionMapping을 기준으로 대응 섹션끼리만 비교하세요.',
+    'section role, 제목, 주변 문맥, 요소 구성, crop 이미지를 종합하고 yRatio만으로 제거하거나 매칭하지 마세요.',
+    '다른 역할의 섹션을 억지로 비교하지 마세요. 대응 근거가 약하면 이슈를 만들지 않거나 확인 필요로 낮추세요.',
+    '페이지 목적에 맞는 핵심 시각 차이만 반환하세요. 차이가 없거나 약하면 issues는 빈 배열이어도 됩니다.',
+    '텍스트 문구 차이, 숫자 차이, CTA/버튼 문구 차이는 만들지 마세요. 해당 항목은 textQaIssues가 별도로 처리합니다.',
+    '이미지/레이아웃/배너/사진/아이콘/구조/CTA 위치 차이를 페이지 유형과 comparisonFocus에 맞춰 판단하세요.',
+    '영상, 캐러셀, 애니메이션 프레임 차이는 동일 콘텐츠의 다른 순간인지 완전히 다른 캠페인/상품/비주얼인지 구분하세요.',
     '각 이슈는 “시안: A / 현재: B” 형태로 짧게 작성하세요.',
     '수정 필요성이 애매하거나 확실하지 않은 것은 “확인 필요”로 표시하세요.',
     '정확한 normalized boundingBox를 모르면 figmaBox/webBox를 반환하지 마세요.',
     'issues 배열은 실제 수정/확인 필요한 핵심 차이만 5개 이하로 반환하세요.',
     '반드시 아래 JSON 형식으로만 응답해라.',
-    '{"summary":{"fixNeeded":0,"checkNeeded":0,"ignored":0},"issues":[{"status":"수정 필요 | 확인 필요 | 무시 가능","priority":1,"area":"top | middle | bottom | unknown","type":"문구 | 이미지 | CTA | 레이아웃 | 섹션 | 금액","title":"메인 KV 문구가 다릅니다.","figma":"시안 값","web":"현재 값","memo":"짧은 QA 메모","confidence":0.9}],"ignoredDifferences":["줄바꿈 차이","미세한 이미지 크롭 차이"]}',
+    '{"summary":{"fixNeeded":0,"checkNeeded":0,"ignored":0},"issues":[{"status":"수정 필요 | 확인 필요 | 무시 가능","priority":1,"area":"top | middle | bottom | unknown","type":"문구 | 이미지 | CTA | 레이아웃 | 섹션 | 금액","title":"짧고 구체적인 제목","figma":"시안 값","web":"현재 값","reason":"왜 차이라고 판단했는지","memo":"짧은 QA 메모","figmaSectionId":"figma-section-id","webSectionId":"web-section-id","evidence":{"visual":true,"figmaJson":true,"webDom":true,"sourceAgreement":2},"confidence":0.9}],"ignoredDifferences":["줄바꿈 차이","미세한 렌더링 차이"]}',
     JSON.stringify(hints, null, 2),
   ].join('\n\n')
 }
 
+function getEvidenceComparisonSchema() {
+  return {
+    type: 'object',
+    properties: {
+      summary: { type: 'object' },
+      issues: { type: 'array', items: { type: 'object' } },
+      ignoredDifferences: { type: 'array', items: { type: 'string' } },
+      removedIssues: { type: 'array', items: { type: 'object' } },
+    },
+  }
+}
+
 function getMockupAiQaVerificationSystemPrompt() {
   return [
-    '너는 웹 QA 오탐 제거 담당자다.',
+    '너는 범용 웹 QA 최종 검증 담당자다.',
     '아래 이슈 목록은 1차 AI가 찾은 QA 후보이며 사용자에게 보여주기 전에 반드시 오탐을 제거한다.',
-    '문구 이슈는 figmaTextHints와 webTextHints에 동일하거나 거의 같은 문구가 있으면 제거한다.',
-    '작은 글씨 또는 OCR 추정으로 만든 이슈는 제거하거나 확인 필요로 낮춘다.',
-    'Figma JSON/Web DOM/Vision 중 한 소스만 다르게 읽은 문구 이슈는 오탐 가능성으로 제거하거나 확인 필요 이하로 낮춘다.',
-    'Hero KV와 Footer/Disclaimer/약관성 장문처럼 영역이 크게 다른 문구끼리 매칭된 이슈는 오탐으로 제거하거나 확인 필요 이하로 낮춘다.',
-    '숫자/금액 차이는 유지한다.',
-    '최종적으로 실제 수정이 필요한 핵심 이슈만 최대 5개 남긴다.',
+    '각 이슈가 실제 시안 이미지와 웹 이미지에서 확인되는지 재검토한다.',
+    '서로 다른 섹션/역할이 잘못 매칭된 이슈는 제거하거나 확인 필요로 낮춘다.',
+    'DOM 또는 JSON 한 소스에서만 나온 주장, OCR이 만든 문구, 이미지에서 보이지 않는 항목은 수정 필요로 두지 않는다.',
+    '같은 차이를 표현만 바꾼 중복은 하나로 합친다.',
+    '페이지 유형과 목적에 비추어 중요하지 않거나 근거가 약한 항목은 제거한다.',
+    '최대 5개를 채우려고 근거 약한 항목을 남기지 않는다. 이슈 0개도 가능하다.',
+    '최종 결과는 수정 필요 또는 확인 필요만 남긴다.',
     '반드시 JSON으로만 응답한다.',
   ].join('\n')
 }
@@ -526,37 +1510,44 @@ function getMockupImageOnlySystemPrompt() {
   return [
     '너는 웹 QA 이미지/비주얼 차이 전담 검토자다.',
     '첫 번째 이미지는 Figma 시안이고 두 번째 이미지는 실제 웹 캡처다.',
-    '텍스트 차이는 무시하고 이미지, 배경, 영상 캡처 장면, 차량, 인물, 색감, 구도 차이만 찾는다.',
-    '메인 Hero/main visual 영역은 동일한 장면이어야 한다. 차량 주행 이미지와 다른 영상 캡처/인물/다른 차량 장면은 반드시 이미지 차이로 판단한다.',
-    '텍스트가 비슷하거나 같아도 배경 이미지가 명확히 다르면 이슈를 생성한다.',
+    'Page Understanding의 section role과 comparisonFocus에 맞는 주요 시각 요소만 검토한다.',
+    '텍스트 차이는 무시하고 이미지, 배경, 영상 캡처 장면, 제품/인물/사물, 색감, 구도 차이를 찾는다.',
+    '동일 콘텐츠의 다른 영상 프레임이나 캐러셀 상태로 보이면 확인 필요로 낮추거나 이슈를 만들지 않는다.',
+    '완전히 다른 캠페인/상품/비주얼, 이미지 누락, 깨짐, 명확한 이미지 교체는 이슈 후보로 만든다.',
     '미세한 크롭, 압축, 렌더링 차이는 무시한다.',
-    '최대 3개 이슈만 JSON으로 반환한다.',
+    '최대 3개 이슈만 JSON으로 반환한다. 없으면 빈 배열을 반환한다.',
   ].join('\n')
 }
 
-function createMockupImageOnlyPrompt(payload) {
+function createMockupImageOnlyPrompt(payload, context = {}) {
   const hints = {
     url: payload.url,
     pageTitle: payload.pageTitle,
+    pageUnderstanding: context.pageUnderstanding || createFallbackPageUnderstanding(payload),
+    sectionMapping: context.sectionMapping || { mappedSections: [], unmappedFigmaSections: [], unmappedWebSections: [] },
     figmaCtaHints: payload.figmaCtaHints,
     webCtaHints: payload.webCtaHints,
   }
 
   return [
-    '텍스트는 무시하고 이미지/비주얼 차이만 비교하세요.',
-    '특히 top 영역의 메인 Hero 비주얼을 가장 먼저 확인하세요.',
-    '차량, 인물, 배경, 색감, 구도, 영상 캡처 장면이 명확히 다르면 이미지 차이로 판단하세요.',
-    '텍스트가 비슷하거나 같아도 배경 이미지가 다르면 이슈를 생성하세요.',
+    '텍스트는 무시하고 Page Understanding에서 중요한 것으로 판별된 이미지/비주얼 차이만 비교하세요.',
+    '페이지가 home이 아닐 수 있으므로 특정 영역을 무조건 최우선으로 보지 마세요.',
+    '같은 섹션 role과 문맥에서 대응되는 주요 이미지끼리만 비교하세요.',
+    '동영상/캐러셀 프레임 차이인지 실제 이미지 교체인지 구분하고, 애매하면 확인 필요로 두세요.',
     '이미지 차이가 확실하지 않으면 이슈를 만들지 마세요.',
     '결과는 아래 JSON 형식만 사용하세요.',
-    '{"issues":[{"status":"수정 필요 | 확인 필요","priority":1,"area":"top | middle | bottom | unknown","type":"이미지","title":"메인 Hero 이미지가 다릅니다.","figma":"차량 주행 이미지","web":"다른 영상 캡처/인물 또는 다른 차량 장면","memo":"메인 Hero 배경 비주얼이 시안과 현재 웹에서 서로 다릅니다.","confidence":0.9}],"ignoredDifferences":["미세한 크롭 차이"]}',
+    '{"issues":[{"status":"수정 필요 | 확인 필요","priority":1,"area":"top | middle | bottom | unknown","type":"이미지","title":"주요 이미지가 다릅니다.","figma":"시안의 이미지 설명","web":"웹의 이미지 설명","reason":"같은 역할의 섹션에서 대응되는 이미지가 다르다고 판단한 이유","figmaSectionId":"...","webSectionId":"...","evidence":{"visual":true,"figmaJson":false,"webDom":false,"sourceAgreement":1},"memo":"짧은 QA 메모","confidence":0.9}],"ignoredDifferences":["미세한 크롭 차이"]}',
     JSON.stringify(hints, null, 2),
   ].join('\n\n')
 }
 
-function createMockupAiQaVerificationPrompt(payload, firstPassResult) {
+function createMockupAiQaVerificationPrompt(payload, firstPassResult, context = {}) {
   const verificationInput = {
+    pageUnderstanding: context.pageUnderstanding || createFallbackPageUnderstanding(payload),
+    sectionMapping: context.sectionMapping || { mappedSections: [], unmappedFigmaSections: [], unmappedWebSections: [] },
     firstPassIssues: firstPassResult.issues,
+    textQaIssues: firstPassResult.issues.filter(isTextQaIssue),
+    protectedTextQaIssues: firstPassResult.issues.filter(isProtectedTextIssue),
     firstPassRemovedIssues: firstPassResult.removedIssues || [],
     figmaTextHints: payload.figmaTexts,
     webTextHints: payload.webTexts,
@@ -564,17 +1555,32 @@ function createMockupAiQaVerificationPrompt(payload, firstPassResult) {
   }
 
   return [
-    '아래 이슈 목록은 1차 AI가 찾은 QA 후보입니다. 실제 사용자에게 보여주기 전에 오탐을 제거하세요.',
-    '특히 문구 이슈는 figmaTextHints와 webTextHints에 동일하거나 거의 같은 문구가 있으면 제거하세요.',
-    '작은 글씨/OCR 추정으로 만든 이슈는 제거하거나 확인 필요로 낮추세요.',
-    'Figma JSON/Web DOM/Vision 중 한 소스만 다르게 읽은 문구 이슈는 오탐 가능성으로 제거하거나 확인 필요 이하로 낮추세요.',
-    'Hero KV와 Footer/Disclaimer/약관성 장문처럼 영역이 크게 다른 문구끼리 매칭된 이슈는 오탐으로 제거하거나 확인 필요 이하로 낮추세요.',
-    '숫자/금액 차이는 유지하세요. 예: 47만원 vs 50만원은 유지합니다.',
-    '최종적으로 실제 수정이 필요한 핵심 이슈만 최대 5개 남기세요.',
+    '아래 이슈 목록은 1차 후보입니다. 실제 사용자에게 보여주기 전에 오탐, 오매칭, 중복, 근거 약한 항목을 제거하세요.',
+    'textQaIssues는 Figma JSON Text와 Playwright DOM Text를 먼저 요소 매칭한 뒤 rawText 기준으로 비교한 결과입니다.',
+    'Text QA 후보라도 대응 요소가 실제로 같은 역할/같은 섹션인지 다시 확인하세요. 서로 다른 위치/역할/섹션의 문구라면 제거하세요.',
+    '숫자나 한 글자 차이는 같은 요소로 확인될 경우 반드시 유지하세요.',
+    '오매칭 Text QA 후보는 삭제 가능합니다. 단, protectedTextQaIssues(high confidence)는 값이 실제로 같거나 명확한 오매칭일 때만 삭제하세요.',
+    '각 이슈가 Figma 전체 이미지와 Web 전체 이미지에서 확인되는지 다시 보세요.',
+    'pageUnderstanding과 sectionMapping에 맞지 않는 다른 역할 섹션 간 비교는 제거하거나 확인 필요로 낮추세요.',
+    'Vision/OCR만 주장하는 문구 이슈는 오탐 가능성으로 제거하거나 확인 필요 이하로 낮추세요. 단, protectedTextQaIssues는 JSON+DOM 두 소스 비교 결과로 우선 유지하세요.',
+    '정량 정보 차이는 페이지 문맥에서 사용자 의사결정에 영향을 주고 시각/보조 근거가 충분할 때만 유지하세요.',
+    '동적 콘텐츠, 애니메이션, 캐러셀, 시안 버전 차이 가능성이 있으면 확인 필요로 판단하세요.',
+    '최종적으로 실제 수정/확인이 필요한 핵심 이슈만 최대 5개 남기세요. 없으면 빈 배열을 반환하세요.',
     '반드시 아래 JSON 형식으로만 응답하세요.',
-    '{"issues":[{"status":"수정 필요 | 확인 필요 | 무시 가능","priority":1,"area":"top | middle | bottom | unknown","type":"문구 | 이미지 | CTA | 레이아웃 | 섹션 | 금액","title":"...","figma":"...","web":"...","memo":"...","confidence":0.9,"verification":"kept | downgraded | removed"}],"removedIssues":[{"title":"...","reason":"figma/web text hints are identical, likely OCR false positive"}]}',
+    '{"issues":[{"status":"수정 필요 | 확인 필요","priority":1,"area":"top | middle | bottom | unknown","type":"문구 | 이미지 | CTA | 레이아웃 | 섹션 | 금액","title":"...","figma":"...","web":"...","reason":"...","memo":"...","figmaSectionId":"...","webSectionId":"...","evidence":{"visual":true,"figmaJson":true,"webDom":true,"sourceAgreement":2},"confidence":0.9,"verification":"kept | downgraded | removed"}],"removedIssues":[{"title":"...","reason":"오매칭/중복/근거 부족 등 제거 사유"}]}',
     JSON.stringify(verificationInput, null, 2),
   ].join('\n\n')
+}
+
+function getVerificationSchema() {
+  return {
+    type: 'object',
+    properties: {
+      issues: { type: 'array', items: { type: 'object' } },
+      removedIssues: { type: 'array', items: { type: 'object' } },
+      ignoredDifferences: { type: 'array', items: { type: 'string' } },
+    },
+  }
 }
 
 function normalizeMockupAiQaResult(result, payload = {}, options = {}) {
@@ -587,7 +1593,21 @@ function normalizeMockupAiQaResult(result, payload = {}, options = {}) {
     title: normalizeMockupTitle(issue),
     figma: normalizeMockupSideValue(issue, 'figma'),
     web: normalizeMockupSideValue(issue, 'web'),
+    reason: limitText(issue?.reason || '', 300),
     memo: normalizeMockupMemo(issue),
+    figmaSectionId: limitText(issue?.figmaSectionId || issue?.figmaSection || '', 80),
+    webSectionId: limitText(issue?.webSectionId || issue?.webSection || '', 80),
+    evidence: normalizeIssueEvidence(issue?.evidence),
+    source: limitText(issue?.source || issue?.qaSource || '', 40),
+    textQa: Boolean(issue?.textQa || issue?.source === 'text-qa'),
+    protectedTextQa: Boolean(issue?.protectedTextQa),
+    matchConfidence: normalizeTextMatchConfidence(issue?.matchConfidence),
+    matchScore: normalizeConfidence(issue?.matchScore),
+    diffKind: limitText(issue?.diffKind || '', 40),
+    figmaRawText: limitStrictText(issue?.figmaRawText || issue?.figma || '', 300),
+    webRawText: limitStrictText(issue?.webRawText || issue?.web || '', 300),
+    figmaNormalizedText: limitText(issue?.figmaNormalizedText || '', 300),
+    webNormalizedText: limitText(issue?.webNormalizedText || '', 300),
     figmaEvidence: limitText(issue?.figmaEvidence || issue?.figma || '', 300),
     webEvidence: limitText(issue?.webEvidence || issue?.web || '', 300),
     confidence: normalizeConfidence(issue?.confidence),
@@ -608,15 +1628,17 @@ function normalizeMockupAiQaResult(result, payload = {}, options = {}) {
   return { summary, counts: summary, issues, ignoredDifferences, removedIssues }
 }
 
-function createCtaComparisonResult(payload = {}) {
+function createCtaComparisonResult(payload = {}, context = {}) {
   try {
     const figmaHints = filterDefaultCtaHints(Array.isArray(payload.figmaCtaHints) ? payload.figmaCtaHints : [])
     const webHints = filterDefaultCtaHints(Array.isArray(payload.webCtaHints) ? payload.webCtaHints : [])
     if (figmaHints.length === 0 || webHints.length === 0) return { issues: [], removedIssues: [], ignoredDifferences: [], error: '' }
 
-    const issues = MOCKUP_AI_AREAS.flatMap((area) => createCtaAreaIssues(area, figmaHints, webHints))
+    const mappedAreas = new Set((context.sectionMapping?.mappedSections || []).map((match) => match.area).filter((area) => area && area !== 'unknown'))
+    const areas = mappedAreas.size > 0 ? Array.from(mappedAreas) : MOCKUP_AI_AREAS.filter((area) => area !== 'unknown')
+    const issues = areas.flatMap((area) => createCtaAreaIssues(area, figmaHints, webHints))
       .map((issue) => applyIssuePriorityRules(issue))
-      .slice(0, 5)
+      .slice(0, 3)
     const summary = normalizeMockupSummary(issues, [], [])
     return { summary, counts: summary, issues, removedIssues: [], ignoredDifferences: [], error: '' }
   } catch (error) {
@@ -626,11 +1648,11 @@ function createCtaComparisonResult(payload = {}) {
 }
 
 function filterDefaultCtaHints(hints) {
-  return hints.filter((hint) => isHeroCtaText(hint?.text) || !isNavigationCtaHint(hint))
+  return hints.filter((hint) => !isNavigationCtaHint(hint))
 }
 
 function isNavigationCtaHint(hint) {
-  if (!hint || isHeroCtaText(hint.text)) return false
+  if (!hint) return false
   if (hint.navCandidate) return true
   return isNavigationCtaContext(`${hint.layerPath || ''} ${hint.name || ''} ${hint.selector || ''}`)
 }
@@ -638,11 +1660,6 @@ function isNavigationCtaHint(hint) {
 function isNavigationCtaContext(value) {
   const text = String(value || '').toLowerCase()
   return NAV_CTA_CONTEXT_PATTERNS.some((pattern) => text.includes(pattern))
-}
-
-function isHeroCtaText(value) {
-  const text = normalizeComparableQaText(value)
-  return HERO_CTA_TEXT_PATTERNS.some((pattern) => text.includes(normalizeComparableQaText(pattern)))
 }
 
 function createCtaAreaIssues(area, figmaHints, webHints) {
@@ -663,13 +1680,15 @@ function createCtaAreaIssues(area, figmaHints, webHints) {
     id: `cta-${area}`,
     area,
     type: 'CTA',
-    status: area === 'top' ? '수정 필요' : '확인 필요',
-    priority: area === 'top' ? 2 : 12,
-    title: area === 'top' ? '메인 CTA 버튼 구성이 다릅니다.' : 'CTA 버튼 구성이 다릅니다.',
+    status: '확인 필요',
+    priority: 12,
+    title: 'CTA 버튼 구성이 다릅니다.',
     figma: figmaTexts.join(' / ') || 'CTA 없음',
     web: webTexts.join(' / ') || 'CTA 없음',
+    reason: '같은 화면 영역의 CTA 후보 목록이 다릅니다. 최종 검증에서 섹션 역할과 시각 근거를 재확인해야 합니다.',
     memo: createCtaIssueMemo(missingTexts, addedTexts),
-    confidence: area === 'top' ? 0.95 : 0.88,
+    evidence: { visual: false, figmaJson: true, webDom: true, sourceAgreement: 2 },
+    confidence: 0.72,
     verification: 'kept',
   }]
 }
@@ -702,17 +1721,20 @@ function createCtaIssueMemo(missingTexts, addedTexts) {
   return appendMemoBasis(parts.join(' '), 'CTA 리스트 비교 기준')
 }
 
-function createFinalMockupQaResult({ visionResult, ctaResult, imageResult, payload }) {
+function createFinalMockupQaResult({ textResult, visionResult, ctaResult, imageResult, payload }) {
+  const textIssues = Array.isArray(textResult?.issues) ? textResult.issues : []
   const visionIssues = Array.isArray(visionResult?.issues) ? visionResult.issues : []
   const ctaIssues = Array.isArray(ctaResult?.issues) ? ctaResult.issues : []
   const imageIssues = Array.isArray(imageResult?.issues) ? imageResult.issues : []
-  const mergedIssues = mergeMockupIssues({ visionIssues, ctaIssues, imageIssues })
+  const mergedIssues = mergeMockupIssues({ textIssues, visionIssues, ctaIssues, imageIssues })
   const ignoredDifferences = normalizeIgnoredDifferences([
+    ...(textResult?.ignoredDifferences || []),
     ...(visionResult?.ignoredDifferences || []),
     ...(ctaResult?.ignoredDifferences || []),
     ...(imageResult?.ignoredDifferences || []),
   ])
   const removedIssues = normalizeRemovedIssues([
+    ...(textResult?.removedIssues || []),
     ...(visionResult?.removedIssues || []),
     ...(ctaResult?.removedIssues || []),
     ...(imageResult?.removedIssues || []),
@@ -728,6 +1750,7 @@ function createFinalMockupQaResult({ visionResult, ctaResult, imageResult, paylo
     debug: {
       webCtaHints: payload.webCtaHints.length,
       figmaCtaHints: payload.figmaCtaHints.length,
+      textIssues: textIssues.length,
       visionIssues: visionIssues.length,
       ctaIssues: ctaIssues.length,
       imageIssues: imageIssues.length,
@@ -738,9 +1761,10 @@ function createFinalMockupQaResult({ visionResult, ctaResult, imageResult, paylo
   }
 }
 
-function mergeMockupIssues({ visionIssues, ctaIssues, imageIssues }) {
+function mergeMockupIssues({ textIssues = [], visionIssues, ctaIssues, imageIssues }) {
   const selected = []
   const allIssues = [
+    ...textIssues.map((issue) => ({ ...issue, mergeSource: 'text' })),
     ...imageIssues.map((issue) => ({ ...issue, mergeSource: 'image' })),
     ...ctaIssues.map((issue) => ({ ...issue, mergeSource: 'cta' })),
     ...visionIssues.map((issue) => ({ ...issue, mergeSource: 'vision' })),
@@ -767,7 +1791,7 @@ function mergeMockupIssues({ visionIssues, ctaIssues, imageIssues }) {
 function areDuplicateMockupIssues(first, second) {
   if (first.type === second.type && first.area === second.area) {
     if (first.type === 'CTA') return true
-    if (first.type === '이미지' && /hero|히어로|메인|kv/i.test(getIssueSearchText(first) + getIssueSearchText(second))) return true
+    if (first.type === '이미지' && getQaTextSimilarity(normalizeComparableQaText(first.title), normalizeComparableQaText(second.title)) >= 0.65) return true
 
     const firstTitle = normalizeComparableQaText(first.title)
     const secondTitle = normalizeComparableQaText(second.title)
@@ -781,10 +1805,49 @@ function areDuplicateMockupIssues(first, second) {
 }
 
 function choosePreferredMockupIssue(first, second) {
+  if (isProtectedTextIssue(first) || isProtectedTextIssue(second)) return isProtectedTextIssue(first) ? first : second
   if (first.type === 'CTA' || second.type === 'CTA') return first.mergeSource === 'cta' ? first : second
   if (first.type === '이미지' || second.type === '이미지') return first.mergeSource === 'image' ? first : second
   if (getFinalIssueRank(second) < getFinalIssueRank(first)) return second
   return Number(second.confidence || 0) > Number(first.confidence || 0) ? second : first
+}
+
+function restoreProtectedTextIssues(result, protectedIssues = []) {
+  const textIssues = protectedIssues.filter(isProtectedTextIssue)
+  if (textIssues.length === 0) return result
+  const selected = Array.isArray(result?.issues) ? result.issues.slice() : []
+  const removedIssues = Array.isArray(result?.removedIssues) ? result.removedIssues : []
+
+  textIssues.forEach((issue) => {
+    if (wasExplicitlyRemovedAsMismatch(issue, removedIssues)) return
+    const exists = selected.some((candidate) => areDuplicateMockupIssues(candidate, issue))
+    if (!exists) selected.push(issue)
+  })
+
+  const issues = sortFinalMockupIssues(selected.map((issue) => applyIssuePriorityRules(issue))).slice(0, MAX_MOCKUP_AI_ISSUES)
+  const ignoredDifferences = Array.isArray(result?.ignoredDifferences) ? result.ignoredDifferences : []
+  const summary = normalizeMockupSummary(issues, ignoredDifferences, removedIssues)
+  return { ...result, summary, counts: summary, issues, ignoredDifferences, removedIssues }
+}
+
+function isProtectedTextIssue(issue) {
+  return Boolean(issue?.protectedTextQa === true && issue?.matchConfidence === 'high' && hasStrictRawTextDifference(issue?.figmaRawText || issue?.figma, issue?.webRawText || issue?.web))
+}
+
+function isTextQaIssue(issue) {
+  return Boolean(issue?.textQa || issue?.source === 'text-qa' || issue?.mergeSource === 'text')
+}
+
+function wasExplicitlyRemovedAsMismatch(issue, removedIssues) {
+  const issueTitle = normalizeComparableQaText(issue?.title || '')
+  const issueText = normalizeComparableQaText(`${issue?.figma || ''} ${issue?.web || ''}`)
+  return removedIssues.some((removed) => {
+    const removedTitle = normalizeComparableQaText(removed?.title || '')
+    const removedReason = String(removed?.reason || '')
+    if (issueTitle && removedTitle && getQaTextSimilarity(issueTitle, removedTitle) < 0.8) return false
+    if (!/오매칭|다른\s*섹션|서로\s*다른|mismatch|wrong\s*section|not\s*same/i.test(removedReason)) return false
+    return !issueText || getQaTextSimilarity(issueText, normalizeComparableQaText(`${removed?.title || ''} ${removedReason}`)) >= 0.2
+  })
 }
 
 function sortFinalMockupIssues(issues) {
@@ -797,11 +1860,12 @@ function sortFinalMockupIssues(issues) {
 
 function getFinalIssueRank(issue) {
   const text = getIssueSearchText(issue)
+  if (isTextQaIssue(issue) && hasHighPrioritySignal(issue, text)) return 0
   if (issue.priorityLevel === 'low') return 9
-  if (issue.area === 'top' && (issue.type === '문구' || issue.type === '이미지' || /hero|히어로|메인|kv/i.test(text))) return 0
   if (issue.type === 'CTA' && !isNavigationIssueText(text)) return 1
-  if (issue.type === '금액' || /가격|금액|월\s*납입|월납입|만원|프로모션|조건/i.test(text)) return 2
+  if (issue.type === '금액' || /숫자|가격|금액|금리|이율|비율|기간|날짜|조건|모델|model|원|만원|%/i.test(text)) return 2
   if (issue.type === '섹션' || /섹션|누락|추가/i.test(text)) return 3
+  if (issue.type === '레이아웃') return 6
   if (isNavigationIssueText(text)) return 8
   return 4
 }
@@ -837,6 +1901,7 @@ function normalizeMockupIssueType(value) {
   if (value === 'money' || value === 'price' || value === '금액') return '금액'
   if (value === 'layout' || value === '레이아웃 확인') return '레이아웃'
   if (value === 'section') return '섹션'
+  if (value === 'form' || value === 'table' || value === 'other') return '레이아웃'
   return '레이아웃'
 }
 
@@ -845,6 +1910,116 @@ function normalizeMockupArea(value) {
   if (value === 'upper') return 'top'
   if (value === 'lower') return 'bottom'
   return limitText(value || 'unknown', 60)
+}
+
+function normalizeYRatio(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return null
+  return Math.round(Math.max(0, Math.min(1, number)) * 1000) / 1000
+}
+
+function getAreaFromYRatio(value) {
+  const ratio = normalizeYRatio(value)
+  if (ratio === null) return 'unknown'
+  if (ratio < 0.33) return 'top'
+  if (ratio < 0.66) return 'middle'
+  return 'bottom'
+}
+
+function getAreaDefaultYRatio(area) {
+  if (area === 'top') return 0.16
+  if (area === 'middle') return 0.5
+  if (area === 'bottom') return 0.84
+  return 0.5
+}
+
+function normalizePageType(value) {
+  const text = String(value || '').toLowerCase().trim()
+  if (PAGE_UNDERSTANDING_TYPES.includes(text)) return text
+  if (/home|main|메인|홈/.test(text)) return 'home'
+  if (/landing|campaign|promo|promotion|이벤트|프로모션/.test(text)) return 'promotion'
+  if (/detail|product|상품|제품/.test(text)) return 'product-detail'
+  if (/calc|calculator|계산|견적/.test(text)) return 'calculator'
+  if (/form|apply|contact|문의|신청/.test(text)) return 'form'
+  if (/list|listing|목록|검색/.test(text)) return 'listing'
+  if (/article|content|news|story|콘텐츠|게시/.test(text)) return 'article'
+  if (/policy|legal|terms|privacy|약관|정책|개인정보/.test(text)) return 'policy'
+  return 'other'
+}
+
+function normalizeSectionRole(value) {
+  const text = String(value || '').toLowerCase().trim()
+  if (SECTION_ROLES.includes(text)) return text
+  return inferSectionRoleFromText(text)
+}
+
+function inferSectionRoleFromText(value) {
+  const text = String(value || '').toLowerCase()
+  if (/header|nav|gnb|menu|navigation|검색|메뉴/.test(text)) return 'navigation'
+  if (/hero|main\s*visual|kv|visual|대표|상단/.test(text)) return 'hero'
+  if (/campaign|promo|promotion|event|혜택|이벤트|프로모션/.test(text)) return 'promotion'
+  if (/product|goods|상품|제품|서비스|카드/.test(text)) return 'product'
+  if (/form|field|input|apply|contact|문의|신청|동의|필수/.test(text)) return 'form'
+  if (/calc|calculator|estimate|계산|견적|시뮬레이션/.test(text)) return 'calculator'
+  if (/table|표|spec|사양|비교/.test(text)) return 'table'
+  if (/legal|policy|terms|privacy|disclaimer|약관|정책|유의|고지|개인정보/.test(text)) return 'legal'
+  if (/footer|copyright|푸터|풋터/.test(text)) return 'footer'
+  if (/content|article|본문|내용|섹션/.test(text)) return 'content'
+  return 'other'
+}
+
+function normalizeStringArray(value) {
+  if (!Array.isArray(value)) return []
+  const seen = new Set()
+  const result = []
+  value.forEach((item) => {
+    const text = limitText(item || '', 160)
+    if (!text || seen.has(text)) return
+    seen.add(text)
+    result.push(text)
+  })
+  return result
+}
+
+function inferPageTypeFromHints(payload) {
+  const text = `${payload.url || ''} ${payload.pageTitle || ''} ${payload.figmaTexts.join(' ')} ${payload.webTexts.join(' ')}`
+  if (/약관|개인정보|privacy|terms|policy|legal/i.test(text)) return 'policy'
+  if (/input|select|form|문의|신청|동의|필수|이름|전화|이메일/i.test(text)) return 'form'
+  if (/계산|견적|할부|금리|시뮬레이션|calculator|estimate/i.test(text)) return 'calculator'
+  if (/상품|제품|사양|옵션|가격|product|detail/i.test(text)) return 'product-detail'
+  if (/목록|필터|정렬|페이지네이션|listing|search/i.test(text)) return 'listing'
+  if (/뉴스|게시|article|story|content/i.test(text)) return 'article'
+  if (/프로모션|이벤트|캠페인|혜택|promotion|campaign|event/i.test(text)) return 'promotion'
+  if (getUrlPath(payload.url) === '/' || /home|main|메인|홈/i.test(payload.pageTitle || '')) return 'home'
+  return 'other'
+}
+
+function inferComparisonFocus(pageType) {
+  const focusByType = {
+    home: ['대표 비주얼', '주요 서비스 진입점', '핵심 CTA', '주요 콘텐츠 섹션', '내비게이션과 전체 구성'],
+    landing: ['캠페인 메시지', '혜택', '기간', '대상', 'CTA', '비주얼'],
+    promotion: ['캠페인 메시지', '혜택', '기간', '대상', '가격 및 조건', 'CTA', '비주얼'],
+    'product-detail': ['상품명', '제품 이미지', '사양', '가격', '옵션', '주요 설명', 'CTA', '표와 정보 구조'],
+    calculator: ['입력 항목', '선택 옵션', '계산 결과', '단위', '금액', '단계', '실행 버튼'],
+    form: ['필드', '라벨', '필수값', '동의 항목', '버튼', '안내 문구', '단계와 완료 조건'],
+    listing: ['목록 개수', '카드 구조', '필터', '정렬', '썸네일', '링크', '페이지네이션'],
+    article: ['제목', '본문', '이미지', '인용/표', 'CTA', '콘텐츠 순서'],
+    policy: ['조항', '날짜', '금액/비율', '표', '항목 누락', '법적 고지', '버전 정보'],
+    other: ['페이지 목적에 맞는 주요 텍스트', '주요 이미지', 'CTA 또는 사용자 행동', '섹션 구조'],
+  }
+  return focusByType[pageType] || focusByType.other
+}
+
+function hasNumberLikeText(value) {
+  return /\d|%|원|만원|기간|날짜|년|월|일|회|개/.test(String(value || ''))
+}
+
+function getUrlPath(value) {
+  try {
+    return new URL(value).pathname || '/'
+  } catch {
+    return ''
+  }
 }
 
 function normalizeMockupStatus(value, confidence) {
@@ -858,6 +2033,23 @@ function normalizeMockupStatus(value, confidence) {
 
 function normalizeVerificationStatus(value) {
   return ['kept', 'downgraded', 'removed'].includes(value) ? value : 'kept'
+}
+
+function normalizeTextMatchConfidence(value) {
+  return ['high', 'medium', 'low'].includes(value) ? value : ''
+}
+
+function normalizeIssueEvidence(value) {
+  const evidence = value && typeof value === 'object' ? value : {}
+  const visual = Boolean(evidence.visual)
+  const figmaJson = Boolean(evidence.figmaJson)
+  const webDom = Boolean(evidence.webDom)
+  const explicitAgreement = Number(evidence.sourceAgreement)
+  const sourceAgreement = Number.isFinite(explicitAgreement)
+    ? Math.max(0, Math.min(3, Math.round(explicitAgreement)))
+    : [visual, figmaJson, webDom].filter(Boolean).length
+
+  return { visual, figmaJson, webDom, sourceAgreement }
 }
 
 function normalizeConfidence(value) {
@@ -953,7 +2145,21 @@ function postProcessMockupIssues(issues, payload = {}) {
 
   issues.forEach((issue) => {
     if (issue.verification === 'removed') {
+      if (isProtectedTextIssue(issue)) {
+        keptIssues.push(applyIssuePriorityRules({
+          ...issue,
+          status: issue.status === '무시 가능' ? '확인 필요' : issue.status,
+          verification: 'kept',
+          memo: appendMemoBasis(issue.memo, 'Text QA 후보는 명확한 오탐이 아니면 유지합니다.'),
+        }))
+        return
+      }
       removedIssues.push({ title: issue.title, reason: '2차 AI 검증에서 오탐 후보로 제거했습니다.' })
+      return
+    }
+
+    if (isTextQaIssue(issue)) {
+      keptIssues.push(applyIssuePriorityRules(issue))
       return
     }
 
@@ -1038,18 +2244,18 @@ function applyTextMismatchContextGuard(issue) {
   const figmaContext = getTextMismatchContext(issue.figma)
   const webContext = getTextMismatchContext(issue.web)
   if (figmaContext === 'disclaimer' && webContext === 'disclaimer') return issue
-  if (figmaContext === 'hero' && webContext === 'hero') return issue
+  if (figmaContext === 'campaign' && webContext === 'campaign') return issue
 
   const farApartByBox = areIssueBoxesFarApart(issue)
-  const crossHeroDisclaimer = (figmaContext === 'hero' && webContext === 'disclaimer') || (figmaContext === 'disclaimer' && webContext === 'hero')
+  const crossCampaignDisclaimer = (figmaContext === 'campaign' && webContext === 'disclaimer') || (figmaContext === 'disclaimer' && webContext === 'campaign')
   const imbalancedLongText = hasImbalancedTextLength(issue.figma, issue.web) && !hasMeaningfulTextOverlap(issue.figma, issue.web)
 
-  if (crossHeroDisclaimer || (farApartByBox && imbalancedLongText)) {
+  if (crossCampaignDisclaimer || (farApartByBox && imbalancedLongText)) {
     return {
       ...issue,
       status: '무시 가능',
       confidence: Math.min(Number(issue.confidence) || 0.5, 0.55),
-      memo: appendMemoBasis(issue.memo, 'Hero/Footer 또는 약관성 장문 간 오매칭 가능성이 높아 기본 목록에서 제외했습니다.'),
+      memo: appendMemoBasis(issue.memo, '서로 다른 역할의 섹션 또는 약관성 장문 간 오매칭 가능성이 높아 기본 목록에서 제외했습니다.'),
       verification: issue.verification === 'kept' ? 'downgraded' : issue.verification,
     }
   }
@@ -1072,10 +2278,10 @@ function getTextMismatchContext(value) {
   const normalized = text.toLowerCase()
   const length = normalizeComparableQaText(text).length
   const hasLegalContext = /운용리스|중도해지|위약금|약관|유의사항|공시|금리|사업자|대표자|주소|고객센터|디스클레이머|disclaimer|legal|copyright|개인정보|준법|심의필/i.test(text)
-  const hasHeroContext = /hero|kv|메인|스마트|프로모션|혜택|지금\s*만나|만나보세요|월\s*\d+|bmw/i.test(normalized)
+  const hasCampaignContext = /hero|main\s*visual|campaign|promotion|혜택|이벤트|신청|예약|가격|금액|월\s*\d+|%/i.test(normalized)
 
   if (hasLegalContext && length >= 70) return 'disclaimer'
-  if (hasHeroContext && length <= 80) return 'hero'
+  if (hasCampaignContext && length <= 80) return 'campaign'
   return 'unknown'
 }
 
@@ -1196,6 +2402,23 @@ function applyIssuePriorityRules(issue) {
   const isHighPriority = hasHighPrioritySignal(issue, text)
   const isLowPriority = hasLowPrioritySignal(text) && !isHighPriority
 
+  if (isTextQaIssue(issue)) {
+    return {
+      ...issue,
+      status: isHighPriority ? '수정 필요' : issue.status === '무시 가능' ? '확인 필요' : issue.status,
+      priorityLevel: isHighPriority ? 'high' : 'normal',
+    }
+  }
+
+  if (issue?.type === '레이아웃' && !isHighPriority) {
+    return {
+      ...issue,
+      status: issue.status === '수정 필요' ? '확인 필요' : issue.status,
+      priorityLevel: 'normal',
+      memo: appendMemoBasis(issue.memo, '레이아웃 차이는 명확한 기능/콘텐츠 오류가 아니면 확인 필요로 분류했습니다.'),
+    }
+  }
+
   if (!isLowPriority) {
     return { ...issue, priorityLevel: isHighPriority ? 'high' : 'normal' }
   }
@@ -1205,7 +2428,7 @@ function applyIssuePriorityRules(issue) {
     ...issue,
     status: Number(issue.confidence) < 0.65 ? '무시 가능' : downgradedStatus,
     priorityLevel: 'low',
-    memo: appendMemoBasis(issue.memo, 'GNB/header/footer/legal/단순 표현 차이로 판단되어 낮은 우선순위로 분류했습니다.'),
+    memo: appendMemoBasis(issue.memo, '반복 내비게이션 또는 오탐 가능성이 높은 단순 표현 차이로 판단되어 낮은 우선순위로 분류했습니다.'),
   }
 }
 
@@ -1214,12 +2437,11 @@ function getIssueSearchText(issue) {
 }
 
 function hasHighPrioritySignal(issue, text) {
-  if (isHeroCtaText(text)) return true
   if (isNavigationIssueText(text)) return false
-  if (issue?.area === 'top' && /(메인|kv|hero|히어로|배너|프로모션|혜택|가격|금액|월\s*납입|월납입|만원|cta|버튼|신청|예약|구매|상담)/i.test(text)) return true
   if (issue?.type === 'CTA') return !isNavigationIssueText(text)
   if (issue?.type === '금액') return true
-  return /(메인\s*kv|kv|hero|히어로|cta|버튼|누락|개수|가격|금액|할인율|월\s*납입|월납입|만원|프로모션|혜택|구매\s*혜택|주요\s*섹션|섹션\s*누락)/i.test(text)
+  if (issue?.type === '섹션' && /누락|추가|순서|구조/i.test(text)) return true
+  return /(cta|버튼|링크명|제목|모델|model|숫자|누락|개수|가격|금액|금리|이율|비율|퍼센트|기간|날짜|조건|필수|동의|입력|오류|섹션\s*누락|깨짐|원|만원|%)/i.test(text)
 }
 
 function hasLowPrioritySignal(text) {
@@ -1228,7 +2450,6 @@ function hasLowPrioritySignal(text) {
 }
 
 function isNavigationIssueText(text) {
-  if (isHeroCtaText(text)) return false
   return isNavigationCtaContext(text) || /(gnb|header|nav|navigation|global\s*navigation|menu|search|bar\s*items|상단\s*메뉴|전체\s*메뉴|검색)/i.test(String(text || ''))
 }
 
@@ -1343,6 +2564,7 @@ function roundBoxRatio(value) {
 
 function filterMinorMockupTextIssues(issues) {
   return issues.filter((issue) => {
+    if (isTextQaIssue(issue)) return true
     if (issue.type !== '문구') return true
     if (!issue.figma || !issue.web) return true
     if (hasCriticalMockupTextDifference(issue.figma, issue.web)) return true
@@ -1368,7 +2590,6 @@ function hasCriticalMockupTextDifference(figmaText, webText) {
     ['금융상품', '금융프로그램'],
     ['상품', '프로그램'],
     ['운용리스', '리스'],
-    ['구매상담', '프로모션'],
     ['할부', '리스'],
   ]
 
@@ -1424,6 +2645,11 @@ function mapOpenAiError(error) {
 
 function limitText(value, maxLength) {
   const text = String(value || '').replace(/\s+/g, ' ').trim()
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text
+}
+
+function limitStrictText(value, maxLength) {
+  const text = String(value || '').trim()
   return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text
 }
 
@@ -1517,6 +2743,7 @@ async function scanUrl(targetUrl) {
     images,
     designElements: snapshot.designElements,
     webCtaHints: snapshot.webCtaHints || [],
+    webDomSummary: createWebDomSummary(snapshot, safePageTitle),
     webScreenshot: webScreenshot || createEmptyWebScreenshot(),
     consoleMessages,
     counts: snapshot.counts,
@@ -2594,6 +3821,59 @@ function createEmptyWebScreenshot() {
   }
 }
 
+function createWebDomSummary(snapshot = {}, pageTitle = '') {
+  const designElements = Array.isArray(snapshot.designElements) ? snapshot.designElements : []
+  const webCtaHints = Array.isArray(snapshot.webCtaHints) ? snapshot.webCtaHints : []
+  const images = Array.isArray(snapshot.images) ? snapshot.images : []
+  const headings = designElements
+    .filter((item) => /^h[1-6]$/i.test(item.tag || ''))
+    .map((item, index) => createDomSummaryItem(item, `heading-${index + 1}`))
+    .slice(0, 30)
+  const visibleTextBlocks = designElements
+    .map((item, index) => createDomSummaryItem(item, `text-${index + 1}`))
+    .filter((item) => item.text)
+    .slice(0, 80)
+  const ctas = webCtaHints.map((item, index) => createDomSummaryItem(item, `cta-${index + 1}`, { isCta: true })).slice(0, 40)
+  const priceOrNumberCandidates = visibleTextBlocks.filter((item) => hasNumberLikeText(item.text)).slice(0, 40)
+  const imageItems = images.map((image, index) => createDomSummaryItem({
+    text: image.alt || image.src,
+    tag: 'img',
+    selector: image.selector,
+    layerPath: image.domPath,
+    section: image.section,
+    y: image.y,
+    positionRatio: image.boundingBox?.yRatio,
+  }, `image-${index + 1}`)).slice(0, 40)
+
+  return {
+    pageTitle,
+    headings,
+    visibleTextBlocks,
+    ctas,
+    formFields: [],
+    priceOrNumberCandidates,
+    images: imageItems,
+    sections: inferSectionsFromElements(visibleTextBlocks.concat(ctas, imageItems), 'web'),
+  }
+}
+
+function createDomSummaryItem(item, id, extra = {}) {
+  const yRatio = normalizeYRatio(item.yRatio ?? item.positionRatio)
+  return {
+    id,
+    text: limitStrictText(item.text || item.label || item.alt || '', 180),
+    tag: limitText(item.tag || item.kind || '', 40),
+    role: normalizeSectionRole(`${item.tag || ''} ${item.role || ''} ${item.layerPath || ''} ${item.selector || ''}`),
+    selector: limitText(item.selector || '', 180),
+    layerPath: limitText(item.layerPath || item.domPath || '', 220),
+    href: limitText(item.href || '', 180),
+    sectionTitle: limitText(item.sectionName || item.section || '', 120),
+    area: normalizeMockupArea(item.area || item.section || getAreaFromYRatio(yRatio)),
+    yRatio,
+    ...extra,
+  }
+}
+
 function createMobileFallback() {
   return {
     accessible: false,
@@ -2604,4 +3884,11 @@ function createMobileFallback() {
     hasHorizontalOverflow: false,
     note: '모바일 검사를 실행하지 못했습니다.',
   }
+}
+
+export {
+  createTextQaComparisonResult,
+  createStrictTextMatches,
+  createFallbackPageUnderstanding,
+  createSectionMapping,
 }

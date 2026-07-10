@@ -1,0 +1,9 @@
+{
+  "name": "BMWFS main",
+  "url": "https://www.bmwfs.co.kr/",
+  "figmaImage": "../../main-figma-sample.png",
+  "figmaJson": "../../main-figma-sample.txt",
+  "expectedCategories": ["text", "image", "cta", "price"],
+  "forbiddenPatterns": ["서로 다른 섹션 오매칭", "Golden Test 정답 문구를 production prompt에 사용"],
+  "notes": "v0.2.0에서 중요하게 보던 의미 단위 회귀 확인용입니다. 이 케이스의 정답 문구를 production prompt나 필터에 넣지 않습니다."
+}

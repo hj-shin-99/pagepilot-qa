@@ -208,7 +208,6 @@ function AiSkeletonChecklist() {
       <div className="section-title-row">
         <div>
           <h3>AI QA 체크리스트 준비 중</h3>
-          <p className="panel-note relaxed-note">결과가 비어 보이지 않도록 분석 후보를 정리하는 동안 임시 카드를 표시합니다.</p>
         </div>
         <span>AI 분석 중</span>
       </div>

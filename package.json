@@ -9,6 +9,8 @@
     "server": "node server/index.js",
     "build": "vite build",
     "lint": "eslint .",
+    "test:golden": "node scripts/test-golden.mjs",
+    "test:text-qa": "node scripts/test-text-qa.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -15,6 +15,7 @@ import WorkspaceTabs from './components/WorkspaceTabs'
 const AI_IMAGE_DATA_URL_MAX_LENGTH = 50_000_000
 const AI_TEXT_HINT_LIMIT = 100
 const AI_TEXT_HINT_MAX_LENGTH = 160
+const AI_ELEMENT_SUMMARY_LIMIT = 80
 const AI_MOCKUP_QA_TIMEOUT_MS = 180000
 
 function isValidHttpUrl(value) {
@@ -353,6 +354,9 @@ function createAiMockupQaRequestPayload({ result, figmaElements, figmaCtaHints, 
     webTexts: createAiTextHints(webElements),
     figmaCtaHints: Array.isArray(figmaCtaHints) ? figmaCtaHints : [],
     webCtaHints: Array.isArray(result.webCtaHints) ? result.webCtaHints : [],
+    figmaElementSummary: createAiElementSummary(figmaElements, 'figma'),
+    webElementSummary: createAiElementSummary(webElements, 'web'),
+    webDomSummary: createAiWebDomSummary(result),
   }
 }
 
@@ -373,6 +377,68 @@ function createAiTextHints(elements) {
   })
 
   return hints.slice(0, AI_TEXT_HINT_LIMIT)
+}
+
+function createAiElementSummary(elements, source) {
+  if (!Array.isArray(elements)) return []
+  const seen = new Set()
+  const summary = []
+
+  elements.forEach((element, index) => {
+    if (!element || typeof element !== 'object') return
+    const text = limitAiRawText(element.text || element.label || element.name || '')
+    const yRatio = normalizeAiYRatio(element.positionRatio ?? element.yRatio)
+    const item = {
+      id: String(element.id || element.index || `${source}-${index + 1}`),
+      text,
+      tag: String(element.tag || element.kind || ''),
+      role: String(element.qaImportance || element.kind || element.tag || ''),
+      href: String(element.href || ''),
+      selector: source === 'web' ? String(element.selector || element.layerPath || '') : '',
+      layerPath: String(element.layerPath || ''),
+      sectionId: String(element.sectionId || ''),
+      sectionTitle: String(element.sectionName || element.section || ''),
+      area: getAreaFromYRatio(yRatio),
+      yRatio,
+      isCta: isAiCtaElement(element),
+      isNavigation: Boolean(element.isNavigation),
+      isFooterDisclaimer: Boolean(element.isFooterDisclaimer),
+    }
+    const key = `${item.text}:${item.tag}:${item.sectionTitle}:${Math.round((item.yRatio || 0) * 100)}`
+    if ((!item.text && !item.layerPath && !item.sectionTitle) || seen.has(key)) return
+    seen.add(key)
+    summary.push(item)
+  })
+
+  return summary.slice(0, AI_ELEMENT_SUMMARY_LIMIT)
+}
+
+function createAiWebDomSummary(result) {
+  const serverSummary = result?.webDomSummary && typeof result.webDomSummary === 'object' ? result.webDomSummary : {}
+  return {
+    ...serverSummary,
+    pageTitle: result?.pageTitle || serverSummary.pageTitle || '',
+    ctas: Array.isArray(result?.webCtaHints) ? result.webCtaHints : serverSummary.ctas || [],
+    visibleTextBlocks: createAiElementSummary(result?.designElements || [], 'web'),
+  }
+}
+
+function normalizeAiYRatio(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return null
+  return Math.round(Math.max(0, Math.min(1, number)) * 1000) / 1000
+}
+
+function limitAiRawText(value) {
+  const text = String(value || '').trim()
+  return text.length > AI_TEXT_HINT_MAX_LENGTH ? `${text.slice(0, AI_TEXT_HINT_MAX_LENGTH)}...` : text
+}
+
+function isAiCtaElement(element) {
+  const tag = String(element?.tag || '').toLowerCase()
+  const text = String(element?.text || '')
+  const path = String(element?.layerPath || '')
+  return tag === 'button' || tag === 'a' || /button|btn|cta|link-button/i.test(path) || /바로가기|신청|상담|예약|문의|자세히|구매|다운로드/i.test(text)
 }
 
 function createAiImageDataUrl(dataUrl) {
@@ -513,6 +579,7 @@ function normalizeCtaCompareText(value) {
 }
 
 function getAreaFromYRatio(value) {
+  if (!Number.isFinite(Number(value))) return 'unknown'
   if (value < 0.33) return 'top'
   if (value < 0.66) return 'middle'
   return 'bottom'

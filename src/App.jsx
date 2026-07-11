@@ -28,6 +28,7 @@ function isValidHttpUrl(value) {
 
 function App() {
   const [url, setUrl] = useState('')
+  const [figmaUrl, setFigmaUrl] = useState('')
   const [figmaJson, setFigmaJson] = useState('')
   const [figmaElements, setFigmaElements] = useState([])
   const [figmaCtaHints, setFigmaCtaHints] = useState([])
@@ -42,6 +43,9 @@ function App() {
   const [historyItems, setHistoryItems] = useState(() => loadHistoryItems())
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [aiQa, setAiQa] = useState({ state: 'idle', result: null, error: '', rawText: '' })
+  const [figmaInspectState, setFigmaInspectState] = useState('idle')
+  const [figmaInspectError, setFigmaInspectError] = useState('')
+  const [figmaInspectResult, setFigmaInspectResult] = useState(null)
 
   const summary = useMemo(() => (result ? createResultSummary(result) : ''), [result])
   const statusCounts = useMemo(() => (result ? getStatusCounts(result.checks) : null), [result])
@@ -81,6 +85,51 @@ function App() {
 
   const handleDesignImageDelete = () => {
     setDesignImages([])
+  }
+
+  const handleFigmaUrlChange = (value) => {
+    setFigmaUrl(value)
+    if (figmaInspectError) setFigmaInspectError('')
+  }
+
+  const handleFigmaInspect = async () => {
+    const trimmedUrl = figmaUrl.trim()
+
+    if (!trimmedUrl) {
+      setFigmaInspectError('Figma Frame URL을 입력해 주세요.')
+      setFigmaInspectResult(null)
+      setFigmaInspectState('failed')
+      return
+    }
+
+    setFigmaInspectState('loading')
+    setFigmaInspectError('')
+    setFigmaInspectResult(null)
+
+    try {
+      const response = await fetch('/api/figma/inspect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ figmaUrl: trimmedUrl }),
+      })
+
+      let payload = null
+      try {
+        payload = await response.json()
+      } catch {
+        payload = null
+      }
+
+      if (!response.ok) {
+        throw new Error(payload?.message || `Figma 연결 확인에 실패했습니다. (${response.status})`)
+      }
+
+      setFigmaInspectResult(payload)
+      setFigmaInspectState('success')
+    } catch (error) {
+      setFigmaInspectError(error instanceof Error ? error.message : 'Figma 연결 확인 중 오류가 발생했습니다.')
+      setFigmaInspectState('failed')
+    }
   }
 
   const handleStartScan = async () => {
@@ -257,15 +306,21 @@ function App() {
       <InputPanel
         designImages={designImages}
         figmaError={figmaError}
+        figmaInspectError={figmaInspectError}
+        figmaInspectResult={figmaInspectResult}
+        figmaInspectState={figmaInspectState}
         figmaJson={figmaJson}
+        figmaUrl={figmaUrl}
         inputError={inputError}
         isCollapsed={isSidebarCollapsed}
         isScanning={isScanning}
         url={url}
         onDesignImagesSelect={handleDesignImagesSelect}
         onDesignImageDelete={handleDesignImageDelete}
+        onFigmaInspect={handleFigmaInspect}
         onFigmaFileSelect={handleFigmaFileSelect}
         onFigmaTextChange={handleFigmaTextChange}
+        onFigmaUrlChange={handleFigmaUrlChange}
         onToggleCollapsed={() => setIsSidebarCollapsed((value) => !value)}
         onStartScan={handleStartScan}
         onUrlChange={setUrl}

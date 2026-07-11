@@ -21,6 +21,7 @@ const MAX_LINKS_TO_CHECK = null
 const MAX_DESIGN_ELEMENTS = 120
 const DESKTOP_DESIGN_VIEWPORT = { width: 1920, height: 1080 }
 const DESKTOP_SCREENSHOT_SCALE = 2
+const FIGMA_API_BASE_URL = 'https://api.figma.com/v1'
 const NAVIGATION_TIMEOUT_MS = 15000
 const LINK_TIMEOUT_MS = 7000
 const LINK_CHECK_CONCURRENCY = 8
@@ -43,6 +44,7 @@ const HERO_CTA_TEXT_PATTERNS = [
 const app = express()
 
 loadLocalEnv()
+console.log(`[Figma API] Token configured: ${Boolean(process.env.FIGMA_TOKEN?.trim())}`)
 
 app.use(express.json({ limit: '80mb' }))
 
@@ -124,6 +126,27 @@ app.post('/api/ai-mockup-qa', async (req, res) => {
   }
 })
 
+app.post('/api/figma/inspect', async (req, res) => {
+  const figmaUrl = typeof req.body?.figmaUrl === 'string' ? req.body.figmaUrl.trim() : ''
+
+  try {
+    const { fileKey, nodeId } = parseFigmaUrl(figmaUrl)
+    const figmaToken = process.env.FIGMA_TOKEN?.trim() || ''
+
+    if (!figmaToken) {
+      res.status(400).json({ message: 'FIGMA_TOKEN이 설정되지 않았습니다.' })
+      return
+    }
+
+    const result = await inspectFigmaNode({ fileKey, nodeId, token: figmaToken })
+    logFigmaInspectSuccess(result)
+    res.json({ success: true, ...result })
+  } catch (error) {
+    const mappedError = mapFigmaInspectError(error)
+    res.status(mappedError.status).json({ message: mappedError.message })
+  }
+})
+
 app.listen(PORT, () => {
   console.log(`PagePilot QA API listening on http://127.0.0.1:${PORT}`)
 })
@@ -137,9 +160,174 @@ function isHttpUrl(value) {
   }
 }
 
-function loadLocalEnv() {
-  if (process.env.OPENAI_API_KEY) return
+function parseFigmaUrl(value) {
+  if (!value) {
+    throw new FigmaInspectError(400, 'figma_url_missing', 'Figma Frame URL을 입력해 주세요.')
+  }
 
+  let url
+  try {
+    url = new URL(value)
+  } catch {
+    throw new FigmaInspectError(400, 'figma_url_invalid', '올바른 Figma URL 형식이 아닙니다.')
+  }
+
+  if (!['figma.com', 'www.figma.com'].includes(url.hostname)) {
+    throw new FigmaInspectError(400, 'figma_url_invalid', '올바른 Figma URL 형식이 아닙니다.')
+  }
+
+  const pathSegments = url.pathname.split('/').filter(Boolean)
+  if (pathSegments.length < 3 || !['design', 'file'].includes(pathSegments[0])) {
+    throw new FigmaInspectError(400, 'figma_url_invalid', '지원하지 않는 Figma URL 형식입니다.')
+  }
+
+  const fileKey = pathSegments[1]?.trim()
+  if (!fileKey) {
+    throw new FigmaInspectError(400, 'figma_file_key_invalid', 'Figma URL에서 fileKey를 찾을 수 없습니다.')
+  }
+
+  const nodeId = normalizeFigmaNodeId(url.searchParams.get('node-id') || '')
+  return { fileKey, nodeId }
+}
+
+function normalizeFigmaNodeId(value) {
+  const normalized = String(value || '').trim()
+  if (!normalized) {
+    throw new FigmaInspectError(400, 'figma_node_id_missing', 'Figma URL에서 node-id를 찾을 수 없습니다.')
+  }
+
+  if (/^\d+-\d+$/.test(normalized)) return normalized.replace('-', ':')
+  if (/^\d+:\d+$/.test(normalized)) return normalized
+
+  throw new FigmaInspectError(400, 'figma_node_id_invalid', 'Figma URL의 node-id 형식이 올바르지 않습니다.')
+}
+
+async function inspectFigmaNode({ fileKey, nodeId, token }) {
+  const requestUrl = `${FIGMA_API_BASE_URL}/files/${encodeURIComponent(fileKey)}/nodes?ids=${encodeURIComponent(nodeId)}`
+
+  let response
+  try {
+    response = await fetch(requestUrl, {
+      headers: {
+        'X-Figma-Token': token,
+      },
+    })
+  } catch {
+    throw new FigmaInspectError(502, 'figma_network_error', 'Figma API 네트워크 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.')
+  }
+
+  if (!response.ok) {
+    throw createFigmaApiStatusError(response.status)
+  }
+
+  let payload
+  try {
+    payload = await response.json()
+  } catch {
+    throw new FigmaInspectError(502, 'figma_response_invalid', 'Figma API 응답을 처리하지 못했습니다.')
+  }
+
+  const targetNode = payload?.nodes?.[nodeId]?.document
+  if (!targetNode || typeof targetNode !== 'object') {
+    throw new FigmaInspectError(404, 'figma_node_not_found', '파일 또는 node를 찾을 수 없습니다.')
+  }
+
+  const { visibleTextCount, totalDescendantCount } = summarizeFigmaNode(targetNode)
+  return {
+    fileKey,
+    nodeId,
+    nodeName: typeof targetNode.name === 'string' && targetNode.name.trim() ? targetNode.name.trim() : '이름 없음',
+    nodeType: typeof targetNode.type === 'string' && targetNode.type.trim() ? targetNode.type.trim() : 'UNKNOWN',
+    visibleTextCount,
+    totalDescendantCount,
+  }
+}
+
+function createFigmaApiStatusError(status) {
+  if (status === 400) {
+    return new FigmaInspectError(400, 'figma_api_bad_request', 'Figma URL 또는 node ID 형식이 올바르지 않습니다.')
+  }
+  if (status === 401) {
+    return new FigmaInspectError(401, 'figma_token_invalid', 'Figma 토큰이 유효하지 않습니다.')
+  }
+  if (status === 403) {
+    return new FigmaInspectError(403, 'figma_forbidden', '해당 토큰 계정에 이 Figma 파일 접근 권한이 없습니다.')
+  }
+  if (status === 404) {
+    return new FigmaInspectError(404, 'figma_not_found', '파일 또는 node를 찾을 수 없습니다.')
+  }
+  if (status === 429) {
+    return new FigmaInspectError(429, 'figma_rate_limited', 'Figma API 호출 제한에 도달했습니다. 잠시 후 다시 시도해 주세요.')
+  }
+
+  return new FigmaInspectError(502, 'figma_api_error', 'Figma API 요청 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.')
+}
+
+function summarizeFigmaNode(node) {
+  const summary = {
+    visibleTextCount: 0,
+    totalDescendantCount: 0,
+  }
+
+  if (!node || typeof node !== 'object' || !Array.isArray(node.children)) {
+    return summary
+  }
+
+  node.children.forEach((child) => visitFigmaDescendants(child, node.visible === false, summary))
+  return summary
+}
+
+function visitFigmaDescendants(node, parentHidden, summary) {
+  if (!node || typeof node !== 'object') return
+
+  summary.totalDescendantCount += 1
+  const hidden = parentHidden || node.visible === false
+
+  if (node.type === 'TEXT' && !hidden && typeof node.characters === 'string' && node.characters.trim()) {
+    summary.visibleTextCount += 1
+  }
+
+  if (!Array.isArray(node.children)) return
+  node.children.forEach((child) => visitFigmaDescendants(child, hidden, summary))
+}
+
+function logFigmaInspectSuccess(result) {
+  console.log('[Figma API] Request success')
+  console.log(`- fileKey: ${maskFigmaFileKey(result.fileKey)}`)
+  console.log(`- nodeId: ${result.nodeId}`)
+  console.log(`- nodeName: ${result.nodeName}`)
+  console.log(`- nodeType: ${result.nodeType}`)
+  console.log(`- visibleTextCount: ${result.visibleTextCount}`)
+  console.log(`- totalDescendantCount: ${result.totalDescendantCount}`)
+}
+
+function maskFigmaFileKey(value) {
+  const fileKey = String(value || '')
+  if (fileKey.length <= 4) return fileKey
+  return `${fileKey.slice(0, 4)}${'*'.repeat(fileKey.length - 4)}`
+}
+
+function mapFigmaInspectError(error) {
+  if (error instanceof FigmaInspectError) {
+    return { status: error.status, message: error.message }
+  }
+
+  return {
+    status: 502,
+    message: 'Figma 연결 확인 중 예상하지 못한 오류가 발생했습니다.',
+  }
+}
+
+class FigmaInspectError extends Error {
+  constructor(status, code, message) {
+    super(message)
+    this.name = 'FigmaInspectError'
+    this.status = status
+    this.code = code
+  }
+}
+
+function loadLocalEnv() {
   try {
     const currentFile = fileURLToPath(import.meta.url)
     const envPath = path.resolve(path.dirname(currentFile), '..', '.env')

@@ -1,12 +1,18 @@
 function InputPanel({
   url,
+  figmaUrl,
   figmaJson,
   inputError,
   figmaError,
+  figmaInspectError,
+  figmaInspectResult,
+  figmaInspectState,
   isCollapsed,
   isScanning,
   designImages,
   onUrlChange,
+  onFigmaUrlChange,
+  onFigmaInspect,
   onFigmaTextChange,
   onFigmaFileSelect,
   onDesignImagesSelect,
@@ -98,6 +104,48 @@ function InputPanel({
             <input id="figma-json-file" type="file" accept="application/json,.json" onChange={onFigmaFileSelect} />
           </label>
           {figmaError ? <p className="input-error">{figmaError}</p> : null}
+      </section>
+
+      <section className="panel-section advanced-options" aria-label="Figma REST API 연결 테스트">
+        <div className="section-title-row compact-title-row">
+          <h3>Figma 연결 테스트</h3>
+          <span>개발 확인용</span>
+        </div>
+          <p className="panel-note">Frame URL만 서버로 보내 최소 연결만 확인합니다.</p>
+          <input
+            className="url-input"
+            type="url"
+            value={figmaUrl}
+            placeholder="https://www.figma.com/design/...?..."
+            onChange={(event) => onFigmaUrlChange(event.target.value)}
+          />
+          <button className="primary-button figma-inspect-button" type="button" onClick={onFigmaInspect} disabled={figmaInspectState === 'loading'}>
+            {figmaInspectState === 'loading' ? '확인 중...' : 'Figma 연결 확인'}
+          </button>
+          {figmaInspectError ? <p className="input-error">{figmaInspectError}</p> : null}
+          {figmaInspectResult?.success ? (
+            <div className="figma-inspect-result" aria-live="polite">
+              <p className="figma-inspect-status">Figma API 연결 성공</p>
+              <div className="figma-inspect-grid">
+                <div className="figma-inspect-item">
+                  <span>Frame 이름</span>
+                  <strong>{figmaInspectResult.nodeName}</strong>
+                </div>
+                <div className="figma-inspect-item">
+                  <span>Node type</span>
+                  <strong>{figmaInspectResult.nodeType}</strong>
+                </div>
+                <div className="figma-inspect-item">
+                  <span>Visible text count</span>
+                  <strong>{figmaInspectResult.visibleTextCount}</strong>
+                </div>
+                <div className="figma-inspect-item">
+                  <span>Descendant count</span>
+                  <strong>{figmaInspectResult.totalDescendantCount}</strong>
+                </div>
+              </div>
+            </div>
+          ) : null}
       </section>
         </>
       )}

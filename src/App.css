@@ -2595,6 +2595,63 @@
   }
 }
 
+.figma-inspect-button {
+  width: 100%;
+}
+
+.figma-inspect-result {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(34, 197, 94, 0.28);
+  border-radius: 14px;
+  background: rgba(15, 118, 110, 0.14);
+}
+
+.figma-inspect-status {
+  margin: 0;
+  color: #dcfce7;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.figma-inspect-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.figma-inspect-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.figma-inspect-item span {
+  color: #9aa7b7;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.figma-inspect-item strong {
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 800;
+  text-align: right;
+  word-break: break-word;
+}
+
+@media (max-width: 760px) {
+  .figma-inspect-item {
+    display: grid;
+    gap: 4px;
+  }
+
+  .figma-inspect-item strong {
+    text-align: left;
+  }
+}
+
 /* Loading copy alignment polish. */
 .empty-state.is-scanning > div::after {
   width: min(100%, 340px);

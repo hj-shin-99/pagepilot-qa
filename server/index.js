@@ -5,6 +5,9 @@ import { fileURLToPath } from 'node:url'
 import OpenAI from 'openai'
 import { chromium, request as playwrightRequest } from 'playwright'
 import { createFigmaTextPreview, extractVisibleFigmaTextNodes } from './figmaText.js'
+import { createTextDifferenceCandidates } from './textDiff.js'
+import { matchTextNodes } from './textMatcher.js'
+import { extractVisibleWebTextElements } from './webText.js'
 
 const PORT = Number(process.env.PORT || 3001)
 const AI_QA_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini'
@@ -145,6 +148,54 @@ app.post('/api/figma/inspect', async (req, res) => {
     res.json({ success: true, ...result })
   } catch (error) {
     const mappedError = mapFigmaInspectError(error)
+    res.status(mappedError.status).json({ message: mappedError.message })
+  }
+})
+
+app.post('/api/figma/text-compare', async (req, res) => {
+  const figmaUrl = typeof req.body?.figmaUrl === 'string' ? req.body.figmaUrl.trim() : ''
+  const webUrl = typeof req.body?.webUrl === 'string' ? req.body.webUrl.trim() : ''
+  const includeAllPairs = req.body?.includeAllPairs === true
+
+  if (!isHttpUrl(webUrl)) {
+    res.status(400).json({ message: 'http:// 또는 https://로 시작하는 Web URL만 비교할 수 있습니다.' })
+    return
+  }
+
+  try {
+    const { fileKey, nodeId } = parseFigmaUrl(figmaUrl)
+    const figmaToken = process.env.FIGMA_TOKEN?.trim() || ''
+
+    if (!figmaToken) {
+      res.status(400).json({ message: 'FIGMA_TOKEN이 설정되지 않았습니다.' })
+      return
+    }
+
+    const figmaResult = await inspectFigmaNode({
+      fileKey,
+      nodeId,
+      token: figmaToken,
+      includeTextNodes: true,
+    })
+    const webResult = await scanWebTextForCompare(webUrl)
+    const matchResult = matchTextNodes(
+      figmaResult.textNodes || [],
+      webResult.textElements,
+      { includeAllPairs },
+    )
+    const differences = createTextDifferenceCandidates(matchResult.matchedPairs)
+    const response = createTextCompareResponse({
+      figmaTextNodes: figmaResult.textNodes || [],
+      webTextElements: webResult.textElements,
+      matchResult,
+      differences,
+      includeAllPairs,
+    })
+
+    logTextCompareSummary(response.summary, differences)
+    res.json(response)
+  } catch (error) {
+    const mappedError = mapTextCompareError(error)
     res.status(mappedError.status).json({ message: mappedError.message })
   }
 })
@@ -294,6 +345,20 @@ function mapFigmaInspectError(error) {
   }
 }
 
+function mapTextCompareError(error) {
+  if (error instanceof FigmaInspectError) {
+    return { status: error.status, message: error.message }
+  }
+  if (error instanceof TextCompareError) {
+    return { status: error.status, message: error.message }
+  }
+
+  return {
+    status: 502,
+    message: '텍스트 비교 중 예상하지 못한 오류가 발생했습니다.',
+  }
+}
+
 function truncateFigmaLogText(value, maxLength) {
   const text = String(value || '').trim()
   if (text.length <= maxLength) return text
@@ -308,6 +373,15 @@ class FigmaInspectError extends Error {
   constructor(status, code, message) {
     super(message)
     this.name = 'FigmaInspectError'
+    this.status = status
+    this.code = code
+  }
+}
+
+class TextCompareError extends Error {
+  constructor(status, code, message) {
+    super(message)
+    this.name = 'TextCompareError'
     this.status = status
     this.code = code
   }
@@ -1696,6 +1770,155 @@ async function scanUrl(targetUrl) {
     counts: snapshot.counts,
     mobile: safeMobileResult,
   }
+}
+
+async function scanWebTextForCompare(targetUrl) {
+  const browser = await chromium.launch({ headless: true })
+  let mainResponse = null
+  let mainError = ''
+
+  try {
+    const context = await browser.newContext({
+      ignoreHTTPSErrors: true,
+      viewport: DESKTOP_DESIGN_VIEWPORT,
+      deviceScaleFactor: DESKTOP_SCREENSHOT_SCALE,
+      permissions: [],
+      serviceWorkers: 'block',
+    })
+    await blockPostRequests(context)
+
+    const page = await context.newPage()
+
+    try {
+      mainResponse = await page.goto(targetUrl, {
+        waitUntil: 'domcontentloaded',
+        timeout: NAVIGATION_TIMEOUT_MS,
+      })
+      await page.waitForLoadState('networkidle', { timeout: 5000 }).catch((error) => {
+        mainError = mainError || `networkidle 대기 제한: ${error.message}`
+      })
+    } catch (error) {
+      mainError = error instanceof Error ? error.message : '페이지 접속 실패'
+    }
+
+    if (!mainResponse || !mainResponse.ok()) {
+      throw new TextCompareError(502, 'web_navigation_error', mainError || '비교 대상 웹 페이지에 접근하지 못했습니다.')
+    }
+
+    const snapshot = await extractVisibleWebTextElements(page)
+    await context.close()
+
+    return {
+      httpStatus: mainResponse.status(),
+      textElements: snapshot.textElements || [],
+      pageBounds: snapshot.pageBounds || null,
+    }
+  } finally {
+    await browser.close()
+  }
+}
+
+function createTextCompareResponse({ figmaTextNodes, webTextElements, matchResult, differences, includeAllPairs }) {
+  const matchedPairs = Array.isArray(matchResult.matchedPairs) ? matchResult.matchedPairs : []
+  const summary = {
+    figmaTextCount: figmaTextNodes.length,
+    webTextCount: webTextElements.length,
+    matchedCount: matchedPairs.length,
+    highConfidenceCount: matchedPairs.filter((pair) => pair.matchConfidence === 'high').length,
+    mediumConfidenceCount: matchedPairs.filter((pair) => pair.matchConfidence === 'medium').length,
+    lowConfidenceCount: matchedPairs.filter((pair) => pair.matchConfidence === 'low').length,
+    differenceCount: differences.length,
+    figmaOnlyCount: matchResult.figmaOnly.length,
+    webOnlyCount: matchResult.webOnly.length,
+  }
+
+  const response = {
+    success: true,
+    summary,
+    differences: differences.slice(0, 20),
+    matchedPreview: createMatchedPreview(matchedPairs),
+    figmaOnlyPreview: createFigmaOnlyPreview(matchResult.figmaOnly),
+    webOnlyPreview: createWebOnlyPreview(matchResult.webOnly),
+  }
+
+  if (includeAllPairs) {
+    response.matchedPairs = matchedPairs
+    response.figmaOnly = matchResult.figmaOnly
+    response.webOnly = matchResult.webOnly
+    response.allPairs = matchResult.allPairs
+  }
+
+  return response
+}
+
+function createMatchedPreview(matchedPairs) {
+  return matchedPairs
+    .slice()
+    .sort((first, second) => {
+      const confidenceDiff = getMatchConfidenceRank(second.matchConfidence) - getMatchConfidenceRank(first.matchConfidence)
+      if (confidenceDiff !== 0) return confidenceDiff
+      return second.matchScore - first.matchScore
+    })
+    .slice(0, 12)
+    .map((pair) => ({
+      figmaNodeId: pair.figmaNode?.nodeId || pair.figmaNode?.id || null,
+      webSelector: pair.webElement?.selector || null,
+      figmaText: truncateFigmaLogText(pair.figmaNode?.characters, 120),
+      webText: truncateFigmaLogText(pair.webElement?.rawText || pair.webElement?.text, 120),
+      matchScore: pair.matchScore,
+      matchConfidence: pair.matchConfidence,
+      rawTextEqual: pair.rawTextEqual,
+      normalizedTextEqual: pair.normalizedTextEqual,
+      matchReasons: pair.matchReasons.slice(0, 4),
+      rejectReasons: pair.rejectReasons.slice(0, 4),
+    }))
+}
+
+function createFigmaOnlyPreview(figmaOnly) {
+  return figmaOnly.slice(0, 12).map((node) => ({
+    nodeId: node?.nodeId || node?.id || null,
+    text: truncateFigmaLogText(node?.characters, 120),
+    layerPath: node?.layerPath || '',
+    yRatio: formatFigmaLogRatio(node?.yRatio),
+    roleHint: node?.parentFrameName || node?.parentType || '',
+  }))
+}
+
+function createWebOnlyPreview(webOnly) {
+  return webOnly.slice(0, 12).map((element) => ({
+    id: element?.id || null,
+    text: truncateFigmaLogText(element?.rawText || element?.text, 120),
+    selector: element?.selector || '',
+    domPath: element?.domPath || '',
+    yRatio: formatFigmaLogRatio(element?.yRatio),
+    role: element?.role || 'unknown',
+  }))
+}
+
+function logTextCompareSummary(summary, differences) {
+  console.log('[Text Match]')
+  console.log(`- Figma text: ${summary.figmaTextCount}`)
+  console.log(`- Web text: ${summary.webTextCount}`)
+  console.log(`- Matched: ${summary.matchedCount}`)
+  console.log(`- High: ${summary.highConfidenceCount}`)
+  console.log(`- Medium: ${summary.mediumConfidenceCount}`)
+  console.log(`- Low: ${summary.lowConfidenceCount}`)
+  console.log(`- Differences: ${summary.differenceCount}`)
+  console.log(`- Figma only: ${summary.figmaOnlyCount}`)
+  console.log(`- Web only: ${summary.webOnlyCount}`)
+
+  differences
+    .filter((item) => item.matchConfidence === 'high')
+    .slice(0, 5)
+    .forEach((item, index) => {
+      console.log(`  ${index + 1}. ${truncateFigmaLogText(item.figmaText, 80)} => ${truncateFigmaLogText(item.webText, 80)} (${item.webSelector || 'no-selector'})`)
+    })
+}
+
+function getMatchConfidenceRank(value) {
+  if (value === 'high') return 3
+  if (value === 'medium') return 2
+  return 1
 }
 
 async function safeWebScreenshot(page) {

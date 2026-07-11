@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { buildVisualPayloadResponse, createVisualPayloadHandler } from './visualPayloadRoute.js'
-import { createVisualQaPayload } from './visualQaPayload.js'
+import { buildVisualQaPayloadArtifacts } from './visualQaPayload.js'
 import { createWebVisualAnalysis } from './webVisualAnalysis.js'
 
 const SAMPLE_SCREENSHOT = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF9sAAAAASUVORK5CYII='
@@ -119,7 +119,11 @@ function createDependencies() {
           webOnlyPreview: Array.from({ length: 11 }, (_, index) => ({ text: `Web Only ${index}` })),
         }
       },
-      createVisualQaPayload,
+      buildVisualQaPayloadArtifacts,
+      async validateImageAsset(relativePath) {
+        if (relativePath.includes('figma')) return { exists: true, readable: true, mimeType: 'image/png' }
+        return { exists: true, readable: true, mimeType: 'image/png' }
+      },
       mapFigmaLoaderError(error) {
         return { status: error.status || 500, body: { message: error.message } }
       },
@@ -157,6 +161,9 @@ test('buildVisualPayloadResponse exposes limited debug previews only when debug 
   assert.equal(result.debug.preview.figmaOnly.length, 10)
   assert.equal(result.debug.preview.webOnly.length, 10)
   assert.equal(typeof result.debug.timing.totalMs, 'number')
+  assert.equal(result.debug.imageValidation.figmaExists, true)
+  assert.equal(result.debug.imageValidation.webReadable, true)
+  assert.equal(result.debug.payloadQuality.heroMediaGroupCreated, true)
 })
 
 test('createVisualPayloadHandler returns 400 for invalid URL without calling scanUrl', async () => {

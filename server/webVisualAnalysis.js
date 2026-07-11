@@ -102,13 +102,18 @@ function createWebCtaCandidates(webCtaHints) {
       return {
         type: 'cta',
         source: 'web',
+        sourceId: truncateText(hint?.selector || hint?.href || hint?.text, 180),
         text: truncateText(hint?.text, 120),
         href: normalizeString(hint?.href),
         selector: truncateText(hint?.selector, 180),
+        context: truncateText(hint?.selector, 180),
+        parentContext: '',
         section: normalizeString(hint?.area) || 'unknown',
         confidence: classifyConfidence(reasons.length >= 3 ? 'high' : reasons.length >= 2 ? 'medium' : 'low'),
         reasons,
         y: normalizeNumber(hint?.y),
+        yRatio: normalizeAreaToRatio(hint?.area),
+        visible: hint?.visible !== false,
       }
     })
     .filter((item) => item.text)
@@ -127,13 +132,18 @@ function createWebImageCandidates(images) {
       return {
         type: 'image',
         source: 'web',
+        sourceId: truncateText(image?.selector || image?.src || image?.alt, 180),
         text: truncateText(image?.alt, 120),
         selector: truncateText(image?.selector, 180),
+        context: truncateText(image?.domPath || image?.selector, 180),
+        parentContext: '',
         section: normalizeString(image?.section) || 'unknown',
         confidence: classifyConfidence(reasons.length >= 3 ? 'high' : reasons.length >= 2 ? 'medium' : 'low'),
         reasons,
         width: normalizeNumber(image?.naturalWidth),
         height: normalizeNumber(image?.naturalHeight),
+        yRatio: normalizeBoundingBoxYRatio(image?.boundingBox),
+        visible: image?.loaded === true,
       }
     })
     .slice(0, MAX_IMAGE_CANDIDATES)
@@ -152,11 +162,18 @@ function createWebVideoCandidates(videoCandidates) {
       return {
         type: 'video',
         source: 'web',
+        sourceId: truncateText(candidate?.selector || candidate?.title || candidate?.ariaLabel, 180),
         text: truncateText(candidate?.title || candidate?.ariaLabel || '', 120),
         selector: truncateText(candidate?.selector, 180),
+        context: truncateText(candidate?.selector, 180),
+        parentContext: '',
         section: normalizeString(candidate?.section) || 'unknown',
         confidence: classifyConfidence(reasons.length >= 3 ? 'high' : reasons.length >= 2 ? 'medium' : 'low'),
         reasons,
+        yRatio: normalizeNumber(candidate?.yRatio),
+        width: normalizeNumber(candidate?.width),
+        height: normalizeNumber(candidate?.height),
+        visible: true,
       }
     })
     .slice(0, MAX_VIDEO_CANDIDATES)
@@ -313,4 +330,21 @@ function normalizeCount(value, fallback) {
 function normalizeNumber(value) {
   const numeric = Number(value)
   return Number.isFinite(numeric) ? numeric : null
+}
+
+function normalizeAreaToRatio(value) {
+  if (value === 'top') return 0.15
+  if (value === 'middle') return 0.5
+  if (value === 'bottom') return 0.85
+  if (value === 'navigation') return 0.05
+  if (value === 'hero') return 0.12
+  return null
+}
+
+function normalizeBoundingBoxYRatio(box) {
+  const y = Number(box?.y)
+  if (!Number.isFinite(y)) return null
+  if (y < 600) return 0.12
+  if (y < 1800) return 0.5
+  return 0.85
 }

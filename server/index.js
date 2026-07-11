@@ -10,7 +10,7 @@ import { extractFigmaStructure } from './figmaStructure.js'
 import { createFigmaTextPreview, extractVisibleFigmaTextNodes } from './figmaText.js'
 import { createTextDifferenceCandidates } from './textDiff.js'
 import { matchTextNodes } from './textMatcher.js'
-import { createVisualQaPayload } from './visualQaPayload.js'
+import { buildVisualQaPayloadArtifacts } from './visualQaPayload.js'
 import { createVisualPayloadHandler } from './visualPayloadRoute.js'
 import { createWebVisualAnalysis } from './webVisualAnalysis.js'
 import { extractVisibleWebTextElements } from './webText.js'
@@ -77,7 +77,7 @@ const visualPayloadHandler = createVisualPayloadHandler({
   matchTextNodes,
   createTextDifferenceCandidates,
   createTextCompareResponse,
-  createVisualQaPayload,
+  buildVisualQaPayloadArtifacts,
   mapFigmaLoaderError,
 })
 
@@ -2159,6 +2159,9 @@ async function safeVisualPayloadData(page, instrumentation) {
             autoplay: element.autoplay === true,
             controls: element.controls === true,
             section,
+            yRatio: documentHeight > 0 ? Math.max(0, Math.min(1, y / documentHeight)) : null,
+            width: Math.round(rect.width * 100) / 100,
+            height: Math.round(rect.height * 100) / 100,
           }
         })
         .slice(0, 20),

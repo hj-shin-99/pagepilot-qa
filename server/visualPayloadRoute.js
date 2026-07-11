@@ -1,3 +1,6 @@
+import fs from 'node:fs'
+import path from 'node:path'
+
 export function createVisualPayloadHandler(dependencies) {
   return async function visualPayloadHandler(req, res) {
     const figmaUrl = typeof req.body?.figmaUrl === 'string' ? req.body.figmaUrl.trim() : ''
@@ -93,20 +96,8 @@ export async function buildVisualPayloadResponse(input, dependencies) {
   }
   timings.textCompareMs = now() - textCompareStartedAt
 
-  const meta = {
-    createdAt: new Date(totalStartedAt).toISOString(),
-    webUrl: input.webUrl,
-    figmaNodeId: nodeId,
-    playwrightRunCount: webAnalysis.meta?.playwrightRunCount || instrumentation.playwrightRunCount || 0,
-    figmaCacheSource: figmaResult.cache?.source || 'unknown',
-    figmaRenderCacheSource: figmaRender.cache?.source || 'unknown',
-    webScreenshotCreated: webAnalysis.screenshot?.created === true,
-    openAiCalled: false,
-    payloadVersion: '1.0',
-  }
-
   const payloadStartedAt = now()
-  const payload = dependencies.createVisualQaPayload({
+  const artifacts = dependencies.buildVisualQaPayloadArtifacts({
     figmaAnalysis: {
       render: figmaRender,
       structure: figmaResult.figmaStructure,
@@ -121,24 +112,37 @@ export async function buildVisualPayloadResponse(input, dependencies) {
   timings.totalMs = now() - totalStartedAt
 
   const response = {
-    meta,
-    ...payload,
+    meta: {
+      createdAt: new Date(totalStartedAt).toISOString(),
+      webUrl: input.webUrl,
+      figmaNodeId: nodeId,
+      playwrightRunCount: webAnalysis.meta?.playwrightRunCount || instrumentation.playwrightRunCount || 0,
+      figmaCacheSource: figmaResult.cache?.source || 'unknown',
+      figmaRenderCacheSource: figmaRender.cache?.source || 'unknown',
+      webScreenshotCreated: webAnalysis.screenshot?.created === true,
+      openAiCalled: false,
+      payloadVersion: '1.0',
+    },
+    ...artifacts.payload,
   }
 
   if (debug) {
+    const imageValidation = await validateImageAssets(response, dependencies.validateImageAsset)
     response.debug = createDebugPayload({
       figmaResult,
       figmaRender,
       webAnalysis,
       textComparison,
       timings,
+      payloadQuality: artifacts.payloadQuality,
+      imageValidation,
     })
   }
 
   return response
 }
 
-function createDebugPayload({ figmaResult, figmaRender, webAnalysis, textComparison, timings }) {
+function createDebugPayload({ figmaResult, figmaRender, webAnalysis, textComparison, timings, payloadQuality, imageValidation }) {
   return {
     counts: {
       figmaTextNodes: Array.isArray(figmaResult.textNodes) ? figmaResult.textNodes.length : 0,
@@ -163,5 +167,53 @@ function createDebugPayload({ figmaResult, figmaRender, webAnalysis, textCompari
       figmaRender: figmaRender.cache || null,
     },
     timing: timings,
+    imageValidation,
+    payloadQuality,
   }
+}
+
+async function validateImageAssets(payload, validateImageAsset = defaultValidateImageAsset) {
+  const figmaValidation = await validateImageAsset(payload?.figma?.localImagePath || payload?.figma?.image || '')
+  const webValidation = await validateImageAsset(payload?.web?.screenshot?.path || payload?.web?.image || '')
+
+  return {
+    figmaExists: figmaValidation.exists,
+    figmaReadable: figmaValidation.readable,
+    figmaMimeType: figmaValidation.mimeType,
+    webExists: webValidation.exists,
+    webReadable: webValidation.readable,
+    webMimeType: webValidation.mimeType,
+  }
+}
+
+async function defaultValidateImageAsset(relativePath) {
+  if (!isAllowedImageRelativePath(relativePath)) {
+    return { exists: false, readable: false, mimeType: '' }
+  }
+
+  const filePath = path.resolve(relativePath)
+  const mimeType = inferMimeTypeFromPath(relativePath)
+
+  try {
+    const stats = await fs.promises.stat(filePath)
+    if (!stats.isFile()) {
+      return { exists: false, readable: false, mimeType }
+    }
+    await fs.promises.access(filePath, fs.constants.R_OK)
+    return { exists: true, readable: true, mimeType }
+  } catch {
+    return { exists: false, readable: false, mimeType }
+  }
+}
+
+function isAllowedImageRelativePath(value) {
+  const normalized = String(value || '').replace(/\\/g, '/')
+  return normalized.startsWith('.cache/figma/renders/') || normalized.startsWith('.cache/visual/screenshots/')
+}
+
+function inferMimeTypeFromPath(value) {
+  const normalized = String(value || '').toLowerCase()
+  if (normalized.endsWith('.jpg') || normalized.endsWith('.jpeg')) return 'image/jpeg'
+  if (normalized.endsWith('.png')) return 'image/png'
+  return ''
 }

@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { createFigmaCache, maskFigmaFileKey } from './figmaCache.js'
 
 const FIGMA_API_BASE_URL = 'https://api.figma.com/v1'
@@ -5,7 +6,8 @@ const FIGMA_API_BASE_URL = 'https://api.figma.com/v1'
 export function createFigmaApiClient(options = {}) {
   const fetchImpl = options.fetchImpl || fetch
   const logger = options.logger || console
-  const cache = options.cache || createFigmaCache({ ttlMs: options.ttlMs, cacheDir: options.cacheDir })
+  const cacheDir = options.cacheDir || getDefaultNodeCacheDir()
+  const cache = options.cache || createFigmaCache({ ttlMs: options.ttlMs, cacheDir })
   const inFlightRequests = new Map()
 
   return {
@@ -188,6 +190,10 @@ export function createFigmaApiClient(options = {}) {
     const retryAfterPart = Number.isFinite(details.retryAfterSeconds) ? ` retryAfterSeconds=${details.retryAfterSeconds}` : ''
     logger.log(`[Figma API] ${kind} fileKey=${maskFigmaFileKey(details.fileKey)} nodeId=${details.nodeId}${retryAfterPart}`)
   }
+}
+
+function getDefaultNodeCacheDir() {
+  return path.resolve('.cache', 'figma', 'nodes')
 }
 
 export class FigmaApiError extends Error {

@@ -1,14 +1,17 @@
 import express from 'express'
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import OpenAI from 'openai'
 import { chromium, request as playwrightRequest } from 'playwright'
 import { createFigmaApiClient, FigmaApiError, FigmaRateLimitError } from './figmaApiClient.js'
+import { createFigmaRenderClient } from './figmaRenderClient.js'
 import { extractFigmaStructure } from './figmaStructure.js'
 import { createFigmaTextPreview, extractVisibleFigmaTextNodes } from './figmaText.js'
 import { createTextDifferenceCandidates } from './textDiff.js'
 import { matchTextNodes } from './textMatcher.js'
+import { createVisualQaPayload } from './visualQaPayload.js'
 import { extractVisibleWebTextElements } from './webText.js'
 
 const PORT = Number(process.env.PORT || 3001)
@@ -53,6 +56,11 @@ console.log(`[Figma API] Token configured: ${Boolean(process.env.FIGMA_TOKEN?.tr
 
 const figmaApiClient = createFigmaApiClient({
   ttlMs: Number(process.env.FIGMA_CACHE_TTL_MS),
+})
+
+const figmaRenderClient = createFigmaRenderClient({
+  ttlMs: Number(process.env.FIGMA_RENDER_CACHE_TTL_MS),
+  maxBytes: Number(process.env.FIGMA_RENDER_MAX_BYTES),
 })
 
 app.use(express.json({ limit: '80mb' }))
@@ -211,20 +219,160 @@ app.post('/api/figma/text-compare', async (req, res) => {
   }
 })
 
+app.post('/api/figma/render', async (req, res) => {
+  const figmaUrl = typeof req.body?.figmaUrl === 'string' ? req.body.figmaUrl.trim() : ''
+  const forceRefresh = req.body?.forceRefresh === true
+
+  try {
+    const { fileKey, nodeId } = parseFigmaUrl(figmaUrl)
+    const figmaToken = process.env.FIGMA_TOKEN?.trim() || ''
+
+    if (!figmaToken) {
+      res.status(400).json({ message: 'FIGMA_TOKEN이 설정되지 않았습니다.' })
+      return
+    }
+
+    const format = normalizeRenderFormat(req.body?.format)
+    const scale = normalizeRenderScale(req.body?.scale)
+    const figmaNodeData = await figmaApiClient.getFigmaNodeData({
+      fileKey,
+      nodeId,
+      token: figmaToken,
+      forceRefresh,
+    })
+
+    const result = await figmaRenderClient.getFigmaRenderedImage({
+      fileKey,
+      nodeId,
+      token: figmaToken,
+      nodeName: figmaNodeData.targetNode?.name,
+      format,
+      scale,
+      forceRefresh,
+    })
+
+    res.json({ success: true, ...result })
+  } catch (error) {
+    const mappedError = mapFigmaLoaderError(error, 'render')
+    res.status(mappedError.status).json(mappedError.body)
+  }
+})
+
+app.post('/api/visual/payload', async (req, res) => {
+  const figmaUrl = typeof req.body?.figmaUrl === 'string' ? req.body.figmaUrl.trim() : ''
+  const webUrl = typeof req.body?.webUrl === 'string' ? req.body.webUrl.trim() : ''
+
+  if (!isHttpUrl(webUrl)) {
+    res.status(400).json({ message: 'http:// 또는 https://로 시작하는 Web URL만 사용할 수 있습니다.' })
+    return
+  }
+
+  try {
+    const { fileKey, nodeId } = parseFigmaUrl(figmaUrl)
+    const figmaToken = process.env.FIGMA_TOKEN?.trim() || ''
+
+    if (!figmaToken) {
+      res.status(400).json({ message: 'FIGMA_TOKEN이 설정되지 않았습니다.' })
+      return
+    }
+
+    const figmaResult = await inspectFigmaNode({
+      fileKey,
+      nodeId,
+      token: figmaToken,
+      includeTextNodes: true,
+      includeStructure: true,
+      includeFlatNodes: true,
+    })
+    const figmaRender = await figmaRenderClient.getFigmaRenderedImage({
+      fileKey,
+      nodeId,
+      token: figmaToken,
+      nodeName: figmaResult.nodeName,
+      format: 'png',
+      scale: 2,
+    })
+    const webScanResult = await scanUrl(webUrl)
+    const webTextResult = await scanWebTextForCompare(webUrl)
+    const matchResult = matchTextNodes(figmaResult.textNodes || [], webTextResult.textElements || [], { includeAllPairs: true })
+    const differences = createTextDifferenceCandidates(matchResult.matchedPairs)
+    const textCompareResult = createTextCompareResponse({
+      figmaTextNodes: figmaResult.textNodes || [],
+      webTextElements: webTextResult.textElements || [],
+      matchResult,
+      differences,
+      includeAllPairs: true,
+      cache: figmaResult.cache,
+    })
+    const webScreenshot = saveVisualWebScreenshot(webScanResult.webScreenshot, webUrl)
+
+    res.json(createVisualQaPayload({
+      figmaRender,
+      webScreenshot,
+      figmaStructure: {
+        figmaStructure: figmaResult.figmaStructure,
+        figmaFlatNodes: figmaResult.figmaFlatNodes,
+        structureSummary: figmaResult.structureSummary,
+      },
+      figmaTextNodes: figmaResult.textNodes || [],
+      webTextNodes: webTextResult.textElements || [],
+      textCompareResult,
+    }))
+  } catch (error) {
+    const mappedError = mapFigmaLoaderError(error, 'visual-payload')
+    res.status(mappedError.status).json(mappedError.body)
+  }
+})
+
+app.get('/api/figma/render/:renderId', async (req, res) => {
+  const renderId = typeof req.params?.renderId === 'string' ? req.params.renderId.trim() : ''
+  const file = figmaRenderClient.getLocalRenderFile({ renderId })
+
+  if (!file) {
+    res.status(404).json({ message: '렌더 이미지를 찾을 수 없습니다.' })
+    return
+  }
+
+  res.setHeader('Content-Type', file.mimeType)
+  res.setHeader('Content-Length', String(file.sizeBytes))
+  res.setHeader('Cache-Control', getRenderCacheControlHeader())
+  res.sendFile(file.imagePath)
+})
+
 app.post('/api/figma/cache/clear', async (req, res) => {
   const clearAll = req.body?.clearAll === true
   const figmaUrl = typeof req.body?.figmaUrl === 'string' ? req.body.figmaUrl.trim() : ''
+  const clearNodeCache = req.body?.clearNodeCache !== false
+  const clearRenderCache = req.body?.clearRenderCache === true
 
   try {
     if (clearAll) {
-      const result = figmaApiClient.clearAllCache()
-      res.json({ success: true, clearAll: true, clearedCount: result.clearedCount || 0 })
+      const nodeResult = clearNodeCache ? figmaApiClient.clearAllCache() : { clearedCount: 0 }
+      const renderResult = clearRenderCache ? figmaRenderClient.clearAllCache() : { clearedCount: 0 }
+      res.json({
+        success: true,
+        clearAll: true,
+        clearNodeCache,
+        clearRenderCache,
+        nodeClearedCount: nodeResult.clearedCount || 0,
+        renderClearedCount: renderResult.clearedCount || 0,
+      })
       return
     }
 
     const { fileKey, nodeId } = parseFigmaUrl(figmaUrl)
-    const result = figmaApiClient.clearCache({ fileKey, nodeId })
-    res.json({ success: true, clearAll: false, cleared: result.cleared, nodeId })
+    const nodeResult = clearNodeCache ? figmaApiClient.clearCache({ fileKey, nodeId }) : { cleared: false }
+    const renderResult = clearRenderCache ? figmaRenderClient.clearCache({ fileKey, nodeId }) : { cleared: false, clearedCount: 0 }
+    res.json({
+      success: true,
+      clearAll: false,
+      clearNodeCache,
+      clearRenderCache,
+      nodeId,
+      nodeCacheCleared: Boolean(nodeResult.cleared),
+      renderCacheCleared: Boolean(renderResult.cleared),
+      renderClearedCount: renderResult.clearedCount || 0,
+    })
   } catch (error) {
     const mappedError = mapFigmaLoaderError(error, 'cache-clear')
     res.status(mappedError.status).json(mappedError.body)
@@ -284,6 +432,22 @@ function normalizeFigmaNodeId(value) {
   if (/^\d+:\d+$/.test(normalized)) return normalized
 
   throw new FigmaInspectError(400, 'figma_node_id_invalid', 'Figma URL의 node-id 형식이 올바르지 않습니다.')
+}
+
+function normalizeRenderFormat(value) {
+  const normalized = String(value || 'png').trim().toLowerCase()
+  if (normalized === 'jpeg') return 'jpg'
+  return normalized === 'jpg' ? 'jpg' : 'png'
+}
+
+function normalizeRenderScale(value) {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric) || numeric <= 0) return 2
+  return Math.round(numeric * 100) / 100
+}
+
+function getRenderCacheControlHeader() {
+  return process.env.NODE_ENV === 'production' ? 'private, max-age=3600, immutable' : 'no-cache'
 }
 
 async function inspectFigmaNode({ fileKey, nodeId, token, includeTextNodes, includeStructure, includeFlatNodes, forceRefresh = false }) {
@@ -1986,6 +2150,64 @@ async function safeWebScreenshot(page) {
       capturedAt: new Date().toISOString(),
       error: error instanceof Error ? error.message : '스크린샷 수집 실패',
     }
+  }
+}
+
+function saveVisualWebScreenshot(webScreenshot, webUrl) {
+  const dataUrl = typeof webScreenshot?.dataUrl === 'string' ? webScreenshot.dataUrl.trim() : ''
+  if (!dataUrl.startsWith('data:image/png;base64,')) {
+    return {
+      image: '',
+      localImagePath: '',
+      capturedAt: typeof webScreenshot?.capturedAt === 'string' ? webScreenshot.capturedAt : new Date().toISOString(),
+      error: typeof webScreenshot?.error === 'string' ? webScreenshot.error : '스크린샷 경로를 생성하지 못했습니다.',
+    }
+  }
+
+  try {
+    const base64 = dataUrl.slice('data:image/png;base64,'.length)
+    const buffer = Buffer.from(base64, 'base64')
+    if (buffer.length === 0) {
+      throw new Error('빈 스크린샷 데이터')
+    }
+
+    const cacheDir = getVisualScreenshotCacheDir()
+    ensureDirectory(cacheDir)
+
+    const capturedAt = typeof webScreenshot?.capturedAt === 'string' && webScreenshot.capturedAt.trim()
+      ? webScreenshot.capturedAt.trim()
+      : new Date().toISOString()
+    const fileName = `${createHash('sha1').update(`${webUrl}|${capturedAt}`).digest('hex').slice(0, 20)}.png`
+    const filePath = path.join(cacheDir, fileName)
+    fs.writeFileSync(filePath, buffer)
+
+    return {
+      image: path.posix.join('.cache', 'visual', 'screenshots', fileName),
+      localImagePath: path.posix.join('.cache', 'visual', 'screenshots', fileName),
+      capturedAt,
+      error: '',
+      mimeType: 'image/png',
+      sizeBytes: buffer.length,
+      width: Number(webScreenshot?.width) || 0,
+      height: Number(webScreenshot?.height) || 0,
+    }
+  } catch (error) {
+    return {
+      image: '',
+      localImagePath: '',
+      capturedAt: typeof webScreenshot?.capturedAt === 'string' ? webScreenshot.capturedAt : new Date().toISOString(),
+      error: error instanceof Error ? error.message : '스크린샷 경로를 생성하지 못했습니다.',
+    }
+  }
+}
+
+function getVisualScreenshotCacheDir() {
+  return path.resolve('.cache', 'visual', 'screenshots')
+}
+
+function ensureDirectory(directoryPath) {
+  if (!fs.existsSync(directoryPath)) {
+    fs.mkdirSync(directoryPath, { recursive: true })
   }
 }
 

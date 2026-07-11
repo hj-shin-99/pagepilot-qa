@@ -160,10 +160,13 @@ test('buildVisualPayloadResponse exposes limited debug previews only when debug 
   assert.equal(Array.isArray(result.debug.preview.webOnly), true)
   assert.equal(result.debug.preview.figmaOnly.length, 10)
   assert.equal(result.debug.preview.webOnly.length, 10)
-  assert.equal(typeof result.debug.timing.totalMs, 'number')
+  assert.deepEqual(Object.keys(result.debug.timing).sort(), ['figmaNodeLoadMs', 'figmaRenderLoadMs', 'payloadBuildMs', 'textCompareMs', 'totalMs', 'webScanMs'])
+  Object.values(result.debug.timing).forEach((value) => assert.equal(typeof value, 'number'))
   assert.equal(result.debug.imageValidation.figmaExists, true)
   assert.equal(result.debug.imageValidation.webReadable, true)
   assert.equal(result.debug.payloadQuality.heroMediaGroupCreated, true)
+  assert.equal(typeof result.debug.payloadQuality.parentCtaRemovedCount, 'number')
+  assert.equal(typeof result.debug.payloadQuality.heroPrimaryMediaCount, 'number')
 })
 
 test('createVisualPayloadHandler returns 400 for invalid URL without calling scanUrl', async () => {

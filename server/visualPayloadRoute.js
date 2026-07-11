@@ -166,10 +166,27 @@ function createDebugPayload({ figmaResult, figmaRender, webAnalysis, textCompari
       figmaNode: figmaResult.cache || null,
       figmaRender: figmaRender.cache || null,
     },
-    timing: timings,
+    timing: normalizeTimingMetrics(timings),
     imageValidation,
     payloadQuality,
   }
+}
+
+function normalizeTimingMetrics(timings) {
+  const safeTimings = timings && typeof timings === 'object' ? timings : {}
+  return {
+    figmaNodeLoadMs: normalizeTimingValue(safeTimings.figmaNodeLoadMs),
+    figmaRenderLoadMs: normalizeTimingValue(safeTimings.figmaRenderLoadMs),
+    webScanMs: normalizeTimingValue(safeTimings.webScanMs),
+    textCompareMs: normalizeTimingValue(safeTimings.textCompareMs),
+    payloadBuildMs: normalizeTimingValue(safeTimings.payloadBuildMs),
+    totalMs: normalizeTimingValue(safeTimings.totalMs),
+  }
+}
+
+function normalizeTimingValue(value) {
+  const numeric = Number(value)
+  return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0
 }
 
 async function validateImageAssets(payload, validateImageAsset = defaultValidateImageAsset) {

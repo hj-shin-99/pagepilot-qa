@@ -1,5 +1,4 @@
 import express from 'express'
-import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -12,6 +11,8 @@ import { createFigmaTextPreview, extractVisibleFigmaTextNodes } from './figmaTex
 import { createTextDifferenceCandidates } from './textDiff.js'
 import { matchTextNodes } from './textMatcher.js'
 import { createVisualQaPayload } from './visualQaPayload.js'
+import { createVisualPayloadHandler } from './visualPayloadRoute.js'
+import { createWebVisualAnalysis } from './webVisualAnalysis.js'
 import { extractVisibleWebTextElements } from './webText.js'
 
 const PORT = Number(process.env.PORT || 3001)
@@ -61,6 +62,23 @@ const figmaApiClient = createFigmaApiClient({
 const figmaRenderClient = createFigmaRenderClient({
   ttlMs: Number(process.env.FIGMA_RENDER_CACHE_TTL_MS),
   maxBytes: Number(process.env.FIGMA_RENDER_MAX_BYTES),
+})
+
+const visualPayloadHandler = createVisualPayloadHandler({
+  now: () => Date.now(),
+  isHttpUrl,
+  parseFigmaUrl,
+  getFigmaToken: () => process.env.FIGMA_TOKEN?.trim() || '',
+  createHttpError: (status, message) => new FigmaInspectError(status, 'visual_payload_error', message),
+  inspectFigmaNode,
+  getFigmaRenderedImage: figmaRenderClient.getFigmaRenderedImage,
+  scanUrl,
+  createWebVisualAnalysis,
+  matchTextNodes,
+  createTextDifferenceCandidates,
+  createTextCompareResponse,
+  createVisualQaPayload,
+  mapFigmaLoaderError,
 })
 
 app.use(express.json({ limit: '80mb' }))
@@ -258,71 +276,7 @@ app.post('/api/figma/render', async (req, res) => {
   }
 })
 
-app.post('/api/visual/payload', async (req, res) => {
-  const figmaUrl = typeof req.body?.figmaUrl === 'string' ? req.body.figmaUrl.trim() : ''
-  const webUrl = typeof req.body?.webUrl === 'string' ? req.body.webUrl.trim() : ''
-
-  if (!isHttpUrl(webUrl)) {
-    res.status(400).json({ message: 'http:// 또는 https://로 시작하는 Web URL만 사용할 수 있습니다.' })
-    return
-  }
-
-  try {
-    const { fileKey, nodeId } = parseFigmaUrl(figmaUrl)
-    const figmaToken = process.env.FIGMA_TOKEN?.trim() || ''
-
-    if (!figmaToken) {
-      res.status(400).json({ message: 'FIGMA_TOKEN이 설정되지 않았습니다.' })
-      return
-    }
-
-    const figmaResult = await inspectFigmaNode({
-      fileKey,
-      nodeId,
-      token: figmaToken,
-      includeTextNodes: true,
-      includeStructure: true,
-      includeFlatNodes: true,
-    })
-    const figmaRender = await figmaRenderClient.getFigmaRenderedImage({
-      fileKey,
-      nodeId,
-      token: figmaToken,
-      nodeName: figmaResult.nodeName,
-      format: 'png',
-      scale: 2,
-    })
-    const webScanResult = await scanUrl(webUrl)
-    const webTextResult = await scanWebTextForCompare(webUrl)
-    const matchResult = matchTextNodes(figmaResult.textNodes || [], webTextResult.textElements || [], { includeAllPairs: true })
-    const differences = createTextDifferenceCandidates(matchResult.matchedPairs)
-    const textCompareResult = createTextCompareResponse({
-      figmaTextNodes: figmaResult.textNodes || [],
-      webTextElements: webTextResult.textElements || [],
-      matchResult,
-      differences,
-      includeAllPairs: true,
-      cache: figmaResult.cache,
-    })
-    const webScreenshot = saveVisualWebScreenshot(webScanResult.webScreenshot, webUrl)
-
-    res.json(createVisualQaPayload({
-      figmaRender,
-      webScreenshot,
-      figmaStructure: {
-        figmaStructure: figmaResult.figmaStructure,
-        figmaFlatNodes: figmaResult.figmaFlatNodes,
-        structureSummary: figmaResult.structureSummary,
-      },
-      figmaTextNodes: figmaResult.textNodes || [],
-      webTextNodes: webTextResult.textElements || [],
-      textCompareResult,
-    }))
-  } catch (error) {
-    const mappedError = mapFigmaLoaderError(error, 'visual-payload')
-    res.status(mappedError.status).json(mappedError.body)
-  }
-})
+app.post('/api/visual/payload', visualPayloadHandler)
 
 app.get('/api/figma/render/:renderId', async (req, res) => {
   const renderId = typeof req.params?.renderId === 'string' ? req.params.renderId.trim() : ''
@@ -1870,7 +1824,8 @@ function limitText(value, maxLength) {
   return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text
 }
 
-async function scanUrl(targetUrl) {
+async function scanUrl(targetUrl, options = {}) {
+  const scanOptions = normalizeScanUrlOptions(options)
   const browser = await chromium.launch({ headless: true })
   const consoleMessages = []
   const failedImageRequests = new Map()
@@ -1882,6 +1837,7 @@ async function scanUrl(targetUrl) {
   let domSnapshot
   let mobileResult
   let webScreenshot
+  let visualPayloadData = null
 
   try {
     const context = await browser.newContext({
@@ -1894,6 +1850,7 @@ async function scanUrl(targetUrl) {
     await blockPostRequests(context)
 
     const page = await context.newPage()
+    incrementPlaywrightRunCount(scanOptions.instrumentation)
     attachCollectors(page, consoleMessages, failedImageRequests, failedResourceRequests, badResourceResponses)
 
     try {
@@ -1911,7 +1868,10 @@ async function scanUrl(targetUrl) {
     pageTitle = await safeTitle(page)
     domSnapshot = await safeDomSnapshot(page, targetUrl)
     webScreenshot = await safeWebScreenshot(page)
-    mobileResult = await scanMobile(browser, targetUrl)
+    if (scanOptions.includeVisualPayloadData) {
+      visualPayloadData = await safeVisualPayloadData(page, scanOptions.instrumentation)
+    }
+    mobileResult = scanOptions.includeMobile ? await scanMobile(browser, targetUrl, scanOptions.instrumentation) : createMobileFallback()
     await context.close()
   } finally {
     await browser.close()
@@ -1964,7 +1924,21 @@ async function scanUrl(targetUrl) {
     consoleMessages,
     counts: snapshot.counts,
     mobile: safeMobileResult,
+    ...(visualPayloadData ? { visualPayloadData } : {}),
   }
+}
+
+function normalizeScanUrlOptions(options = {}) {
+  return {
+    includeVisualPayloadData: options.includeVisualPayloadData === true,
+    includeMobile: options.includeMobile !== false,
+    instrumentation: options.instrumentation && typeof options.instrumentation === 'object' ? options.instrumentation : null,
+  }
+}
+
+function incrementPlaywrightRunCount(instrumentation) {
+  if (!instrumentation) return
+  instrumentation.playwrightRunCount = Number(instrumentation.playwrightRunCount || 0) + 1
 }
 
 async function scanWebTextForCompare(targetUrl) {
@@ -2153,61 +2127,68 @@ async function safeWebScreenshot(page) {
   }
 }
 
-function saveVisualWebScreenshot(webScreenshot, webUrl) {
-  const dataUrl = typeof webScreenshot?.dataUrl === 'string' ? webScreenshot.dataUrl.trim() : ''
-  if (!dataUrl.startsWith('data:image/png;base64,')) {
-    return {
-      image: '',
-      localImagePath: '',
-      capturedAt: typeof webScreenshot?.capturedAt === 'string' ? webScreenshot.capturedAt : new Date().toISOString(),
-      error: typeof webScreenshot?.error === 'string' ? webScreenshot.error : '스크린샷 경로를 생성하지 못했습니다.',
-    }
-  }
-
+async function safeVisualPayloadData(page, instrumentation) {
   try {
-    const base64 = dataUrl.slice('data:image/png;base64,'.length)
-    const buffer = Buffer.from(base64, 'base64')
-    if (buffer.length === 0) {
-      throw new Error('빈 스크린샷 데이터')
-    }
+    const textSnapshot = await extractVisibleWebTextElements(page)
+    const pageData = await page.evaluate(() => ({
+      viewportWidth: window.innerWidth || document.documentElement.clientWidth || 0,
+      viewportHeight: window.innerHeight || document.documentElement.clientHeight || 0,
+      scrollWidth: Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth || 0, window.innerWidth || 0),
+      scrollHeight: Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0, window.innerHeight || 0),
+      videoCandidates: Array.from(document.querySelectorAll('video, iframe[src*="youtube"], iframe[src*="vimeo"], [data-video], [data-youtube]'))
+        .map((element) => {
+          const rect = element.getBoundingClientRect()
+          const y = rect.y + window.scrollY
+          const documentHeight = Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0, window.innerHeight || 1)
+          const searchable = `${element.tagName.toLowerCase()} ${element.getAttribute('role') || ''} ${element.getAttribute('aria-label') || ''} ${element.getAttribute('title') || ''} ${element.getAttribute('class') || ''}`.toLowerCase()
+          const section = /nav|navigation|gnb|menu|header/.test(searchable)
+            ? 'navigation'
+            : /hero|kv|banner/.test(searchable)
+              ? 'hero'
+              : (y / documentHeight) <= 0.35
+                ? 'top'
+                : (y / documentHeight) <= 0.7
+                  ? 'middle'
+                  : 'bottom'
 
-    const cacheDir = getVisualScreenshotCacheDir()
-    ensureDirectory(cacheDir)
-
-    const capturedAt = typeof webScreenshot?.capturedAt === 'string' && webScreenshot.capturedAt.trim()
-      ? webScreenshot.capturedAt.trim()
-      : new Date().toISOString()
-    const fileName = `${createHash('sha1').update(`${webUrl}|${capturedAt}`).digest('hex').slice(0, 20)}.png`
-    const filePath = path.join(cacheDir, fileName)
-    fs.writeFileSync(filePath, buffer)
+          return {
+            tagName: element.tagName.toLowerCase(),
+            selector: element.id ? `#${element.id}` : element.tagName.toLowerCase(),
+            title: element.getAttribute('title') || '',
+            ariaLabel: element.getAttribute('aria-label') || '',
+            autoplay: element.autoplay === true,
+            controls: element.controls === true,
+            section,
+          }
+        })
+        .slice(0, 20),
+    }))
 
     return {
-      image: path.posix.join('.cache', 'visual', 'screenshots', fileName),
-      localImagePath: path.posix.join('.cache', 'visual', 'screenshots', fileName),
-      capturedAt,
-      error: '',
-      mimeType: 'image/png',
-      sizeBytes: buffer.length,
-      width: Number(webScreenshot?.width) || 0,
-      height: Number(webScreenshot?.height) || 0,
+      page: {
+        viewportWidth: pageData.viewportWidth,
+        viewportHeight: pageData.viewportHeight,
+        scrollWidth: pageData.scrollWidth,
+        scrollHeight: pageData.scrollHeight,
+      },
+      textNodes: textSnapshot.textElements || [],
+      pageBounds: textSnapshot.pageBounds || null,
+      videoCandidates: pageData.videoCandidates || [],
+      playwrightRunCount: Number(instrumentation?.playwrightRunCount || 1),
     }
-  } catch (error) {
+  } catch {
     return {
-      image: '',
-      localImagePath: '',
-      capturedAt: typeof webScreenshot?.capturedAt === 'string' ? webScreenshot.capturedAt : new Date().toISOString(),
-      error: error instanceof Error ? error.message : '스크린샷 경로를 생성하지 못했습니다.',
+      page: {
+        viewportWidth: DESKTOP_DESIGN_VIEWPORT.width,
+        viewportHeight: DESKTOP_DESIGN_VIEWPORT.height,
+        scrollWidth: 0,
+        scrollHeight: 0,
+      },
+      textNodes: [],
+      pageBounds: null,
+      videoCandidates: [],
+      playwrightRunCount: Number(instrumentation?.playwrightRunCount || 1),
     }
-  }
-}
-
-function getVisualScreenshotCacheDir() {
-  return path.resolve('.cache', 'visual', 'screenshots')
-}
-
-function ensureDirectory(directoryPath) {
-  if (!fs.existsSync(directoryPath)) {
-    fs.mkdirSync(directoryPath, { recursive: true })
   }
 }
 
@@ -2843,7 +2824,7 @@ async function safeDomSnapshot(page, targetUrl) {
   }
 }
 
-async function scanMobile(browser, targetUrl) {
+async function scanMobile(browser, targetUrl, instrumentation) {
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
     viewport: { width: 390, height: 844 },
@@ -2856,6 +2837,7 @@ async function scanMobile(browser, targetUrl) {
 
   try {
     const page = await context.newPage()
+    incrementPlaywrightRunCount(instrumentation)
     const response = await page.goto(targetUrl, {
       waitUntil: 'domcontentloaded',
       timeout: NAVIGATION_TIMEOUT_MS,

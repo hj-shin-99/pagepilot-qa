@@ -4,6 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import OpenAI from 'openai'
 import { chromium, request as playwrightRequest } from 'playwright'
+import { createFigmaTextPreview, extractVisibleFigmaTextNodes } from './figmaText.js'
 
 const PORT = Number(process.env.PORT || 3001)
 const AI_QA_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini'
@@ -128,6 +129,7 @@ app.post('/api/ai-mockup-qa', async (req, res) => {
 
 app.post('/api/figma/inspect', async (req, res) => {
   const figmaUrl = typeof req.body?.figmaUrl === 'string' ? req.body.figmaUrl.trim() : ''
+  const includeTextNodes = req.body?.includeTextNodes === true
 
   try {
     const { fileKey, nodeId } = parseFigmaUrl(figmaUrl)
@@ -138,8 +140,8 @@ app.post('/api/figma/inspect', async (req, res) => {
       return
     }
 
-    const result = await inspectFigmaNode({ fileKey, nodeId, token: figmaToken })
-    logFigmaInspectSuccess(result)
+    const result = await inspectFigmaNode({ fileKey, nodeId, token: figmaToken, includeTextNodes })
+    logFigmaTextExtractionSuccess(result)
     res.json({ success: true, ...result })
   } catch (error) {
     const mappedError = mapFigmaInspectError(error)
@@ -202,7 +204,7 @@ function normalizeFigmaNodeId(value) {
   throw new FigmaInspectError(400, 'figma_node_id_invalid', 'Figma URL의 node-id 형식이 올바르지 않습니다.')
 }
 
-async function inspectFigmaNode({ fileKey, nodeId, token }) {
+async function inspectFigmaNode({ fileKey, nodeId, token, includeTextNodes }) {
   const requestUrl = `${FIGMA_API_BASE_URL}/files/${encodeURIComponent(fileKey)}/nodes?ids=${encodeURIComponent(nodeId)}`
 
   let response
@@ -232,15 +234,22 @@ async function inspectFigmaNode({ fileKey, nodeId, token }) {
     throw new FigmaInspectError(404, 'figma_node_not_found', '파일 또는 node를 찾을 수 없습니다.')
   }
 
-  const { visibleTextCount, totalDescendantCount } = summarizeFigmaNode(targetNode)
-  return {
+  const extraction = extractVisibleFigmaTextNodes(targetNode)
+  const result = {
     fileKey,
     nodeId,
     nodeName: typeof targetNode.name === 'string' && targetNode.name.trim() ? targetNode.name.trim() : '이름 없음',
     nodeType: typeof targetNode.type === 'string' && targetNode.type.trim() ? targetNode.type.trim() : 'UNKNOWN',
-    visibleTextCount,
-    totalDescendantCount,
+    visibleTextCount: extraction.visibleTextCount,
+    totalDescendantCount: extraction.totalDescendantCount,
+    textPreview: createFigmaTextPreview(extraction.textNodes),
   }
+
+  if (includeTextNodes) {
+    result.textNodes = extraction.textNodes
+  }
+
+  return result
 }
 
 function createFigmaApiStatusError(status) {
@@ -263,48 +272,15 @@ function createFigmaApiStatusError(status) {
   return new FigmaInspectError(502, 'figma_api_error', 'Figma API 요청 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.')
 }
 
-function summarizeFigmaNode(node) {
-  const summary = {
-    visibleTextCount: 0,
-    totalDescendantCount: 0,
-  }
-
-  if (!node || typeof node !== 'object' || !Array.isArray(node.children)) {
-    return summary
-  }
-
-  node.children.forEach((child) => visitFigmaDescendants(child, node.visible === false, summary))
-  return summary
-}
-
-function visitFigmaDescendants(node, parentHidden, summary) {
-  if (!node || typeof node !== 'object') return
-
-  summary.totalDescendantCount += 1
-  const hidden = parentHidden || node.visible === false
-
-  if (node.type === 'TEXT' && !hidden && typeof node.characters === 'string' && node.characters.trim()) {
-    summary.visibleTextCount += 1
-  }
-
-  if (!Array.isArray(node.children)) return
-  node.children.forEach((child) => visitFigmaDescendants(child, hidden, summary))
-}
-
-function logFigmaInspectSuccess(result) {
-  console.log('[Figma API] Request success')
-  console.log(`- fileKey: ${maskFigmaFileKey(result.fileKey)}`)
-  console.log(`- nodeId: ${result.nodeId}`)
+function logFigmaTextExtractionSuccess(result) {
+  console.log('[Figma API] Text extraction success')
   console.log(`- nodeName: ${result.nodeName}`)
-  console.log(`- nodeType: ${result.nodeType}`)
   console.log(`- visibleTextCount: ${result.visibleTextCount}`)
-  console.log(`- totalDescendantCount: ${result.totalDescendantCount}`)
-}
+  console.log('- first 5 text previews:')
 
-function maskFigmaFileKey(value) {
-  const fileKey = String(value || '')
-  if (fileKey.length <= 4) return fileKey
-  return `${fileKey.slice(0, 4)}${'*'.repeat(fileKey.length - 4)}`
+  result.textPreview.forEach((textNode, index) => {
+    console.log(`  ${index + 1}. ${truncateFigmaLogText(textNode.characters, 80)} | ${textNode.layerPath || 'N/A'} | yRatio=${formatFigmaLogRatio(textNode.yRatio)} | fontSize=${textNode.fontSize ?? 'null'}`)
+  })
 }
 
 function mapFigmaInspectError(error) {
@@ -316,6 +292,16 @@ function mapFigmaInspectError(error) {
     status: 502,
     message: 'Figma 연결 확인 중 예상하지 못한 오류가 발생했습니다.',
   }
+}
+
+function truncateFigmaLogText(value, maxLength) {
+  const text = String(value || '').trim()
+  if (text.length <= maxLength) return text
+  return `${text.slice(0, maxLength)}...`
+}
+
+function formatFigmaLogRatio(value) {
+  return Number.isFinite(value) ? value : 'null'
 }
 
 class FigmaInspectError extends Error {

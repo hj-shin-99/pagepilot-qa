@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import './App.css'
 import { buildReportText, createResultSummary, getStatusCounts } from './utils/report'
 import { loadHistoryItems, saveHistoryItem } from './utils/history'
+import { extractFigmaElements } from './utils/designQa'
 import AuditHeader from './components/AuditHeader'
 import CheckList from './components/CheckList'
 import DetailPanel from './components/DetailPanel'
@@ -241,9 +242,9 @@ function App() {
 
     try {
       const parsed = parseFigmaJsonInput(value)
-      const texts = extractFigmaTextHints(parsed)
+      const elements = extractFigmaElements(parsed)
       const ctaHints = extractFigmaCtaHints(parsed)
-      setFigmaElements(texts)
+      setFigmaElements(elements)
       setFigmaCtaHints(ctaHints)
       setFigmaError('')
     } catch (error) {
@@ -272,7 +273,7 @@ function App() {
         onUrlChange={setUrl}
       />
 
-      <section className="workspace" aria-live="polite">
+      <section className={`workspace ${!result ? 'workspace-empty' : ''}`} aria-live="polite">
         <WorkspaceTabs activeTab={activeTab} onTabChange={setActiveTab} />
 
         {activeTab === 'history' ? (
@@ -474,43 +475,6 @@ function getJsonParseErrorLocation(error, source) {
   return { line: lines.length, column: lines[lines.length - 1].length + 1 }
 }
 
-function extractFigmaTextHints(parsed) {
-  const hints = []
-  const seen = new Set()
-
-  function addText(text) {
-    const cleaned = cleanAiText(text)
-    if (!cleaned || seen.has(cleaned) || hints.length >= AI_TEXT_HINT_LIMIT) return
-    seen.add(cleaned)
-    hints.push(cleaned)
-  }
-
-  function visit(node, parentHidden = false) {
-    if (!node || typeof node !== 'object' || hints.length >= AI_TEXT_HINT_LIMIT) return
-
-    if (Array.isArray(node)) {
-      node.forEach((child) => visit(child, parentHidden))
-      return
-    }
-
-    const hidden = parentHidden || isHiddenFigmaJsonNode(node)
-    if (hidden) return
-
-    if (node.type === 'TEXT' && hasUsableFigmaJsonBox(node)) {
-      if (typeof node.characters === 'string') addText(node.characters)
-      if (typeof node.text === 'string') addText(node.text)
-      if (typeof node.name === 'string') addText(node.name)
-    }
-
-    if (Array.isArray(node.children)) node.children.forEach((child) => visit(child, hidden))
-    if (node.document) visit(node.document, hidden)
-    if (node.nodes) visit(node.nodes, hidden)
-  }
-
-  visit(parsed)
-  return hints
-}
-
 function extractFigmaCtaHints(parsed) {
   const candidates = []
   const visibleBounds = []
@@ -589,12 +553,6 @@ function isHiddenFigmaJsonNode(node) {
   if (node.visible === false) return true
   if (Number(node.opacity) === 0) return true
   return false
-}
-
-function hasUsableFigmaJsonBox(node) {
-  const box = node.absoluteBoundingBox || node.absoluteRenderBounds || null
-  if (!box) return false
-  return Number(box.width) > 0 && Number(box.height) > 0
 }
 
 function getAiResultKey(result) {

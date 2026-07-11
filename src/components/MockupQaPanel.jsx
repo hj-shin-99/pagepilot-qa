@@ -69,7 +69,7 @@ function MockupQaPanel({ aiQa, designImages, result, onRunAiQa }) {
           {isRunning ? (
             <>
               <strong>{currentStage}</strong>
-              <span>Playwright 결과는 수집됐고, AI가 시안 이미지/웹 캡처/JSON을 비교하고 있습니다.</span>
+              <span>AI가 시안과 웹페이지를 비교해 QA 결과를 정리하고 있습니다.</span>
             </>
           ) : isComplete ? (
             <>

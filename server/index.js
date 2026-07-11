@@ -28,6 +28,7 @@ const DESKTOP_SCREENSHOT_SCALE = 2
 const NAVIGATION_TIMEOUT_MS = 15000
 const LINK_TIMEOUT_MS = 7000
 const LINK_CHECK_CONCURRENCY = 8
+const TEXT_TRACE_PREFIX = 'TEXT'
 const NAV_CTA_CONTEXT_PATTERNS = [
   'global navigation',
   'navigation',
@@ -40,6 +41,9 @@ const NAV_CTA_CONTEXT_PATTERNS = [
 ]
 const PAGE_UNDERSTANDING_TYPES = ['home', 'landing', 'promotion', 'product-detail', 'calculator', 'form', 'listing', 'article', 'policy', 'other']
 const SECTION_ROLES = ['hero', 'navigation', 'promotion', 'product', 'form', 'calculator', 'content', 'table', 'legal', 'footer', 'other']
+
+let textIssueTraceRegistry = new Map()
+let textIssueTraceCounter = 1
 
 const app = express()
 
@@ -72,6 +76,7 @@ app.post('/api/scan', async (req, res) => {
 
 app.post('/api/ai-mockup-qa', async (req, res) => {
   console.log('[Mockup AI QA] request received')
+  resetTextIssueTraceRegistry()
 
   const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) {
@@ -99,6 +104,7 @@ app.post('/api/ai-mockup-qa', async (req, res) => {
     result.model = AI_QA_MODEL
     console.log('[Mockup AI QA] filtered issues:', result.issues)
     console.log('[Mockup AI QA] issues:', result.issues.map((issue) => ({ title: issue.title, status: issue.status, area: issue.area })))
+    logIssueTrace('final-ui-before-response', result.issues.map((issue) => formatIssueTraceLog(issue)))
     console.log('[Mockup AI QA] sending response')
     res.json({ ok: true, model: AI_QA_MODEL, result })
   } catch (error) {
@@ -111,6 +117,91 @@ app.post('/api/ai-mockup-qa', async (req, res) => {
 if (process.env.PAGEPILOT_NO_LISTEN !== '1') {
   app.listen(PORT, () => {
     console.log(`PagePilot QA API listening on http://127.0.0.1:${PORT}`)
+  })
+}
+
+function resetTextIssueTraceRegistry() {
+  textIssueTraceRegistry = new Map()
+  textIssueTraceCounter = 1
+}
+
+function getOrCreateTextIssueTraceId(issue) {
+  if (!isTraceableTextIssue(issue)) return ''
+  const signature = getTextIssueTraceSignature(issue)
+  if (!signature) return ''
+  const existing = textIssueTraceRegistry.get(signature)
+  if (existing) return existing
+  const traceId = `${TEXT_TRACE_PREFIX}-${String(textIssueTraceCounter).padStart(3, '0')}`
+  textIssueTraceCounter += 1
+  textIssueTraceRegistry.set(signature, traceId)
+  return traceId
+}
+
+function getTextIssueTraceId(issue) {
+  if (!isTraceableTextIssue(issue)) return ''
+  const signature = getTextIssueTraceSignature(issue)
+  return signature ? (textIssueTraceRegistry.get(signature) || '') : ''
+}
+
+function isTraceableTextIssue(issue) {
+  return Boolean(issue?.textQa || issue?.source === 'text-qa' || issue?.mergeSource === 'text')
+}
+
+function getTextIssueTraceSignature(issue) {
+  if (!issue || typeof issue !== 'object') return ''
+  const title = normalizeComparableQaText(issue.title || '')
+  const type = String(issue.type || '')
+  const diffKind = String(issue.diffKind || '')
+  const figma = normalizeComparableQaText(issue.figmaRawText || issue.figma || '')
+  const web = normalizeComparableQaText(issue.webRawText || issue.web || '')
+  const figmaSectionId = String(issue.figmaSectionId || '')
+  const webSectionId = String(issue.webSectionId || '')
+  return [title, type, diffKind, figma, web, figmaSectionId, webSectionId].join('|')
+}
+
+function haveSameTextIssueTrace(first, second) {
+  const firstId = getTextIssueTraceId(first)
+  const secondId = getTextIssueTraceId(second)
+  if (firstId && secondId) return firstId === secondId
+  return Boolean(getTextIssueTraceSignature(first) && getTextIssueTraceSignature(first) === getTextIssueTraceSignature(second))
+}
+
+function formatIssueTraceLog(issue, extra = {}) {
+  return {
+    uuid: getOrCreateTextIssueTraceId(issue) || '',
+    title: issue?.title || '',
+    reason: issue?.reason || '',
+    type: issue?.type || '',
+    status: issue?.status || '',
+    figma: limitText(issue?.figma || '', 180),
+    web: limitText(issue?.web || '', 180),
+    diffKind: issue?.diffKind || '',
+    ...extra,
+  }
+}
+
+function logIssueTrace(stage, payload) {
+  console.log(`[Issue Trace] ${stage}:`, payload)
+}
+
+function matchRemovedIssueToTraceId(removedIssue, priorIssues = []) {
+  const removedTitle = normalizeComparableQaText(removedIssue?.title || '')
+  const removedReason = normalizeComparableQaText(removedIssue?.reason || '')
+  const match = priorIssues.find((issue) => {
+    const titleScore = getQaTextSimilarity(removedTitle, normalizeComparableQaText(issue?.title || ''))
+    if (titleScore < 0.8) return false
+    const issueText = normalizeComparableQaText(`${issue?.figma || ''} ${issue?.web || ''}`)
+    if (!removedReason || !issueText) return true
+    return getQaTextSimilarity(removedReason, issueText) >= 0.1 || titleScore >= 0.95
+  })
+  return match ? getOrCreateTextIssueTraceId(match) : ''
+}
+
+function collectMissingTextIssues(previousIssues, nextIssues) {
+  const nextTraceIds = new Set((Array.isArray(nextIssues) ? nextIssues : []).map((issue) => getTextIssueTraceId(issue)).filter(Boolean))
+  return (Array.isArray(previousIssues) ? previousIssues : []).filter((issue) => {
+    const traceId = getTextIssueTraceId(issue)
+    return traceId && !nextTraceIds.has(traceId)
   })
 }
 
@@ -375,6 +466,10 @@ function getComparableHintTokens(value) {
 }
 
 async function createMockupAiQaV3Result(client, payload) {
+  if (textIssueTraceCounter !== 1 || textIssueTraceRegistry.size > 0) {
+    // Route resets trace state, but direct callers may not.
+    resetTextIssueTraceRegistry()
+  }
   const debug = createMockupAiDebugState(payload)
   let pageUnderstanding = createFallbackPageUnderstanding(payload)
   let pageUnderstandingFallback = true
@@ -427,10 +522,11 @@ async function createMockupAiQaV3Result(client, payload) {
 
   const { result: verifiedResult, verification } = await createVerifiedMockupAiQaResult(client, payload, candidateResult, { pageUnderstanding, sectionMapping })
   const protectedResult = restoreProtectedTextIssues(verifiedResult, textResult.issues)
-  debug.verifiedIssueCount = protectedResult.issues.length
-  debug.removedMismatchCount = protectedResult.removedIssues.length
-  debug.finalIssueCount = protectedResult.issues.filter((issue) => issue.status !== '무시 가능' && issue.priorityLevel !== 'low').length
-  debug.issueEvidence = protectedResult.issues.map((issue) => ({
+  const finalizedResult = prioritizeCoreHeroIssues(protectedResult, candidateResult.issues)
+  debug.verifiedIssueCount = finalizedResult.issues.length
+  debug.removedMismatchCount = finalizedResult.removedIssues.length
+  debug.finalIssueCount = finalizedResult.issues.filter((issue) => issue.status !== '무시 가능' && issue.priorityLevel !== 'low').length
+  debug.issueEvidence = finalizedResult.issues.map((issue) => ({
     title: issue.title,
     sourceAgreement: issue.evidence?.sourceAgreement ?? null,
     confidence: issue.confidence,
@@ -439,7 +535,7 @@ async function createMockupAiQaV3Result(client, payload) {
   console.log('[Mockup AI QA] v0.3 debug:', debug)
 
   return {
-    ...protectedResult,
+    ...finalizedResult,
     verification: {
       ...verification,
       pageUnderstandingFallback,
@@ -791,19 +887,65 @@ async function cropImagePairs(figmaDataUrl, webDataUrl, cropPlans) {
 
 function createTextQaComparisonResult(payload = {}, context = {}) {
   try {
-    const figmaItems = createStrictTextItems(payload, 'figma')
-    const webItems = createStrictTextItems(payload, 'web')
-    if (figmaItems.length === 0 || webItems.length === 0) return { issues: [], removedIssues: [], ignoredDifferences: [], error: '' }
+    const diagnosticsEnabled = shouldLogTextQaDiagnostics(payload)
+    const figmaAllItems = createStrictTextItems(payload, 'figma', { includeNonCritical: true })
+    const webAllItems = createStrictTextItems(payload, 'web', { includeNonCritical: true })
+    const figmaItems = figmaAllItems.filter(isStrictTextQaTarget)
+    const webItems = webAllItems.filter(isStrictTextQaTarget)
+    if (figmaAllItems.length === 0 || webAllItems.length === 0 || figmaItems.length === 0 || webItems.length === 0) {
+      if (diagnosticsEnabled) logTextQaDiagnostics(payload, { figmaAllItems, webAllItems, figmaItems, webItems, context })
+      return { issues: [], removedIssues: [], ignoredDifferences: [], error: '' }
+    }
 
-    const matches = createStrictTextMatches(figmaItems, webItems, context)
-    const matchedFigmaIds = new Set(matches.map((match) => match.figmaItem.id))
-    const matchedWebIds = new Set(matches.map((match) => match.webItem.id))
-    const issues = matches
-      .filter((match) => hasStrictRawTextDifference(match.figmaItem.strictText, match.webItem.strictText))
-      .map((match) => createStrictTextIssue(match, context))
-      .concat(createUnmatchedTextIssues(figmaItems, webItems, matchedFigmaIds, matchedWebIds, context))
+    const figmaCompositeItems = createSectionCompositeTextItems(figmaAllItems, 'figma', context)
+    const webCompositeItems = createSectionCompositeTextItems(webAllItems, 'web', context)
+    const matchResult = createStrictTextMatches(figmaItems, webItems, {
+      ...context,
+      figmaCompositeItems,
+      webCompositeItems,
+      debugPairEvaluations: diagnosticsEnabled,
+    })
+    const matches = matchResult.matches
+    const matchedFigmaIds = new Set(matches.flatMap((match) => match.figmaItem.sourceItemIds || [match.figmaItem.id]))
+    const matchedWebIds = new Set(matches.flatMap((match) => match.webItem.sourceItemIds || [match.webItem.id]))
+    const numericIssues = createSectionNumericIssues(figmaAllItems, webAllItems, matches, context)
+    numericIssues.forEach((issue) => {
+      ;(issue.figmaSourceIds || []).forEach((id) => matchedFigmaIds.add(id))
+      ;(issue.webSourceIds || []).forEach((id) => matchedWebIds.add(id))
+    })
+    const heroBlockIssues = createHeroTextBlockIssues(figmaAllItems, webAllItems, context)
+    const issues = dedupeTextQaIssues([
+      ...numericIssues,
+      ...heroBlockIssues,
+      ...matches
+        .filter((match) => hasStrictRawTextDifference(match.figmaItem.strictText, match.webItem.strictText))
+        .map((match) => createStrictTextIssue(match, context)),
+      ...createUnmatchedTextIssues(figmaItems, webItems, matchedFigmaIds, matchedWebIds, context),
+    ])
+    issues.forEach((issue) => getOrCreateTextIssueTraceId(issue))
+
+    if (diagnosticsEnabled) {
+      logTextQaDiagnostics(payload, {
+        figmaAllItems,
+        webAllItems,
+        figmaItems,
+        webItems,
+        figmaCompositeItems,
+        webCompositeItems,
+        matches,
+        pairEvaluations: matchResult.pairEvaluations,
+        numericIssues,
+        heroBlockIssues,
+        issues,
+        matchedFigmaIds,
+        matchedWebIds,
+        context,
+      })
+    }
 
     const sortedIssues = sortFinalMockupIssues(issues.map((issue) => applyIssuePriorityRules(issue))).slice(0, MAX_TEXT_QA_CANDIDATES)
+    logIssueTrace('createTextQaComparisonResult.generated', issues.map((issue) => formatIssueTraceLog(issue)))
+    logIssueTrace('createTextQaComparisonResult.returned', sortedIssues.map((issue) => formatIssueTraceLog(issue)))
     const summary = normalizeMockupSummary(sortedIssues, [], [])
     return { summary, counts: summary, issues: sortedIssues, removedIssues: [], ignoredDifferences: [], error: '' }
   } catch (error) {
@@ -812,28 +954,46 @@ function createTextQaComparisonResult(payload = {}, context = {}) {
   }
 }
 
-function createStrictTextItems(payload, source) {
+function createStrictTextItems(payload, source, options = {}) {
   const summaryItems = source === 'figma' ? payload.figmaElementSummary : payload.webElementSummary
   const ctaHints = source === 'figma' ? payload.figmaCtaHints : payload.webCtaHints
   const fallbackTexts = source === 'figma' ? payload.figmaTexts : payload.webTexts
   const items = []
   const seen = new Set()
+  let summaryAddedCount = 0
 
   ;(Array.isArray(summaryItems) ? summaryItems : []).forEach((item, index) => {
-    pushStrictTextItem(items, seen, normalizeStrictTextItem(item, source, index))
+    const added = pushStrictTextItem(items, seen, normalizeStrictTextItem(item, source, index))
+    if (added) summaryAddedCount += 1
   })
 
   ;(Array.isArray(ctaHints) ? ctaHints : []).forEach((item, index) => {
     pushStrictTextItem(items, seen, normalizeStrictTextItem({ ...item, isCta: true, role: 'cta', tag: 'button' }, source, index + 1000))
   })
 
-  if (items.length === 0) {
+  if (summaryAddedCount === 0) {
     ;(Array.isArray(fallbackTexts) ? fallbackTexts : []).forEach((text, index) => {
       pushStrictTextItem(items, seen, normalizeStrictTextItem({ text }, source, index + 2000))
     })
   }
 
-  return items.filter(isStrictTextQaTarget).slice(0, MAX_AI_ELEMENT_SUMMARY_ITEMS)
+  const normalizedItems = items.slice(0, MAX_AI_ELEMENT_SUMMARY_ITEMS).map((item) => ({
+    ...item,
+    sourceItemIds: Array.isArray(item.sourceItemIds) ? item.sourceItemIds : [item.id],
+    composite: Boolean(item.composite),
+    compositeSize: Number(item.compositeSize || 1),
+  }))
+  if (shouldLogTextQaDiagnostics(payload)) {
+    console.log('[Text QA Debug] createStrictTextItems:', {
+      source,
+      summaryCount: Array.isArray(summaryItems) ? summaryItems.length : 0,
+      summaryAddedCount,
+      ctaHintCount: Array.isArray(ctaHints) ? ctaHints.length : 0,
+      fallbackCount: Array.isArray(fallbackTexts) ? fallbackTexts.length : 0,
+      outputCount: normalizedItems.length,
+    })
+  }
+  return options.includeNonCritical ? normalizedItems : normalizedItems.filter(isStrictTextQaTarget)
 }
 
 function normalizeStrictTextItem(item, source, index) {
@@ -865,21 +1025,46 @@ function normalizeStrictTextItem(item, source, index) {
     visible: item?.visible !== false,
     width: Number.isFinite(Number(item?.width)) ? Number(item.width) : null,
     height: Number.isFinite(Number(item?.height)) ? Number(item.height) : null,
+    sourceItemIds: [limitText(item?.id || `${source}-text-${index + 1}`, 80)],
+    composite: false,
+    compositeSize: 1,
   }
 }
 
 function pushStrictTextItem(items, seen, item) {
-  if (!item.strictText) return
-  const key = `${item.strictText}:${item.category}:${item.area}:${item.sectionTitle}`
-  if (seen.has(key)) return
+  if (!item.strictText) return false
+  const pathKey = item.layerPath || item.selector || ''
+  const sectionKey = item.sectionId || item.sectionTitle || ''
+  const key = `${item.strictText}:${pathKey}:${sectionKey}:${item.category}:${item.area}`
+  if (seen.has(key)) return false
   seen.add(key)
   items.push(item)
+  return true
 }
 
 function isStrictTextQaTarget(item) {
   if (!item || !item.strictText) return false
   if (item.category !== 'body') return true
-  return hasCriticalTextToken(item.strictText)
+  return hasCriticalTextToken(item.strictText) || hasFineTextQaBodySignal(item)
+}
+
+function getStrictTextTargetExclusionReason(item) {
+  if (!item?.strictText) return 'empty_text'
+  if (!item.visible) return 'hidden_or_invisible'
+  if (hasZeroSizeTextItem(item)) return 'zero_size'
+  if (isLayerNameLikeText(item.strictText)) return 'layer_name'
+  if (item.category === 'body' && !hasCriticalTextToken(item.strictText) && !hasFineTextQaBodySignal(item)) return 'non_critical_body'
+  return ''
+}
+
+function hasFineTextQaBodySignal(item) {
+  const text = String(item?.strictText || '')
+  const normalizedLength = normalizeComparableQaText(text).length
+  if (normalizedLength < 4 || normalizedLength > 40) return false
+  if (getStrictComparableTokens(text).length > 8) return false
+  const contextText = `${item?.layerPath || ''} ${item?.selector || ''} ${item?.sectionTitle || ''}`.toLowerCase()
+  if (/footer|legal|disclaimer|약관|고지|유의|copyright/.test(contextText)) return false
+  return /[a-zA-Z가-힣]/.test(text)
 }
 
 function getStrictTextCategory(item, text) {
@@ -907,33 +1092,199 @@ function getStrictElementRole(item, text) {
   return 'body'
 }
 
+function createSectionCompositeTextItems(items, source, context = {}) {
+  const mappedSections = Array.isArray(context.sectionMapping?.mappedSections) ? context.sectionMapping.mappedSections : []
+  const composites = []
+  const seen = new Set()
+
+  mappedSections.forEach((mapping, mappingIndex) => {
+    const sectionItems = items
+      .filter((item) => isCompositeEligibleTextItem(item) && isTextItemWithinMapping(item, mapping, source))
+      .sort(compareTextItemFlowOrder)
+    if (sectionItems.length < 2) return
+
+    for (let start = 0; start < sectionItems.length; start += 1) {
+      for (let size = 2; size <= 4; size += 1) {
+        const window = sectionItems.slice(start, start + size)
+        if (window.length !== size || !isCompositeWindowAllowed(window)) continue
+        const composite = createCompositeTextItem(window, source, mapping, mappingIndex, start)
+        if (!isCompositeTextQaTarget(composite)) continue
+        const key = `${mapping.figmaSectionId || mapping.webSectionId || mappingIndex}:${composite.looseText}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        composites.push(composite)
+      }
+    }
+  })
+
+  return composites
+}
+
+function isCompositeEligibleTextItem(item) {
+  if (!item || !item.strictText || !item.visible) return false
+  if (hasZeroSizeTextItem(item) || isLayerNameLikeText(item.strictText)) return false
+  if (item.isNavigation || ['navigation', 'legal', 'footer'].includes(item.sectionRole)) return false
+  if (['cta', 'button', 'link', 'legal', 'navigation'].includes(item.elementRole)) return false
+  if (isCookieOrPopupTextItem(item)) return false
+  return true
+}
+
+function compareTextItemFlowOrder(first, second) {
+  const firstY = Number.isFinite(first?.yRatio) ? first.yRatio : Number.POSITIVE_INFINITY
+  const secondY = Number.isFinite(second?.yRatio) ? second.yRatio : Number.POSITIVE_INFINITY
+  if (firstY !== secondY) return firstY - secondY
+  return String(first?.id || '').localeCompare(String(second?.id || ''))
+}
+
+function isCompositeWindowAllowed(items) {
+  if (!Array.isArray(items) || items.length < 2 || items.length > 4) return false
+  if (items.some((item) => !isCompositeEligibleTextItem(item))) return false
+
+  const roles = new Set(items.map((item) => item.elementRole))
+  if (roles.has('navigation') || roles.has('legal') || roles.has('cta') || roles.has('button') || roles.has('link')) return false
+
+  const validYRatios = items.map((item) => item.yRatio).filter(Number.isFinite)
+  if (validYRatios.length >= 2) {
+    const span = Math.max(...validYRatios) - Math.min(...validYRatios)
+    if (span > 0.06) return false
+  }
+
+  if (hasMixedStructuredContexts(items)) return false
+
+  const joinedText = joinCompositeTextParts(items.map((item) => item.strictText))
+  const normalizedLength = normalizeComparableQaText(joinedText).length
+  if (normalizedLength < 6 || normalizedLength > 120) return false
+  return true
+}
+
+function isCompositeTextQaTarget(item) {
+  if (!item?.strictText) return false
+  if (item.category !== 'body') return true
+  return hasCriticalTextToken(item.strictText)
+}
+
+function createCompositeTextItem(items, source, mapping, mappingIndex, startIndex) {
+  const joinedText = joinCompositeTextParts(items.map((item) => item.strictText))
+  const yRatios = items.map((item) => item.yRatio).filter(Number.isFinite)
+  const baseItem = items[0]
+  const roleContext = items.map((item) => item.elementRole).join(' ')
+  const compositeRole = getCompositeElementRole(items)
+  const sectionId = source === 'figma' ? (mapping?.figmaSectionId || baseItem.sectionId) : (mapping?.webSectionId || baseItem.sectionId)
+  const sectionTitle = source === 'figma' ? (mapping?.figmaTitle || baseItem.sectionTitle) : (mapping?.webTitle || baseItem.sectionTitle)
+  return {
+    id: `${source}-composite-${mappingIndex + 1}-${startIndex + 1}-${items.length}`,
+    source,
+    text: joinedText,
+    strictText: joinedText,
+    comparableText: normalizeStrictComparableText(joinedText),
+    looseText: normalizeComparableQaText(joinedText),
+    category: getStrictTextCategory({ role: roleContext, tag: 'composite', sectionTitle }, joinedText),
+    elementRole: compositeRole,
+    sectionRole: baseItem.sectionRole,
+    tag: 'composite',
+    role: roleContext,
+    href: '',
+    sectionId,
+    sectionTitle,
+    area: mapping?.area || baseItem.area,
+    yRatio: yRatios.length > 0 ? Math.round((yRatios.reduce((sum, value) => sum + value, 0) / yRatios.length) * 1000) / 1000 : baseItem.yRatio,
+    layerPath: items.map((item) => item.layerPath).filter(Boolean).join(' + '),
+    selector: items.map((item) => item.selector).filter(Boolean).join(' + '),
+    isCta: false,
+    isNavigation: false,
+    visible: items.every((item) => item.visible !== false),
+    width: null,
+    height: null,
+    sourceItemIds: items.flatMap((item) => item.sourceItemIds || [item.id]),
+    composite: true,
+    compositeSize: items.length,
+  }
+}
+
+function getCompositeElementRole(items) {
+  const roles = new Set(items.map((item) => item.elementRole))
+  if (roles.has('heading')) return roles.has('body') || roles.has('quantitative') ? 'body' : 'heading'
+  if (roles.has('quantitative')) return roles.has('body') ? 'body' : 'quantitative'
+  return 'body'
+}
+
+function joinCompositeTextParts(values) {
+  return normalizeLinebreakText(values.filter(Boolean).join(' ')).replace(/[\t ]{2,}/g, ' ').trim()
+}
+
+function hasMixedStructuredContexts(items) {
+  const contexts = Array.from(new Set((Array.isArray(items) ? items : []).map(getStructuredContextKey).filter(Boolean)))
+  return contexts.length > 1
+}
+
+function hasDifferentStructuredContexts(firstItem, secondItem) {
+  if (isShortStructuredTextItem(firstItem) && isShortStructuredTextItem(secondItem)) return false
+  const firstContext = getStructuredContextKey(firstItem)
+  const secondContext = getStructuredContextKey(secondItem)
+  return Boolean(firstContext && secondContext && firstContext !== secondContext)
+}
+
+function getStructuredContextKey(item) {
+  const rawPath = String(item?.selector || item?.layerPath || '').toLowerCase()
+  if (!rawPath) return ''
+  const rowMatch = rawPath.match(/(tr(?:>[^>]+){0,2}|tbody>tr(?:>[^>]+){0,2}|ol(?:>[^>]+){0,2}|ul(?:>[^>]+){0,2}|dl(?:>[^>]+){0,3}|li(?:>[^>]+){0,2})/)
+  if (rowMatch?.[1]) return rowMatch[1]
+  const parts = rawPath.split(/\s*>\s*|\s*\/\s*/).filter(Boolean)
+  return parts.slice(Math.max(0, parts.length - 3), parts.length).join('>')
+}
+
+function isShortStructuredTextItem(item) {
+  const normalizedLength = normalizeComparableQaText(item?.strictText || '').length
+  return normalizedLength > 0 && normalizedLength <= 36
+}
+
 function createStrictTextMatches(figmaItems, webItems, context = {}) {
   const pairCandidates = []
-  figmaItems.forEach((figmaItem) => {
-    webItems.forEach((webItem) => {
-      const candidate = createStrictTextPairCandidate(figmaItem, webItem, context)
-      if (!candidate || candidate.matchConfidence === 'low') return
-      pairCandidates.push(candidate)
+  const pairEvaluations = []
+  const figmaCandidates = figmaItems.concat(context.figmaCompositeItems || [])
+  const webCandidates = webItems.concat(context.webCompositeItems || [])
+
+  figmaCandidates.forEach((figmaItem) => {
+    webCandidates.forEach((webItem) => {
+      if (figmaItem.composite && webItem.composite) return
+      const evaluation = evaluateStrictTextPair(figmaItem, webItem, context)
+      if (context.debugPairEvaluations) pairEvaluations.push(evaluation)
+      if (evaluation.rejectReason || evaluation.matchConfidence === 'low') return
+      pairCandidates.push(evaluation)
     })
   })
 
   const usedFigmaIds = new Set()
   const usedWebIds = new Set()
-  return pairCandidates
-    .sort((first, second) => second.matchScore - first.matchScore)
+  const matches = pairCandidates
+    .sort((first, second) => {
+      const scoreDiff = second.matchScore - first.matchScore
+      if (scoreDiff !== 0) return scoreDiff
+      return getPairKindRank(first.pairKind) - getPairKindRank(second.pairKind)
+    })
     .filter((candidate) => {
-      if (usedFigmaIds.has(candidate.figmaItem.id) || usedWebIds.has(candidate.webItem.id)) return false
-      usedFigmaIds.add(candidate.figmaItem.id)
-      usedWebIds.add(candidate.webItem.id)
+      const figmaSourceIds = candidate.figmaItem.sourceItemIds || [candidate.figmaItem.id]
+      const webSourceIds = candidate.webItem.sourceItemIds || [candidate.webItem.id]
+      if (figmaSourceIds.some((id) => usedFigmaIds.has(id)) || webSourceIds.some((id) => usedWebIds.has(id))) return false
+      figmaSourceIds.forEach((id) => usedFigmaIds.add(id))
+      webSourceIds.forEach((id) => usedWebIds.add(id))
       return true
     })
+
+  return { matches, pairEvaluations }
 }
 
-function createStrictTextPairCandidate(figmaItem, webItem, context = {}) {
+function getPairKindRank(pairKind) {
+  if (pairKind === '1:1') return 0
+  if (pairKind === '1:n') return 1
+  if (pairKind === 'n:1') return 2
+  return 9
+}
+
+function evaluateStrictTextPair(figmaItem, webItem, context = {}) {
   const mapping = findMappedSectionForTextItems(figmaItem, webItem, context.sectionMapping)
   const scoreDetails = getStrictTextMatchScore(figmaItem, webItem, mapping)
   const rejectReason = getStrictTextPairRejectReason(figmaItem, webItem, scoreDetails, mapping)
-  if (rejectReason) return null
   const matchConfidence = getStrictTextMatchConfidence(scoreDetails.score, scoreDetails, mapping)
   return {
     figmaItem,
@@ -941,8 +1292,10 @@ function createStrictTextPairCandidate(figmaItem, webItem, context = {}) {
     mapping,
     matchScore: scoreDetails.score,
     matchConfidence,
-    protectedTextQa: matchConfidence === 'high',
+    protectedTextQa: matchConfidence === 'high' && !rejectReason,
     scoreDetails,
+    rejectReason,
+    pairKind: figmaItem.composite ? 'n:1' : webItem.composite ? '1:n' : '1:1',
   }
 }
 
@@ -953,6 +1306,9 @@ function getStrictTextMatchScore(figmaItem, webItem, mapping) {
   const yDelta = getStrictYRatioDelta(figmaItem, webItem)
   const sectionContextScore = getSectionContextScore(figmaItem, webItem)
   const textShapeScore = getStrictTextShapeScore(figmaItem, webItem)
+  const compositeContextStrong = hasStrongCompositeTextContext(figmaItem, webItem)
+  const numericContextStrong = hasStrongNumericTextContext(figmaItem, webItem)
+  const charSimilarity = getStrictCharSimilarity(figmaItem.strictText, webItem.strictText)
 
   if (sameMappedSection) score += 0.34
   if (figmaItem.area === webItem.area && figmaItem.area !== 'unknown') score += 0.1
@@ -962,6 +1318,9 @@ function getStrictTextMatchScore(figmaItem, webItem, mapping) {
   score += textShapeScore * 0.1
   if (figmaItem.category === webItem.category) score += 0.08
   if (shareImportantNonNumericToken(figmaItem.strictText, webItem.strictText)) score += 0.07
+  if (compositeContextStrong) score += 0.08
+  if (numericContextStrong) score += 0.12
+  if (charSimilarity >= 0.72) score += Math.min(0.14, charSimilarity * 0.14)
 
   return {
     score: Math.round(Math.min(1, score) * 100) / 100,
@@ -970,6 +1329,9 @@ function getStrictTextMatchScore(figmaItem, webItem, mapping) {
     yDelta,
     sectionContextScore,
     textShapeScore,
+    compositeContextStrong,
+    numericContextStrong,
+    charSimilarity,
   }
 }
 
@@ -979,6 +1341,8 @@ function createStrictTextIssue(match) {
   const type = getStrictTextIssueType(category)
   const highPriority = isHighPriorityTextCategory(category)
   const diffKind = getStrictRawTextDiffKind(figmaItem.strictText, webItem.strictText)
+  const usedComposite = Boolean(figmaItem.composite || webItem.composite)
+  const title = createStrictTextIssueDisplayTitle(category, figmaItem, webItem, diffKind)
   return {
     id: `text-${category}-${normalizeComparableQaText(figmaItem.strictText).slice(0, 24)}`,
     source: 'text-qa',
@@ -991,20 +1355,27 @@ function createStrictTextIssue(match) {
     type,
     status: highPriority && matchConfidence === 'high' && diffKind !== 'whitespace' ? '수정 필요' : '확인 필요',
     priority: highPriority ? 1 : 8,
-    title: createStrictTextIssueTitle(category),
+    title,
     figma: figmaItem.strictText,
     web: webItem.strictText,
     figmaRawText: figmaItem.strictText,
     webRawText: webItem.strictText,
     figmaNormalizedText: figmaItem.looseText,
     webNormalizedText: webItem.looseText,
-    reason: 'Figma JSON 텍스트와 Playwright DOM 텍스트가 문자열 기준으로 다릅니다.',
-    memo: 'Text QA는 숫자, 금액, 퍼센트, 날짜, 기간, 모델명, CTA, 버튼, 제목, 링크명을 의미 유사도가 아니라 실제 문자열 차이로 비교합니다.',
+    reason: usedComposite
+      ? '같은 mapped section의 인접 텍스트 composite와 Playwright DOM 텍스트를 비교했을 때 문자열 차이가 확인됩니다.'
+      : 'Figma JSON 텍스트와 Playwright DOM 텍스트가 문자열 기준으로 다릅니다.',
+    memo: usedComposite
+      ? 'Text QA는 같은 섹션 안에서 1:1뿐 아니라 1:N/N:1 composite text도 비교합니다.'
+      : 'Text QA는 숫자, 금액, 퍼센트, 날짜, 기간, 모델명, CTA, 버튼, 제목, 링크명을 의미 유사도가 아니라 실제 문자열 차이로 비교합니다.',
     figmaSectionId: figmaItem.sectionId || mapping?.figmaSectionId || '',
     webSectionId: webItem.sectionId || mapping?.webSectionId || '',
     evidence: { visual: false, figmaJson: true, webDom: true, sourceAgreement: 2 },
     confidence: matchConfidence === 'high' ? 0.96 : 0.78,
     verification: 'kept',
+    figmaSourceIds: figmaItem.sourceItemIds || [figmaItem.id],
+    webSourceIds: webItem.sourceItemIds || [webItem.id],
+    pairKind: match.pairKind || '1:1',
   }
 }
 
@@ -1021,21 +1392,88 @@ function getStrictTextPairRejectReason(figmaItem, webItem, scoreDetails, mapping
   if (!figmaItem.visible || !webItem.visible) return 'hidden_or_invisible'
   if (hasZeroSizeTextItem(figmaItem) || hasZeroSizeTextItem(webItem)) return 'zero_size'
   if (isLayerNameLikeText(figmaItem.strictText) || isLayerNameLikeText(webItem.strictText)) return 'layer_name'
+  if ((figmaItem.composite || webItem.composite) && !mapping?.sameMappedSection) return 'composite_requires_same_section'
   if (isShortCodeToLongTextMismatch(figmaItem.strictText, webItem.strictText)) return 'short_code_to_long_text'
   if (!mapping?.sameMappedSection && !scoreDetails.compatibleRole) return 'different_section_and_role'
   if (!areSectionRolesCompatible(figmaItem.sectionRole, webItem.sectionRole)) return 'incompatible_section_role'
   if (!areStrictElementRolesCompatible(figmaItem, webItem)) return 'incompatible_element_role'
+  if (hasDifferentStructuredContexts(figmaItem, webItem)) return 'different_structured_context'
+  if (hasUnrelatedCtaPair(figmaItem, webItem)) return 'cta_label_mismatch'
+  if (hasWeakLongTextContext(figmaItem, webItem, scoreDetails, mapping)) return 'weak_long_text_context'
   if (hasExcessiveTextLengthRatio(figmaItem.strictText, webItem.strictText)) return 'length_ratio'
   if (hasQuantitativeToLongBodyMismatch(figmaItem, webItem)) return 'quantitative_to_body'
   if (Number.isFinite(scoreDetails.yDelta) && scoreDetails.yDelta > 0.35 && !mapping?.sameMappedSection) return 'far_y_ratio'
+  if ((figmaItem.composite || webItem.composite) && !scoreDetails.compositeContextStrong && !scoreDetails.numericContextStrong) return 'weak_composite_context'
   if (scoreDetails.score < 0.5) return 'low_score'
   return ''
 }
 
+function hasUnrelatedCtaPair(figmaItem, webItem) {
+  const firstRole = figmaItem?.elementRole
+  const secondRole = webItem?.elementRole
+  const ctaRoles = new Set(['cta', 'button', 'link'])
+  if (!ctaRoles.has(firstRole) || !ctaRoles.has(secondRole)) return false
+  return getQaTextSimilarity(normalizeComparableQaText(figmaItem.strictText), normalizeComparableQaText(webItem.strictText)) < 0.2
+}
+
 function getStrictTextMatchConfidence(score, scoreDetails, mapping) {
+  if (mapping?.sameMappedSection && scoreDetails.charSimilarity >= 0.88 && score >= 0.6) return 'high'
+  if (mapping?.sameMappedSection && (scoreDetails.numericContextStrong || scoreDetails.compositeContextStrong) && score >= 0.62) return 'high'
   if (mapping?.sameMappedSection && scoreDetails.compatibleRole && score >= 0.74 && (scoreDetails.yDelta <= 0.18 || !Number.isFinite(scoreDetails.yDelta))) return 'high'
   if ((mapping?.sameMappedSection || scoreDetails.sectionContextScore >= 0.45) && scoreDetails.compatibleRole && score >= 0.58) return 'medium'
   return 'low'
+}
+
+function getStrictCharSimilarity(firstText, secondText) {
+  const first = normalizeComparableQaText(firstText)
+  const second = normalizeComparableQaText(secondText)
+  if (!first || !second) return 0
+  if (first === second) return 1
+  const distance = getBoundedLevenshteinDistance(first, second, 24)
+  if (!Number.isFinite(distance)) return 0
+  return Math.max(0, 1 - distance / Math.max(first.length, second.length, 1))
+}
+
+function getBoundedLevenshteinDistance(first, second, maxLength) {
+  if (Math.max(first.length, second.length) > maxLength) return Number.POSITIVE_INFINITY
+  const previous = Array.from({ length: second.length + 1 }, (_, index) => index)
+  for (let firstIndex = 1; firstIndex <= first.length; firstIndex += 1) {
+    let diagonal = previous[0]
+    previous[0] = firstIndex
+    for (let secondIndex = 1; secondIndex <= second.length; secondIndex += 1) {
+      const temp = previous[secondIndex]
+      const cost = first[firstIndex - 1] === second[secondIndex - 1] ? 0 : 1
+      previous[secondIndex] = Math.min(
+        previous[secondIndex] + 1,
+        previous[secondIndex - 1] + 1,
+        diagonal + cost,
+      )
+      diagonal = temp
+    }
+  }
+  return previous[second.length]
+}
+
+function hasWeakLongTextContext(figmaItem, webItem, scoreDetails, mapping) {
+  const firstLength = normalizeComparableQaText(figmaItem.strictText).length
+  const secondLength = normalizeComparableQaText(webItem.strictText).length
+  const longer = Math.max(firstLength, secondLength)
+  if (longer < 90) return false
+  if (mapping?.sameMappedSection && scoreDetails.sectionContextScore >= 0.68) return false
+  return scoreDetails.sectionContextScore < 0.45 && (!Number.isFinite(scoreDetails.yDelta) || scoreDetails.yDelta > 0.08)
+}
+
+function hasStrongCompositeTextContext(figmaItem, webItem) {
+  if (!(figmaItem?.composite || webItem?.composite)) return false
+  const overlapScore = getTokenOverlapScore(figmaItem.strictText, webItem.strictText)
+  return overlapScore >= 0.35 || shareImportantNonNumericToken(figmaItem.strictText, webItem.strictText)
+}
+
+function hasStrongNumericTextContext(figmaItem, webItem) {
+  const firstHasNumeric = hasMoneyText(figmaItem.strictText) || hasPercentText(figmaItem.strictText) || hasDateOrPeriodText(figmaItem.strictText) || /\d/.test(figmaItem.strictText)
+  const secondHasNumeric = hasMoneyText(webItem.strictText) || hasPercentText(webItem.strictText) || hasDateOrPeriodText(webItem.strictText) || /\d/.test(webItem.strictText)
+  if (!firstHasNumeric || !secondHasNumeric) return false
+  return hasStrongNumericContextOverlap(figmaItem.strictText, webItem.strictText)
 }
 
 function hasStrictRawTextDifference(firstText, secondText) {
@@ -1049,6 +1487,16 @@ function getStrictRawTextDiffKind(firstText, secondText) {
   if (normalizeLinebreakText(first) === normalizeLinebreakText(second)) return 'none'
   if (normalizeRepeatedWhitespaceText(first) === normalizeRepeatedWhitespaceText(second)) return 'whitespace'
   return 'content'
+}
+
+function isMicroTextDifference(firstText, secondText) {
+  const first = normalizeLinebreakText(firstText).replace(/[\t ]{2,}/g, ' ').trim()
+  const second = normalizeLinebreakText(secondText).replace(/[\t ]{2,}/g, ' ').trim()
+  if (!first || !second || first === second) return false
+  if (Math.max(first.length, second.length) > 90) return false
+  if (normalizeComparableQaText(first) === normalizeComparableQaText(second)) return true
+  const distance = getBoundedLevenshteinDistance(first.toLowerCase(), second.toLowerCase(), 90)
+  return Number.isFinite(distance) && distance <= 2
 }
 
 function normalizeLinebreakText(value) {
@@ -1094,6 +1542,7 @@ function areStrictElementRolesCompatible(figmaItem, webItem) {
   const firstRole = figmaItem.elementRole
   const secondRole = webItem.elementRole
   if (firstRole === secondRole) return true
+  if (areShortLabelRolesCompatible(figmaItem, webItem)) return true
   if (firstRole === 'quantitative' && ['body', 'quantitative'].includes(secondRole)) return true
   if (secondRole === 'quantitative' && ['body', 'quantitative'].includes(firstRole)) return true
   if (['cta', 'button', 'link'].includes(firstRole) || ['cta', 'button', 'link'].includes(secondRole)) return false
@@ -1197,7 +1646,483 @@ function createUnmatchedTextIssue(item, source) {
     evidence: { visual: false, figmaJson: isFigmaOnly, webDom: !isFigmaOnly, sourceAgreement: 1 },
     confidence: 0.68,
     verification: 'kept',
+    figmaSourceIds: isFigmaOnly ? (item.sourceItemIds || [item.id]) : [],
+    webSourceIds: isFigmaOnly ? [] : (item.sourceItemIds || [item.id]),
   }
+}
+
+function createSectionNumericIssues(figmaItems, webItems, matches, context = {}) {
+  const mappedSections = Array.isArray(context.sectionMapping?.mappedSections) ? context.sectionMapping.mappedSections : []
+  const issues = []
+  const seen = new Set()
+
+  mappedSections.forEach((mapping, mappingIndex) => {
+    const figmaCandidates = createSectionNumericCandidates(figmaItems, 'figma', mapping, mappingIndex)
+    const webCandidates = createSectionNumericCandidates(webItems, 'web', mapping, mappingIndex)
+    if (figmaCandidates.length === 0 || webCandidates.length === 0) return
+
+    const usedFigmaIds = new Set()
+    const usedWebIds = new Set()
+    figmaCandidates
+      .flatMap((figmaCandidate) => webCandidates.map((webCandidate) => createNumericCandidatePair(figmaCandidate, webCandidate, mapping)))
+      .filter(Boolean)
+      .sort((first, second) => second.score - first.score)
+      .forEach((pair) => {
+        if (pair.figmaSourceIds.some((id) => usedFigmaIds.has(id)) || pair.webSourceIds.some((id) => usedWebIds.has(id))) return
+        const duplicateMatch = matches.some((match) => sharesAllSourceIds(match.figmaItem.sourceItemIds || [match.figmaItem.id], pair.figmaSourceIds)
+          && sharesAllSourceIds(match.webItem.sourceItemIds || [match.webItem.id], pair.webSourceIds))
+        if (duplicateMatch && !hasMeaningfulNumberDifference(pair.figmaText, pair.webText)) return
+        const issue = createNumericContextIssue(pair)
+        const key = `${mapping.figmaSectionId}:${normalizeComparableQaText(issue.figma)}:${normalizeComparableQaText(issue.web)}`
+        if (seen.has(key)) return
+        seen.add(key)
+        pair.figmaSourceIds.forEach((id) => usedFigmaIds.add(id))
+        pair.webSourceIds.forEach((id) => usedWebIds.add(id))
+        issues.push(issue)
+      })
+  })
+
+  return issues
+}
+
+function createSectionNumericCandidates(items, source, mapping, mappingIndex) {
+  const sectionItems = items
+    .filter((item) => isCompositeEligibleTextItem(item) && isTextItemWithinMapping(item, mapping, source))
+    .sort(compareTextItemFlowOrder)
+  const candidates = []
+  const seen = new Set()
+
+  for (let start = 0; start < sectionItems.length; start += 1) {
+    for (let size = 1; size <= 4; size += 1) {
+      const window = sectionItems.slice(start, start + size)
+      if (window.length !== size) continue
+      if (size > 1 && !isCompositeWindowAllowed(window)) continue
+      const text = size === 1 ? window[0].strictText : joinCompositeTextParts(window.map((item) => item.strictText))
+      if (!hasNumericTokenText(text)) continue
+      const sourceItemIds = window.flatMap((item) => item.sourceItemIds || [item.id])
+      const key = `${mappingIndex}:${normalizeComparableQaText(text)}:${sourceItemIds.join('|')}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      candidates.push({
+        id: `${source}-numeric-${mappingIndex + 1}-${start + 1}-${size}`,
+        source,
+        text,
+        sourceItemIds,
+        sectionId: source === 'figma' ? mapping.figmaSectionId : mapping.webSectionId,
+        area: mapping.area,
+        contextTokens: getNumericContextTokens(text),
+        numericTokens: extractNumberLikeContextTokens(text),
+      })
+    }
+  }
+
+  return candidates
+}
+
+function createNumericCandidatePair(figmaCandidate, webCandidate, mapping) {
+  if (!figmaCandidate || !webCandidate) return null
+  if (!hasMeaningfulNumberDifference(figmaCandidate.text, webCandidate.text)) return null
+  const contextOverlap = getNumericContextOverlapScore(figmaCandidate.contextTokens, webCandidate.contextTokens)
+  if (contextOverlap < 0.45 || !hasStrongNumericContextOverlap(figmaCandidate.text, webCandidate.text)) return null
+  return {
+    mapping,
+    figmaText: figmaCandidate.text,
+    webText: webCandidate.text,
+    figmaSourceIds: figmaCandidate.sourceItemIds,
+    webSourceIds: webCandidate.sourceItemIds,
+    score: Math.round(Math.min(1, 0.46 + contextOverlap * 0.34 + getTokenOverlapScore(figmaCandidate.text, webCandidate.text) * 0.2) * 100) / 100,
+  }
+}
+
+function createNumericContextIssue(pair) {
+  const title = createNumericDifferenceTitle(pair.figmaText, pair.webText)
+  return {
+    id: `text-numeric-${normalizeComparableQaText(pair.figmaText).slice(0, 24)}`,
+    source: 'text-qa',
+    textQa: true,
+    protectedTextQa: true,
+    matchConfidence: 'high',
+    matchScore: Math.max(0.82, Number(pair.score) || 0.82),
+    diffKind: 'numeric-context',
+    area: pair.mapping?.area || 'unknown',
+    type: '금액',
+    status: '수정 필요',
+    priority: 1,
+    title,
+    figma: pair.figmaText,
+    web: pair.webText,
+    figmaRawText: pair.figmaText,
+    webRawText: pair.webText,
+    figmaNormalizedText: normalizeComparableQaText(pair.figmaText),
+    webNormalizedText: normalizeComparableQaText(pair.webText),
+    reason: '같은 mapped section에서 모델명/주변 label 문맥이 일치하는 숫자 토큰이 서로 다릅니다.',
+    memo: 'Text QA는 같은 섹션 내부 1:N/N:1 composite와 숫자 토큰 문맥을 함께 비교합니다.',
+    figmaSectionId: pair.mapping?.figmaSectionId || '',
+    webSectionId: pair.mapping?.webSectionId || '',
+    evidence: { visual: false, figmaJson: true, webDom: true, sourceAgreement: 2 },
+    confidence: 0.97,
+    verification: 'kept',
+    figmaSourceIds: pair.figmaSourceIds,
+    webSourceIds: pair.webSourceIds,
+  }
+}
+
+function createNumericDifferenceTitle(figmaText, webText) {
+  if (isMonthlyPaymentText(figmaText) || isMonthlyPaymentText(webText)) return '월 납입금 수치 차이'
+  if (hasMoneyText(figmaText) || hasMoneyText(webText)) return '금액 수치 차이'
+  if (hasPercentText(figmaText) || hasPercentText(webText)) return '퍼센트 수치 차이'
+  if (hasDateOrPeriodText(figmaText) || hasDateOrPeriodText(webText)) return '날짜/기간 수치 차이'
+  return '숫자 수치 차이'
+}
+
+function isMonthlyPaymentText(value) {
+  return /월\s*\d|월납|월\s*납입|월\s*리스|월\s*할부/i.test(String(value || ''))
+}
+
+function createHeroTextBlockIssues(figmaItems, webItems, context = {}) {
+  const heroMapping = findPrimaryHeroSectionMapping(context.sectionMapping)
+  const figmaCandidates = createHeroTextBlockCandidates(figmaItems, heroMapping, 'figma').concat(createHeroTextBlockCandidates(figmaItems, null, 'fallback'))
+  const webCandidates = createHeroTextBlockCandidates(webItems, heroMapping, 'web').concat(createHeroTextBlockCandidates(webItems, null, 'fallback'))
+  const safeFigmaBlock = figmaCandidates[0] || createFallbackHeroTextBlock(figmaItems)
+  const safeWebBlock = pickBestMatchingHeroTextBlock(webCandidates, safeFigmaBlock) || createFallbackHeroTextBlock(webItems)
+  if (!safeFigmaBlock || !safeWebBlock) return []
+  if (!hasStrictRawTextDifference(safeFigmaBlock.text, safeWebBlock.text)) return []
+  if (getTokenOverlapScore(safeFigmaBlock.text, safeWebBlock.text) < 0.15 && !shareImportantNonNumericToken(safeFigmaBlock.text, safeWebBlock.text)) return []
+  return [{
+    id: `text-hero-block-${normalizeComparableQaText(safeFigmaBlock.text).slice(0, 24)}`,
+    source: 'text-qa',
+    textQa: true,
+    protectedTextQa: true,
+    matchConfidence: 'high',
+    matchScore: 0.9,
+    diffKind: 'hero-block',
+    area: heroMapping.area || 'top',
+    type: '문구',
+    status: '수정 필요',
+    priority: 1,
+    title: 'Hero KV 문구가 다릅니다.',
+    figma: safeFigmaBlock.text,
+    web: safeWebBlock.text,
+    figmaRawText: safeFigmaBlock.text,
+    webRawText: safeWebBlock.text,
+    figmaNormalizedText: normalizeComparableQaText(safeFigmaBlock.text),
+    webNormalizedText: normalizeComparableQaText(safeWebBlock.text),
+    reason: 'Hero 영역의 visible headline/subheadline text block을 순서대로 결합해 비교했을 때 문구 차이가 확인됩니다.',
+    memo: 'Header navigation, cookie popup, CTA는 Hero KV block 비교에서 제외했습니다.',
+    figmaSectionId: heroMapping?.figmaSectionId || '',
+    webSectionId: heroMapping?.webSectionId || '',
+    evidence: { visual: false, figmaJson: true, webDom: true, sourceAgreement: 2 },
+    confidence: 0.97,
+    verification: 'kept',
+    figmaSourceIds: safeFigmaBlock.sourceItemIds,
+    webSourceIds: safeWebBlock.sourceItemIds,
+  }]
+}
+
+function findPrimaryHeroSectionMapping(sectionMapping = {}) {
+  const mappedSections = Array.isArray(sectionMapping.mappedSections) ? sectionMapping.mappedSections : []
+  return mappedSections
+    .filter((mapping) => mapping.role === 'hero' || mapping.figmaRole === 'hero' || mapping.webRole === 'hero' || mapping.area === 'top')
+    .sort((first, second) => Number(first.figmaYRatio || 1) - Number(second.figmaYRatio || 1))[0] || null
+}
+
+function createFallbackHeroTextBlock(items) {
+  return createHeroTextBlockCandidates(items, null, 'fallback')[0] || null
+}
+
+function createHeroTextBlockCandidates(items, mapping, source) {
+  const eligibleItems = items
+    .filter((item) => isHeroBlockTextItem(item) && (mapping ? isTextItemWithinMapping(item, mapping, source) : item.area === 'top' && (!Number.isFinite(item.yRatio) || item.yRatio <= 0.16)))
+    .sort(compareTextItemFlowOrder)
+  const candidates = []
+
+  eligibleItems.forEach((item, index) => {
+    if (item.elementRole !== 'heading') return
+    const anchorYRatio = Number.isFinite(item.yRatio) ? item.yRatio : null
+    const blockItems = eligibleItems
+      .slice(index)
+      .filter((candidateItem, candidateIndex) => {
+        if (candidateIndex === 0 || anchorYRatio === null || !Number.isFinite(candidateItem.yRatio)) return true
+        return candidateItem.yRatio - anchorYRatio <= 0.04
+      })
+      .slice(0, 2)
+    if (blockItems.length === 0) return
+    candidates.push({
+      text: joinCompositeTextParts(blockItems.map((candidateItem) => candidateItem.strictText)),
+      sourceItemIds: blockItems.flatMap((candidateItem) => candidateItem.sourceItemIds || [candidateItem.id]),
+    })
+  })
+
+  return candidates
+}
+
+function pickBestMatchingHeroTextBlock(candidates, referenceBlock) {
+  if (!Array.isArray(candidates) || candidates.length === 0) return null
+  if (!referenceBlock?.text) return candidates[0] || null
+  const normalizedReference = normalizeComparableQaText(referenceBlock.text)
+  const normalizedReferencePrefix = normalizedReference.slice(0, Math.min(12, normalizedReference.length))
+  return candidates
+    .map((candidate) => ({
+      candidate,
+      score: getQaTextSimilarity(normalizeComparableQaText(candidate.text), normalizedReference)
+        + getTokenOverlapScore(candidate.text, referenceBlock.text) * 0.6
+        + (shareImportantNonNumericToken(candidate.text, referenceBlock.text) ? 0.2 : 0)
+        + (normalizedReferencePrefix && normalizeComparableQaText(candidate.text).includes(normalizedReferencePrefix) ? 0.5 : 0),
+    }))
+    .sort((first, second) => second.score - first.score)[0]?.candidate || null
+}
+
+function isHeroBlockTextItem(item) {
+  if (!isCompositeEligibleTextItem(item)) return false
+  if (isCookieOrPopupTextItem(item)) return false
+  if (isHeaderBrandOrNavigationTextItem(item)) return false
+  if (['cta', 'button', 'link', 'legal', 'navigation'].includes(item.elementRole)) return false
+  return ['heading', 'body', 'quantitative'].includes(item.elementRole)
+}
+
+function isHeaderBrandOrNavigationTextItem(item) {
+  const contextText = `${item?.strictText || ''} ${item?.layerPath || ''} ${item?.selector || ''}`.toLowerCase()
+  return /header|nav|gnb|logo|brand|global\s*navigation|top\s*menu|header__|navbar/.test(contextText)
+}
+
+function isCookieOrPopupTextItem(item) {
+  const contextText = `${item?.strictText || ''} ${item?.layerPath || ''} ${item?.selector || ''} ${item?.sectionTitle || ''}`.toLowerCase()
+  return /cookie|consent|popup|modal|layer\s*popup|toast|banner|쿠키|팝업|배너|동의/.test(contextText)
+}
+
+function isTextItemWithinMapping(item, mapping, source) {
+  if (!item || !mapping) return false
+  const sectionId = source === 'figma' ? mapping.figmaSectionId : mapping.webSectionId
+  const sectionRole = source === 'figma' ? mapping.figmaRole : mapping.webRole
+  if (sectionId && item.sectionId && item.sectionId === sectionId) return true
+  if (mapping.area && mapping.area !== 'unknown' && item.area && item.area !== mapping.area) return false
+  if (sectionRole && sectionRole !== 'other' && !areSectionRolesCompatible(item.sectionRole, sectionRole)) return false
+  const targetYRatio = source === 'figma' ? mapping.figmaYRatio : mapping.webYRatio
+  if (Number.isFinite(targetYRatio) && Number.isFinite(item.yRatio)) return Math.abs(targetYRatio - item.yRatio) <= 0.22
+  return true
+}
+
+function areShortLabelRolesCompatible(figmaItem, webItem) {
+  const pair = new Set([figmaItem?.elementRole, webItem?.elementRole])
+  const isCompatiblePair = (pair.has('heading') && pair.has('link'))
+    || (pair.has('heading') && pair.has('body'))
+    || (pair.has('link') && pair.has('body'))
+  if (!isCompatiblePair) return false
+  const firstText = String(figmaItem?.strictText || '')
+  const secondText = String(webItem?.strictText || '')
+  const shorterLength = Math.min(normalizeComparableQaText(firstText).length, normalizeComparableQaText(secondText).length)
+  const longerLength = Math.max(normalizeComparableQaText(firstText).length, normalizeComparableQaText(secondText).length)
+  if (shorterLength < 3 || longerLength > 36) return false
+  if (/바로가기|신청|상담|예약|문의|더보기|자세히/i.test(`${firstText} ${secondText}`)) return false
+  return true
+}
+
+function hasNumericTokenText(value) {
+  return hasMoneyText(value) || hasPercentText(value) || hasDateOrPeriodText(value) || /\d/.test(String(value || ''))
+}
+
+function extractNumberLikeContextTokens(value) {
+  return (String(value || '').match(/\d+(?:[.,]\d+)?\s*(?:만원|억원|원|%|개월|월|년|일)?/g) || [])
+    .map((token) => token.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+}
+
+function getNumericContextTokens(value) {
+  return getStrictComparableTokens(value)
+    .map((token) => token.toLowerCase())
+    .filter((token) => !/^\d+(?:[.,]\d+)?$/.test(token))
+    .filter((token) => !['원', '만원', '억원', '월', '년', '일', '개월', 'percent', 'the', 'of', 'a'].includes(token))
+}
+
+function getNumericContextOverlapScore(firstTokens, secondTokens) {
+  if (!Array.isArray(firstTokens) || !Array.isArray(secondTokens) || firstTokens.length === 0 || secondTokens.length === 0) return 0
+  const firstSet = new Set(firstTokens)
+  const secondSet = new Set(secondTokens)
+  let overlap = 0
+  firstSet.forEach((token) => {
+    if (secondSet.has(token)) overlap += isStrongModelOrLabelToken(token) ? 1.2 : 1
+  })
+  return overlap / Math.max(firstSet.size, secondSet.size, 1)
+}
+
+function hasStrongNumericContextOverlap(firstText, secondText) {
+  const firstTokens = getNumericContextTokens(firstText)
+  const secondTokens = getNumericContextTokens(secondText)
+  const overlap = firstTokens.filter((token) => secondTokens.includes(token))
+  return overlap.some(isStrongModelOrLabelToken) || overlap.length >= 2
+}
+
+function isStrongModelOrLabelToken(token) {
+  const text = String(token || '').toLowerCase()
+  if (!text || ['bmw', 'new', 'smart', 'benefit', '혜택', '구매'].includes(text)) return false
+  if (/^[a-z]{1,4}\d*[a-z0-9-]*$/.test(text) && text.length >= 2) return true
+  return /[가-힣]/.test(text) && text.length >= 2
+}
+
+function sharesAllSourceIds(firstIds, secondIds) {
+  if (!Array.isArray(firstIds) || !Array.isArray(secondIds) || firstIds.length !== secondIds.length) return false
+  return firstIds.every((id) => secondIds.includes(id))
+}
+
+function dedupeTextQaIssues(issues) {
+  const selected = []
+  issues.forEach((issue) => {
+    const duplicateIndex = selected.findIndex((candidate) => areDuplicateTextQaIssues(candidate, issue))
+    if (duplicateIndex === -1) {
+      selected.push(issue)
+      return
+    }
+    selected[duplicateIndex] = choosePreferredTextQaIssue(selected[duplicateIndex], issue)
+  })
+  return selected
+}
+
+function areDuplicateTextQaIssues(first, second) {
+  if (!first || !second) return false
+  const firstFigmaIds = first.figmaSourceIds || []
+  const firstWebIds = first.webSourceIds || []
+  const secondFigmaIds = second.figmaSourceIds || []
+  const secondWebIds = second.webSourceIds || []
+  if (firstFigmaIds.length > 0 && firstWebIds.length > 0 && sharesAnySourceIds(firstFigmaIds, secondFigmaIds) && sharesAnySourceIds(firstWebIds, secondWebIds)) return true
+  return Boolean(first.textQa && second.textQa && normalizeComparableQaText(first.figma) === normalizeComparableQaText(second.figma) && normalizeComparableQaText(first.web) === normalizeComparableQaText(second.web))
+}
+
+function choosePreferredTextQaIssue(first, second) {
+  const firstNumeric = first.diffKind === 'numeric-context'
+  const secondNumeric = second.diffKind === 'numeric-context'
+  if (firstNumeric || secondNumeric) return firstNumeric ? first : second
+  const firstHero = first.diffKind === 'hero-block'
+  const secondHero = second.diffKind === 'hero-block'
+  if (firstHero || secondHero) return firstHero ? first : second
+  return Number(second.confidence || 0) > Number(first.confidence || 0) ? second : first
+}
+
+function sharesAnySourceIds(firstIds, secondIds) {
+  if (!Array.isArray(firstIds) || !Array.isArray(secondIds)) return false
+  return firstIds.some((id) => secondIds.includes(id))
+}
+
+function shouldLogTextQaDiagnostics(payload = {}) {
+  return Boolean(getTextQaDebugProfile(payload))
+}
+
+function logTextQaDiagnostics(payload, state = {}) {
+  const profile = getTextQaDebugProfile(payload)
+  if (!profile) return
+  const figmaRelevant = collectRelatedDebugItems(state.figmaAllItems || [], profile.queries)
+  const webRelevant = collectRelatedDebugItems(state.webAllItems || [], profile.queries)
+  const figmaRelevantIds = new Set(figmaRelevant.map((entry) => entry.item.id))
+  const webRelevantIds = new Set(webRelevant.map((entry) => entry.item.id))
+  const pairEvaluations = Array.isArray(state.pairEvaluations) ? state.pairEvaluations.filter((pair) => {
+    const figmaDirect = figmaRelevantIds.has(pair.figmaItem.id) || sharesAnySourceIds(pair.figmaItem.sourceItemIds || [], Array.from(figmaRelevantIds))
+    const webDirect = webRelevantIds.has(pair.webItem.id) || sharesAnySourceIds(pair.webItem.sourceItemIds || [], Array.from(webRelevantIds))
+    return figmaDirect && webDirect
+  }).slice(0, 60) : []
+  const generatedIssues = Array.isArray(state.issues) ? state.issues : []
+
+  console.log(`[Text QA Debug] ${profile.label} related figma items:`, figmaRelevant.map(({ query, item }) => ({
+    query,
+    rawText: item.strictText,
+    normalizedText: item.looseText,
+    role: item.elementRole,
+    category: item.category,
+    sectionId: item.sectionId,
+    sectionTitle: item.sectionTitle,
+    area: item.area,
+    yRatio: item.yRatio,
+    layerPath: item.layerPath,
+    visible: item.visible !== false,
+    includedInStrictItems: Boolean((state.figmaItems || []).some((candidate) => candidate.id === item.id)),
+    compositeCandidate: Boolean((state.figmaCompositeItems || []).some((candidate) => (candidate.sourceItemIds || []).includes(item.id))),
+    targetExcludedReason: getStrictTextTargetExclusionReason(item) || '',
+    matchCandidateGenerated: pairEvaluations.some((pair) => (pair.figmaItem.sourceItemIds || [pair.figmaItem.id]).includes(item.id)),
+    unmatched: !(state.matchedFigmaIds instanceof Set) ? null : !Array.from(item.sourceItemIds || [item.id]).some((id) => state.matchedFigmaIds.has(id)),
+    finalIssueGenerated: generatedIssues.some((issue) => (issue.figmaSourceIds || []).includes(item.id)),
+  })))
+  console.log(`[Text QA Debug] ${profile.label} related web items:`, webRelevant.map(({ query, item }) => ({
+    query,
+    rawText: item.strictText,
+    normalizedText: item.looseText,
+    role: item.elementRole,
+    category: item.category,
+    sectionId: item.sectionId,
+    sectionTitle: item.sectionTitle,
+    area: item.area,
+    yRatio: item.yRatio,
+    selector: item.selector,
+    visible: item.visible !== false,
+    includedInStrictItems: Boolean((state.webItems || []).some((candidate) => candidate.id === item.id)),
+    compositeCandidate: Boolean((state.webCompositeItems || []).some((candidate) => (candidate.sourceItemIds || []).includes(item.id))),
+    targetExcludedReason: getStrictTextTargetExclusionReason(item) || '',
+    matchCandidateGenerated: pairEvaluations.some((pair) => (pair.webItem.sourceItemIds || [pair.webItem.id]).includes(item.id)),
+    finalIssueGenerated: generatedIssues.some((issue) => (issue.webSourceIds || []).includes(item.id)),
+    unmatched: !(state.matchedWebIds instanceof Set) ? null : !Array.from(item.sourceItemIds || [item.id]).some((id) => state.matchedWebIds.has(id)),
+  })))
+  console.log(`[Text QA Debug] ${profile.label} pair evaluations:`, pairEvaluations.map((pair) => ({
+    figmaRawText: pair.figmaItem.strictText,
+    figmaNormalizedText: pair.figmaItem.looseText,
+    webRawText: pair.webItem.strictText,
+    webNormalizedText: pair.webItem.looseText,
+    pairKind: pair.pairKind,
+    compositeIncluded: Boolean(pair.figmaItem.composite || pair.webItem.composite),
+    matchScore: pair.matchScore,
+    matchConfidence: pair.matchConfidence,
+    rejectReason: pair.rejectReason || '',
+    sameMappedSection: Boolean(pair.mapping?.sameMappedSection),
+  })))
+  console.log(`[Text QA Debug] ${profile.label} generated issues:`, generatedIssues.map((issue) => ({ uuid: getTextIssueTraceId(issue), title: issue.title, figma: issue.figma, web: issue.web, diffKind: issue.diffKind })))
+  console.log(`[Text QA Debug] ${profile.label} numeric issues:`, (state.numericIssues || []).map((issue) => ({ title: issue.title, figma: issue.figma, web: issue.web })))
+  console.log(`[Text QA Debug] ${profile.label} hero block issues:`, (state.heroBlockIssues || []).map((issue) => ({ title: issue.title, figma: issue.figma, web: issue.web })))
+  void payload
+}
+
+function getTextQaDebugProfile(payload = {}) {
+  const url = String(payload?.url || '')
+  const urlPath = getUrlPath(url) || '/'
+  if (/bmwfs\.co\.kr/i.test(url) && /^\/?(?:[#?].*)?$/.test(urlPath)) {
+    return {
+      label: 'BMWFS main',
+      queries: [
+        { label: 'hero-title', matcher: createDebugTextMatcher(['the', 'new', 'bmw', 'ix3']) },
+        { label: 'hero-subtitle', matcher: createDebugTextMatcher(['bmw', '스마트', '리스']) },
+        { label: 'monthly-price', matcher: createDebugTextMatcher(['ix', '만원']) },
+        { label: 'benefit', matcher: createDebugTextMatcher(['bmw', 'i', '구매', '혜택']) },
+      ],
+    }
+  }
+  if (/bmwfs\.co\.kr/i.test(url) && /\/kr\/product\/smart-/i.test(urlPath)) {
+    return {
+      label: 'BMWFS smart-product',
+      queries: [
+        { label: 'bmw', matcher: createDebugTextMatcher(['bmw']) },
+        { label: 'bmww', matcher: createDebugTextMatcher(['bmww']) },
+        { label: 'rate', matcher: createDebugTextMatcher(['금리']) },
+        { label: 'guarantee', matcher: createDebugTextMatcher(['보장']) },
+        { label: 'monthly-payment', matcher: createDebugTextMatcher(['월', '납입']) },
+        { label: 'percent', matcher: createDebugTextMatcher(['%']) },
+        { label: 'date', matcher: createDebugTextMatcher(['2026']) },
+        { label: 'period', matcher: createDebugTextMatcher(['기간']) },
+      ],
+    }
+  }
+  return null
+}
+
+function createDebugTextMatcher(tokens) {
+  return (item) => {
+    const normalized = normalizeComparableQaText(item?.strictText || item?.text || '')
+    return tokens.every((token) => normalized.includes(normalizeComparableQaText(token)))
+  }
+}
+
+function collectRelatedDebugItems(items, queries) {
+  const results = []
+  queries.forEach((query) => {
+    items.filter((item) => query.matcher(item)).slice(0, 4).forEach((item) => {
+      results.push({ query: query.label, item })
+    })
+  })
+  return results
 }
 
 function getCombinedStrictTextCategory(figmaItem, webItem) {
@@ -1219,6 +2144,19 @@ function createStrictTextIssueTitle(category) {
     number: '숫자 문구가 다릅니다.',
   }
   return titleByCategory[category] || '문구가 다릅니다.'
+}
+
+function createStrictTextIssueDisplayTitle(category, figmaItem, webItem, diffKind) {
+  if (diffKind !== 'content') return createStrictTextIssueTitle(category)
+  if (isMicroTextDifference(figmaItem?.strictText, webItem?.strictText)) {
+    if (category === 'money') return '금액 수치가 다릅니다.'
+    if (category === 'percent') return '퍼센트 수치가 다릅니다.'
+    if (category === 'date-period') return '날짜 표기가 다릅니다.'
+    if (category === 'cta' || category === 'button' || category === 'link') return createStrictTextIssueTitle(category)
+    if (category === 'title') return '제목 문구가 다릅니다.'
+    return '문구 오타가 있습니다.'
+  }
+  return createStrictTextIssueTitle(category)
 }
 
 function getStrictTextIssueType(category) {
@@ -1319,9 +2257,15 @@ function createEvidenceComparisonContent(payload, context = {}) {
 async function createVerifiedMockupAiQaResult(client, payload, firstPassResult, context = {}) {
   try {
     console.log('[Mockup AI QA] calling OpenAI verification')
+    logIssueTrace('requestMockupAiQaVerification.before-call', (firstPassResult?.issues || []).map((issue) => formatIssueTraceLog(issue)))
     const rawText = await requestMockupAiQaVerification(client, payload, firstPassResult, context)
     const parsed = parseAiQaJson(rawText)
     if (!parsed) {
+      logIssueTrace('requestMockupAiQaVerification.ai-response', {
+        kept: [],
+        deleted: [],
+        note: 'verification_json_parse_failed',
+      })
       return {
         result: { ...firstPassResult },
         verification: { used: false, fallback: true, message: '2차 AI 응답 JSON을 해석하지 못해 1차 결과를 사용했습니다.' },
@@ -1331,6 +2275,19 @@ async function createVerifiedMockupAiQaResult(client, payload, firstPassResult, 
     const verifiedResult = normalizeMockupAiQaResult(parsed, payload, {
       priorRemovedIssues: firstPassResult.removedIssues,
       verificationUsed: true,
+    })
+    const aiRemovedByReason = (Array.isArray(parsed.removedIssues) ? parsed.removedIssues : []).map((removedIssue) => ({
+      uuid: matchRemovedIssueToTraceId(removedIssue, firstPassResult?.issues || []),
+      title: removedIssue?.title || '',
+      reason: removedIssue?.reason || '',
+    }))
+    const keptTraceIds = new Set((verifiedResult.issues || []).map((issue) => getTextIssueTraceId(issue)).filter(Boolean))
+    const aiDeletedByOmission = collectMissingTextIssues(firstPassResult?.issues || [], verifiedResult.issues || [])
+      .filter((issue) => !aiRemovedByReason.some((removed) => removed.uuid && removed.uuid === getTextIssueTraceId(issue)))
+      .map((issue) => formatIssueTraceLog(issue, { deletedReason: 'omitted_by_requestMockupAiQaVerification' }))
+    logIssueTrace('requestMockupAiQaVerification.ai-response', {
+      kept: (verifiedResult.issues || []).map((issue) => formatIssueTraceLog(issue, { keptByAi: keptTraceIds.has(getTextIssueTraceId(issue)) })),
+      deleted: aiRemovedByReason.concat(aiDeletedByOmission),
     })
     return {
       result: verifiedResult,
@@ -1499,6 +2456,12 @@ function getMockupAiQaVerificationSystemPrompt() {
     '서로 다른 섹션/역할이 잘못 매칭된 이슈는 제거하거나 확인 필요로 낮춘다.',
     'DOM 또는 JSON 한 소스에서만 나온 주장, OCR이 만든 문구, 이미지에서 보이지 않는 항목은 수정 필요로 두지 않는다.',
     '같은 차이를 표현만 바꾼 중복은 하나로 합친다.',
+    '같은 section/context/role로 확인된 rawText 차이는 의미가 비슷해도 유지한다.',
+    'BMW 와 BMWW처럼 한 글자 차이, 숫자 한 자리 차이, 문장부호 차이, 기호/단위 차이는 제거하지 않는다.',
+    '서로 다른 장문끼리 잘못 매칭된 후보는 제거한다.',
+    '단순 crop, 스크롤 위치, 캡처 축척 차이로 보이는 이미지/텍스트 배치 이슈는 제거한다.',
+    '이미지 구성 자체, 콘텐츠 순서, 실제 섹션 구조가 달라질 때만 이미지/배치 이슈를 유지한다.',
+    'cookie popup, fixed overlay, modal, floating layer, sticky banner, 일시적 overlay 때문에 생긴 navigation/header 차이는 제거한다.',
     '페이지 유형과 목적에 비추어 중요하지 않거나 근거가 약한 항목은 제거한다.',
     '최대 5개를 채우려고 근거 약한 항목을 남기지 않는다. 이슈 0개도 가능하다.',
     '최종 결과는 수정 필요 또는 확인 필요만 남긴다.',
@@ -1564,6 +2527,11 @@ function createMockupAiQaVerificationPrompt(payload, firstPassResult, context = 
     'pageUnderstanding과 sectionMapping에 맞지 않는 다른 역할 섹션 간 비교는 제거하거나 확인 필요로 낮추세요.',
     'Vision/OCR만 주장하는 문구 이슈는 오탐 가능성으로 제거하거나 확인 필요 이하로 낮추세요. 단, protectedTextQaIssues는 JSON+DOM 두 소스 비교 결과로 우선 유지하세요.',
     '정량 정보 차이는 페이지 문맥에서 사용자 의사결정에 영향을 주고 시각/보조 근거가 충분할 때만 유지하세요.',
+    '같은 section/context/role로 확인된 rawText 차이는 의미가 비슷해도 유지하세요. 한 글자 오타, 숫자 한 자리 차이, 문장부호 차이, 기호/단위 차이는 제거하지 마세요.',
+    '서로 다른 긴 문단끼리 잘못 매칭된 후보는 제거하세요.',
+    'high-confidence text issue는 이미지/레이아웃 이슈보다 우선하세요.',
+    '이미지와 텍스트 배치 차이는 단순 crop, 스크롤 위치, 캡처 축척 때문이면 제거하세요. 콘텐츠 순서나 이미지 구성 자체가 다를 때만 유지하세요.',
+    'cookie popup, fixed overlay, modal, floating layer, sticky banner, Playwright 캡처 시 일시적 overlay 때문에 생긴 navigation/header 차이는 제거하세요.',
     '동적 콘텐츠, 애니메이션, 캐러셀, 시안 버전 차이 가능성이 있으면 확인 필요로 판단하세요.',
     '최종적으로 실제 수정/확인이 필요한 핵심 이슈만 최대 5개 남기세요. 없으면 빈 배열을 반환하세요.',
     '반드시 아래 JSON 형식으로만 응답하세요.',
@@ -1726,7 +2694,14 @@ function createFinalMockupQaResult({ textResult, visionResult, ctaResult, imageR
   const visionIssues = Array.isArray(visionResult?.issues) ? visionResult.issues : []
   const ctaIssues = Array.isArray(ctaResult?.issues) ? ctaResult.issues : []
   const imageIssues = Array.isArray(imageResult?.issues) ? imageResult.issues : []
+  logIssueTrace('createFinalMockupQaResult.input', {
+    textIssues: textIssues.map((issue) => formatIssueTraceLog(issue)),
+    visionIssues: visionIssues.map((issue) => formatIssueTraceLog(issue)),
+    ctaIssues: ctaIssues.map((issue) => formatIssueTraceLog(issue)),
+    imageIssues: imageIssues.map((issue) => formatIssueTraceLog(issue)),
+  })
   const mergedIssues = mergeMockupIssues({ textIssues, visionIssues, ctaIssues, imageIssues })
+  const refined = refineFinalIssueExpressions(mergedIssues)
   const ignoredDifferences = normalizeIgnoredDifferences([
     ...(textResult?.ignoredDifferences || []),
     ...(visionResult?.ignoredDifferences || []),
@@ -1738,13 +2713,18 @@ function createFinalMockupQaResult({ textResult, visionResult, ctaResult, imageR
     ...(visionResult?.removedIssues || []),
     ...(ctaResult?.removedIssues || []),
     ...(imageResult?.removedIssues || []),
+    ...(refined.removedIssues || []),
   ])
-  const summary = normalizeMockupSummary(mergedIssues, ignoredDifferences, removedIssues)
+  const summary = normalizeMockupSummary(refined.issues, ignoredDifferences, removedIssues)
+  logIssueTrace('createFinalMockupQaResult.output', {
+    issues: refined.issues.map((issue) => formatIssueTraceLog(issue)),
+    removedInThisFunction: refined.removedIssues,
+  })
 
   return {
     summary,
     counts: summary,
-    issues: mergedIssues,
+    issues: refined.issues,
     ignoredDifferences,
     removedIssues,
     debug: {
@@ -1754,7 +2734,7 @@ function createFinalMockupQaResult({ textResult, visionResult, ctaResult, imageR
       visionIssues: visionIssues.length,
       ctaIssues: ctaIssues.length,
       imageIssues: imageIssues.length,
-      finalIssues: mergedIssues.length,
+      finalIssues: refined.issues.length,
       ctaError: ctaResult?.error || '',
       imageError: imageResult?.error || '',
     },
@@ -1763,12 +2743,17 @@ function createFinalMockupQaResult({ textResult, visionResult, ctaResult, imageR
 
 function mergeMockupIssues({ textIssues = [], visionIssues, ctaIssues, imageIssues }) {
   const selected = []
+  const removedByMerge = []
   const allIssues = [
     ...textIssues.map((issue) => ({ ...issue, mergeSource: 'text' })),
     ...imageIssues.map((issue) => ({ ...issue, mergeSource: 'image' })),
     ...ctaIssues.map((issue) => ({ ...issue, mergeSource: 'cta' })),
     ...visionIssues.map((issue) => ({ ...issue, mergeSource: 'vision' })),
   ]
+  logIssueTrace('mergeMockupIssues.input', {
+    count: allIssues.length,
+    issues: allIssues.map((issue) => formatIssueTraceLog(issue, { mergeSource: issue.mergeSource || '' })),
+  })
 
   allIssues.forEach((issue) => {
     const normalizedIssue = applyIssuePriorityRules(issue)
@@ -1778,10 +2763,23 @@ function mergeMockupIssues({ textIssues = [], visionIssues, ctaIssues, imageIssu
       return
     }
 
-    selected[duplicateIndex] = choosePreferredMockupIssue(selected[duplicateIndex], normalizedIssue)
+    const priorIssue = selected[duplicateIndex]
+    const mergedIssue = mergeDuplicateMockupIssue(priorIssue, normalizedIssue)
+    selected[duplicateIndex] = mergedIssue
+    const removedIssue = haveSameTextIssueTrace(mergedIssue, priorIssue) || mergedIssue === priorIssue ? normalizedIssue : priorIssue
+    removedByMerge.push(formatIssueTraceLog(removedIssue, {
+      deletedReason: 'duplicate_in_mergeMockupIssues',
+      keptUuid: getTextIssueTraceId(mergedIssue) || '',
+      keptTitle: mergedIssue?.title || '',
+    }))
   })
 
-  return sortFinalMockupIssues(selected).slice(0, MAX_MOCKUP_AI_ISSUES).map((issue) => {
+  const finalSelected = sortFinalMockupIssues(selected)
+  logIssueTrace('mergeMockupIssues.output', {
+    deleted: removedByMerge,
+    remaining: finalSelected.map((issue) => formatIssueTraceLog(issue, { mergeSource: issue.mergeSource || '' })),
+  })
+  return finalSelected.map((issue) => {
     const result = { ...issue }
     delete result.mergeSource
     return result
@@ -1789,6 +2787,7 @@ function mergeMockupIssues({ textIssues = [], visionIssues, ctaIssues, imageIssu
 }
 
 function areDuplicateMockupIssues(first, second) {
+  if (areHeroVisualDuplicateIssues(first, second)) return true
   if (first.type === second.type && first.area === second.area) {
     if (first.type === 'CTA') return true
     if (first.type === '이미지' && getQaTextSimilarity(normalizeComparableQaText(first.title), normalizeComparableQaText(second.title)) >= 0.65) return true
@@ -1812,22 +2811,152 @@ function choosePreferredMockupIssue(first, second) {
   return Number(second.confidence || 0) > Number(first.confidence || 0) ? second : first
 }
 
+function mergeDuplicateMockupIssue(first, second) {
+  if (areHeroVisualDuplicateIssues(first, second)) return mergeHeroVisualIssues(first, second)
+  return choosePreferredMockupIssue(first, second)
+}
+
+function areHeroVisualDuplicateIssues(first, second) {
+  if (first?.type !== '이미지' || second?.type !== '이미지') return false
+  if (!['top', 'unknown'].includes(first.area) || !['top', 'unknown'].includes(second.area)) return false
+  const firstText = getIssueSearchText(first)
+  const secondText = getIssueSearchText(second)
+  return hasHeroVisualSignal(firstText) && hasHeroVisualSignal(secondText)
+}
+
+function hasHeroVisualSignal(value) {
+  const text = String(value || '').toLowerCase()
+  return /hero|kv|main\s*visual|메인\s*비주얼|배경|비주얼|영상|video|image|이미지|visual/.test(text)
+}
+
+function mergeHeroVisualIssues(first, second) {
+  const preferred = choosePreferredMockupIssue(first, second)
+  const other = preferred === first ? second : first
+  return applyIssuePriorityRules({
+    ...preferred,
+    title: 'Hero 메인 비주얼이 다릅니다.',
+    figma: pickLongerIssueSide(preferred.figma, other.figma),
+    web: pickLongerIssueSide(preferred.web, other.web),
+    reason: combineIssueTexts(preferred.reason, other.reason, '같은 Hero 비주얼 차이를 이미지 주제와 미디어 형식 관점에서 함께 정리했습니다.'),
+    memo: combineIssueTexts(preferred.memo, other.memo, 'Hero 이미지/영상 중복 이슈를 하나로 병합했습니다.'),
+    confidence: Math.max(Number(preferred.confidence) || 0.5, Number(other.confidence) || 0.5),
+    figmaSectionId: preferred.figmaSectionId || other.figmaSectionId || '',
+    webSectionId: preferred.webSectionId || other.webSectionId || '',
+  })
+}
+
+function pickLongerIssueSide(first, second) {
+  return String(first || '').length >= String(second || '').length ? first : second
+}
+
+function combineIssueTexts(first, second, fallback) {
+  const parts = [first, second].map((value) => limitText(value || '', 220)).filter(Boolean)
+  if (parts.length === 0) return fallback
+  return parts.filter((part, index) => parts.indexOf(part) === index).join(' ')
+}
+
 function restoreProtectedTextIssues(result, protectedIssues = []) {
   const textIssues = protectedIssues.filter(isProtectedTextIssue)
   if (textIssues.length === 0) return result
   const selected = Array.isArray(result?.issues) ? result.issues.slice() : []
   const removedIssues = Array.isArray(result?.removedIssues) ? result.removedIssues : []
+  const restoredIssues = []
+  const skippedIssues = []
 
   textIssues.forEach((issue) => {
-    if (wasExplicitlyRemovedAsMismatch(issue, removedIssues)) return
+    if (wasExplicitlyRemovedAsMismatch(issue, removedIssues)) {
+      skippedIssues.push(formatIssueTraceLog(issue, { restoreFailureReason: 'explicit_mismatch_removal' }))
+      return
+    }
     const exists = selected.some((candidate) => areDuplicateMockupIssues(candidate, issue))
-    if (!exists) selected.push(issue)
+    if (exists) {
+      skippedIssues.push(formatIssueTraceLog(issue, { restoreFailureReason: 'already_present_after_verification' }))
+      return
+    }
+    selected.push(issue)
+    restoredIssues.push(issue)
   })
 
-  const issues = sortFinalMockupIssues(selected.map((issue) => applyIssuePriorityRules(issue))).slice(0, MAX_MOCKUP_AI_ISSUES)
+  const sortedIssues = sortFinalMockupIssues(selected.map((issue) => applyIssuePriorityRules(issue))).slice(0, MAX_MOCKUP_AI_ISSUES)
+  const refined = refineFinalIssueExpressions(sortedIssues)
+  const issues = refined.issues
+  const restoredButTrimmed = restoredIssues
+    .filter((issue) => !issues.some((candidate) => haveSameTextIssueTrace(candidate, issue)))
+    .map((issue) => formatIssueTraceLog(issue, { restoreFailureReason: 'trimmed_after_restore_by_MAX_MOCKUP_AI_ISSUES' }))
+  logIssueTrace('restoreProtectedTextIssues', {
+    restored: restoredIssues.filter((issue) => issues.some((candidate) => haveSameTextIssueTrace(candidate, issue))).map((issue) => formatIssueTraceLog(issue)),
+    restoreFailed: skippedIssues.concat(restoredButTrimmed, (refined.removedIssues || []).map((item) => ({ uuid: '', title: item.title, restoreFailureReason: item.reason }))),
+  })
+  const ignoredDifferences = Array.isArray(result?.ignoredDifferences) ? result.ignoredDifferences : []
+  const summary = normalizeMockupSummary(issues, ignoredDifferences, removedIssues)
+  const nextRemovedIssues = normalizeRemovedIssues([...(removedIssues || []), ...(refined.removedIssues || [])])
+  return { ...result, summary, counts: summary, issues, ignoredDifferences, removedIssues: nextRemovedIssues }
+}
+
+function prioritizeCoreHeroIssues(result, candidateIssues = []) {
+  const currentIssues = Array.isArray(result?.issues) ? result.issues : []
+  const currentRemovedIssues = Array.isArray(result?.removedIssues) ? result.removedIssues : []
+  const heroCoreCandidates = dedupeIssueListBySignature([
+    ...currentIssues.filter(isPreferredHeroCoreIssue),
+    ...(Array.isArray(candidateIssues) ? candidateIssues : []).filter(isPreferredHeroCoreIssue),
+  ])
+  if (heroCoreCandidates.length === 0) return result
+
+  const heroCoreIssues = heroCoreCandidates
+    .sort((first, second) => getPreferredHeroCoreRank(first) - getPreferredHeroCoreRank(second))
+    .map((issue) => applyIssuePriorityRules(issue))
+  const remainingIssues = currentIssues.filter((issue) => !isDroppableWhenHeroCoreExists(issue))
+  const combined = dedupeIssueListBySignature(heroCoreIssues.concat(remainingIssues))
+  const issues = sortFinalMockupIssues(combined).slice(0, MAX_MOCKUP_AI_ISSUES)
+  const removedIssues = normalizeRemovedIssues([
+    ...currentRemovedIssues,
+    ...currentIssues
+      .filter((issue) => isDroppableWhenHeroCoreExists(issue) && !issues.some((candidate) => areDuplicateMockupIssues(candidate, issue)))
+      .map((issue) => ({ title: issue.title, reason: 'Hero 핵심 이슈가 존재해 일반 상단 문구/누락 표현은 최종 결과에서 제거했습니다.' })),
+  ])
   const ignoredDifferences = Array.isArray(result?.ignoredDifferences) ? result.ignoredDifferences : []
   const summary = normalizeMockupSummary(issues, ignoredDifferences, removedIssues)
   return { ...result, summary, counts: summary, issues, ignoredDifferences, removedIssues }
+}
+
+function isPreferredHeroCoreIssue(issue) {
+  if (!issue) return false
+  const normalizedTitle = normalizeComparableQaText(issue.title || '')
+  if (normalizedTitle === normalizeComparableQaText('Hero CTA 구성이 다릅니다.')) return true
+  if (normalizedTitle === normalizeComparableQaText('Hero KV 문구가 다릅니다.')) return true
+  if (normalizedTitle === normalizeComparableQaText('Hero 메인 비주얼이 다릅니다.')) return true
+  return Boolean(issue.area === 'top' && issue.type === '금액')
+}
+
+function getPreferredHeroCoreRank(issue) {
+  const normalizedTitle = normalizeComparableQaText(issue?.title || '')
+  if (normalizedTitle === normalizeComparableQaText('Hero CTA 구성이 다릅니다.')) return 0
+  if (normalizedTitle === normalizeComparableQaText('Hero 메인 비주얼이 다릅니다.')) return 1
+  if (normalizedTitle === normalizeComparableQaText('Hero KV 문구가 다릅니다.')) return 2
+  if (issue?.area === 'top' && issue?.type === '금액') return 3
+  return 9
+}
+
+function isDroppableWhenHeroCoreExists(issue) {
+  if (!issue || issue.area !== 'top' || issue.type !== '문구') return false
+  const normalizedTitle = normalizeComparableQaText(issue.title || '')
+  return normalizedTitle === normalizeComparableQaText('제목 문구가 다릅니다.')
+    || normalizedTitle === normalizeComparableQaText('모델명이 다릅니다.')
+    || normalizedTitle === normalizeComparableQaText('시안 문구 누락 가능성이 있습니다.')
+    || normalizedTitle === normalizeComparableQaText('웹 추가 문구 가능성이 있습니다.')
+}
+
+function dedupeIssueListBySignature(issues = []) {
+  const selected = []
+  issues.forEach((issue) => {
+    const duplicateIndex = selected.findIndex((candidate) => areDuplicateMockupIssues(candidate, issue))
+    if (duplicateIndex === -1) {
+      selected.push(issue)
+      return
+    }
+    selected[duplicateIndex] = choosePreferredMockupIssue(selected[duplicateIndex], issue)
+  })
+  return selected
 }
 
 function isProtectedTextIssue(issue) {
@@ -2137,13 +3266,219 @@ function normalizeRemovedIssues(value) {
   return removedIssues.slice(0, 20)
 }
 
-function postProcessMockupIssues(issues, payload = {}) {
-  const keptIssues = []
+function refineFinalIssueExpressions(issues = []) {
+  const inputIssues = Array.isArray(issues) ? issues : []
   const removedIssues = []
+  const normalizedIssues = inputIssues.map((issue) => normalizeIssueExpression(issue))
+  const hasHeroKvIssue = normalizedIssues.some(isHeroKvExpressionIssue)
+  const hasHeroCtaIssue = normalizedIssues.some(isHeroCtaExpressionIssue)
+  const hasTopPriorityHeroSignal = normalizedIssues.some((issue) => isHeroKvExpressionIssue(issue) || isHeroCtaExpressionIssue(issue) || isHeroVisualExpressionIssue(issue) || isTopMoneyExpressionIssue(issue))
+  const strongFixIssueCount = normalizedIssues.filter((issue) => issue?.status === '수정 필요').length
+  const keptIssues = []
+
+  normalizedIssues.forEach((issue) => {
+    if (isHeroVisualExpressionIssue(issue)) {
+      const duplicateHeroVisualIndex = keptIssues.findIndex(isHeroVisualExpressionIssue)
+      if (duplicateHeroVisualIndex !== -1) {
+        keptIssues[duplicateHeroVisualIndex] = mergeHeroVisualIssues(keptIssues[duplicateHeroVisualIndex], issue)
+        removedIssues.push({
+          title: issue.title,
+          reason: '같은 Hero 메인 비주얼 차이를 하나의 이미지 이슈로 병합했습니다.',
+        })
+        return
+      }
+    }
+
+    if (isOverlayDrivenNavigationIssue(issue)) {
+      removedIssues.push({
+        title: issue.title,
+        reason: 'cookie popup, overlay, modal, floating layer, sticky banner 등 일시적 UI로 인한 navigation/header 차이로 판단해 제거했습니다.',
+      })
+      return
+    }
+
+    if (isDynamicSliderIssue(issue)) {
+      removedIssues.push({
+        title: issue.title,
+        reason: 'slider/carousel 상태 차이로 보이는 확인 필요 이슈라 최종 결과에서 제거했습니다.',
+      })
+      return
+    }
+
+    if (hasTopPriorityHeroSignal && isGenericTopTitleIssue(issue)) {
+      removedIssues.push({
+        title: issue.title,
+        reason: '같은 상단 영역에 더 구체적인 Hero/금액 핵심 이슈가 있어 일반 제목 mismatch는 제거했습니다.',
+      })
+      return
+    }
+
+    if (strongFixIssueCount >= 4 && isSecondaryCheckLayoutIssue(issue)) {
+      removedIssues.push({
+        title: issue.title,
+        reason: '이미 핵심 수정 필요 이슈가 충분해 보조적인 확인 필요 레이아웃/섹션 이슈는 최종 결과에서 제거했습니다.',
+      })
+      return
+    }
+
+    if (strongFixIssueCount >= 4 && isFooterOrLegalLayoutIssue(issue)) {
+      removedIssues.push({
+        title: issue.title,
+        reason: 'Hero 핵심 수정 필요 이슈가 충분해 footer/disclaimer 보조 레이아웃 이슈는 최종 결과에서 제거했습니다.',
+      })
+      return
+    }
+
+    if (strongFixIssueCount >= 4 && isGenericHeadlineMismatchIssue(issue)) {
+      removedIssues.push({
+        title: issue.title,
+        reason: '이미 핵심 수정 필요 이슈가 충분해 일반 제목 mismatch는 상단 오매칭 성격으로 최종 결과에서 제거했습니다.',
+      })
+      return
+    }
+
+    if (hasHeroKvIssue && isHeroKvUnmatchedIssue(issue)) {
+      removedIssues.push({
+        title: issue.title,
+        reason: '같은 Hero 영역의 headline/subheadline block 비교가 성립해 누락 이슈 대신 Hero KV 문구 차이로 정리했습니다.',
+      })
+      return
+    }
+
+    if (hasHeroCtaIssue && isHeroCtaUnmatchedIssue(issue)) {
+      removedIssues.push({
+        title: issue.title,
+        reason: '같은 Hero 영역의 CTA group 비교가 성립해 누락 이슈 대신 Hero CTA 구성 차이로 정리했습니다.',
+      })
+      return
+    }
+
+    keptIssues.push(issue)
+  })
+
+  return { issues: keptIssues, removedIssues }
+}
+
+function normalizeIssueExpression(issue) {
+  if (!issue || typeof issue !== 'object') return issue
+  if (isHeroVisualExpressionCandidate(issue)) {
+    return {
+      ...issue,
+      title: 'Hero 메인 비주얼이 다릅니다.',
+      type: '이미지',
+    }
+  }
+
+  if (isHeroKvExpressionIssue(issue)) {
+    return {
+      ...issue,
+      title: 'Hero KV 문구가 다릅니다.',
+      type: '문구',
+    }
+  }
+
+  if (isHeroCtaExpressionIssueCandidate(issue)) {
+    return {
+      ...issue,
+      title: 'Hero CTA 구성이 다릅니다.',
+      type: 'CTA',
+      memo: appendMemoBasis(issue.memo, 'Hero CTA group 비교 기준'),
+    }
+  }
+
+  return issue
+}
+
+function isHeroKvExpressionIssue(issue) {
+  return Boolean(issue?.diffKind === 'hero-block' || normalizeComparableQaText(issue?.title || '') === normalizeComparableQaText('Hero KV 문구가 다릅니다.'))
+}
+
+function isHeroCtaExpressionIssue(issue) {
+  return Boolean(normalizeComparableQaText(issue?.title || '') === normalizeComparableQaText('Hero CTA 구성이 다릅니다.'))
+}
+
+function isHeroVisualExpressionIssue(issue) {
+  return Boolean(issue?.type === '이미지' && normalizeComparableQaText(issue?.title || '') === normalizeComparableQaText('Hero 메인 비주얼이 다릅니다.'))
+}
+
+function isHeroVisualExpressionCandidate(issue) {
+  if (!issue || !['이미지', '레이아웃'].includes(issue.type) || !['top', 'unknown'].includes(issue.area)) return false
+  return hasHeroVisualSignal(getIssueOverlaySearchText(issue))
+}
+
+function isTopMoneyExpressionIssue(issue) {
+  return Boolean(issue?.area === 'top' && issue?.type === '금액')
+}
+
+function isHeroCtaExpressionIssueCandidate(issue) {
+  if (!issue || issue.area !== 'top') return false
+  const text = getIssueOverlaySearchText(issue)
+  if (isNavigationIssueText(text)) return false
+  if (!/(cta|button|버튼)/i.test(text)) return false
+  if (issue.type === 'CTA') return true
+  return /(구성|개수|종류|순서|위치|배치)/i.test(text)
+}
+
+function isHeroKvUnmatchedIssue(issue) {
+  if (!issue || issue.area !== 'top' || issue.diffKind !== 'unmatched' || issue.type !== '문구') return false
+  return normalizeComparableQaText(issue.title || '') === normalizeComparableQaText('시안 문구 누락 가능성이 있습니다.')
+}
+
+function isHeroCtaUnmatchedIssue(issue) {
+  if (!issue || issue.area !== 'top' || issue.diffKind !== 'unmatched' || issue.type !== 'CTA') return false
+  const title = normalizeComparableQaText(issue.title || '')
+  return title === normalizeComparableQaText('시안 문구 누락 가능성이 있습니다.')
+    || title === normalizeComparableQaText('웹 추가 문구 가능성이 있습니다.')
+}
+
+function isOverlayDrivenNavigationIssue(issue) {
+  if (isTextQaIssue(issue)) return false
+  const text = getIssueOverlaySearchText(issue)
+  const hasNavigationContext = isNavigationIssueText(text) || /(header|헤더|navigation|nav|gnb|menu|메뉴)/i.test(text)
+  if (!hasNavigationContext) return false
+  return /(cookie|consent|overlay|modal|popup|floating|sticky|banner|fixed|toast|layer\s*popup|temporary|쿠키|오버레이|모달|팝업|플로팅|스티키|배너|고정)/i.test(text)
+}
+
+function isDynamicSliderIssue(issue) {
+  if (!issue || !['레이아웃', '섹션'].includes(issue.type) || issue.status !== '확인 필요') return false
+  const text = getIssueOverlaySearchText(issue)
+  return /(slider|carousel|swiper|slide|캐러셀|슬라이더)/i.test(text)
+}
+
+function isGenericTopTitleIssue(issue) {
+  if (!issue || issue.type !== '문구') return false
+  if (normalizeComparableQaText(issue.title || '') !== normalizeComparableQaText('제목 문구가 다릅니다.')) return false
+  return /(hero|kv|혜택|promotion|promo|banner|상단)/i.test(getIssueOverlaySearchText(issue))
+}
+
+function isSecondaryCheckLayoutIssue(issue) {
+  if (!issue || issue.status !== '확인 필요') return false
+  if (!['레이아웃', '섹션'].includes(issue.type)) return false
+  return !isHeroVisualExpressionIssue(issue)
+}
+
+function isGenericHeadlineMismatchIssue(issue) {
+  if (!issue || issue.type !== '문구') return false
+  return normalizeComparableQaText(issue.title || '') === normalizeComparableQaText('제목 문구가 다릅니다.')
+}
+
+function isFooterOrLegalLayoutIssue(issue) {
+  if (!issue || !['레이아웃', '섹션', '이미지'].includes(issue.type)) return false
+  return /(footer|disclaimer|legal|푸터|디스클레이머|고지|약관)/i.test(getIssueOverlaySearchText(issue))
+}
+
+function getIssueOverlaySearchText(issue) {
+  return `${issue?.area || ''} ${issue?.type || ''} ${issue?.title || ''} ${issue?.figma || ''} ${issue?.web || ''} ${issue?.reason || ''} ${issue?.memo || ''}`.toLowerCase()
+}
+
+function postProcessMockupIssues(issues, payload = {}) {
+  const refined = refineFinalIssueExpressions(issues)
+  const keptIssues = []
+  const removedIssues = [...refined.removedIssues]
   const figmaTextHints = Array.isArray(payload.figmaTexts) ? payload.figmaTexts : []
   const webTextHints = Array.isArray(payload.webTexts) ? payload.webTexts : []
 
-  issues.forEach((issue) => {
+  refined.issues.forEach((issue) => {
     if (issue.verification === 'removed') {
       if (isProtectedTextIssue(issue)) {
         keptIssues.push(applyIssuePriorityRules({
@@ -3887,8 +5222,11 @@ function createMobileFallback() {
 }
 
 export {
+  createMockupAiQaV3Result,
   createTextQaComparisonResult,
   createStrictTextMatches,
   createFallbackPageUnderstanding,
   createSectionMapping,
+  mergeMockupIssues,
+  scanUrl,
 }

@@ -3548,9 +3548,18 @@
 }
 
 @media (max-width: 760px) {
+  .workspace.workspace-empty {
+    min-height: auto;
+  }
+
   .empty-state {
     min-height: calc(100vh - 130px);
     padding: 10px;
+  }
+
+  .workspace.workspace-empty .empty-state {
+    min-height: max(360px, calc(100vh - 132px));
+    padding-top: 12px;
   }
 
   .empty-state > div {
@@ -3990,6 +3999,13 @@
 
 .workspace {
   padding: 24px 28px 40px;
+}
+
+.workspace.workspace-empty {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: start;
+  min-height: 100vh;
 }
 
 .workspace-tabs {
@@ -4534,6 +4550,13 @@
   align-items: center;
   justify-content: center;
   padding: 18px;
+}
+
+.workspace.workspace-empty .empty-state {
+  min-height: max(420px, calc(100vh - 140px));
+  height: 100%;
+  padding-top: 24px;
+  padding-bottom: 24px;
 }
 
 .empty-state > div {

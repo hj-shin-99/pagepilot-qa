@@ -4,6 +4,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import OpenAI from 'openai'
 import { chromium, request as playwrightRequest } from 'playwright'
+import { createFigmaApiClient, FigmaApiError, FigmaRateLimitError } from './figmaApiClient.js'
+import { extractFigmaStructure } from './figmaStructure.js'
 import { createFigmaTextPreview, extractVisibleFigmaTextNodes } from './figmaText.js'
 import { createTextDifferenceCandidates } from './textDiff.js'
 import { matchTextNodes } from './textMatcher.js'
@@ -25,7 +27,6 @@ const MAX_LINKS_TO_CHECK = null
 const MAX_DESIGN_ELEMENTS = 120
 const DESKTOP_DESIGN_VIEWPORT = { width: 1920, height: 1080 }
 const DESKTOP_SCREENSHOT_SCALE = 2
-const FIGMA_API_BASE_URL = 'https://api.figma.com/v1'
 const NAVIGATION_TIMEOUT_MS = 15000
 const LINK_TIMEOUT_MS = 7000
 const LINK_CHECK_CONCURRENCY = 8
@@ -49,6 +50,10 @@ const app = express()
 
 loadLocalEnv()
 console.log(`[Figma API] Token configured: ${Boolean(process.env.FIGMA_TOKEN?.trim())}`)
+
+const figmaApiClient = createFigmaApiClient({
+  ttlMs: Number(process.env.FIGMA_CACHE_TTL_MS),
+})
 
 app.use(express.json({ limit: '80mb' }))
 
@@ -133,6 +138,9 @@ app.post('/api/ai-mockup-qa', async (req, res) => {
 app.post('/api/figma/inspect', async (req, res) => {
   const figmaUrl = typeof req.body?.figmaUrl === 'string' ? req.body.figmaUrl.trim() : ''
   const includeTextNodes = req.body?.includeTextNodes === true
+  const includeStructure = req.body?.includeStructure === true
+  const includeFlatNodes = req.body?.includeFlatNodes === true
+  const forceRefresh = req.body?.forceRefresh === true
 
   try {
     const { fileKey, nodeId } = parseFigmaUrl(figmaUrl)
@@ -143,12 +151,12 @@ app.post('/api/figma/inspect', async (req, res) => {
       return
     }
 
-    const result = await inspectFigmaNode({ fileKey, nodeId, token: figmaToken, includeTextNodes })
-    logFigmaTextExtractionSuccess(result)
+    const result = await inspectFigmaNode({ fileKey, nodeId, token: figmaToken, includeTextNodes, includeStructure, includeFlatNodes, forceRefresh })
+    logFigmaStructureExtractionSuccess(result)
     res.json({ success: true, ...result })
   } catch (error) {
-    const mappedError = mapFigmaInspectError(error)
-    res.status(mappedError.status).json({ message: mappedError.message })
+    const mappedError = mapFigmaLoaderError(error, 'inspect')
+    res.status(mappedError.status).json(mappedError.body)
   }
 })
 
@@ -156,6 +164,7 @@ app.post('/api/figma/text-compare', async (req, res) => {
   const figmaUrl = typeof req.body?.figmaUrl === 'string' ? req.body.figmaUrl.trim() : ''
   const webUrl = typeof req.body?.webUrl === 'string' ? req.body.webUrl.trim() : ''
   const includeAllPairs = req.body?.includeAllPairs === true
+  const forceRefresh = req.body?.forceRefresh === true
 
   if (!isHttpUrl(webUrl)) {
     res.status(400).json({ message: 'http:// 또는 https://로 시작하는 Web URL만 비교할 수 있습니다.' })
@@ -176,6 +185,7 @@ app.post('/api/figma/text-compare', async (req, res) => {
       nodeId,
       token: figmaToken,
       includeTextNodes: true,
+      forceRefresh,
     })
     const webResult = await scanWebTextForCompare(webUrl)
     const matchResult = matchTextNodes(
@@ -190,13 +200,34 @@ app.post('/api/figma/text-compare', async (req, res) => {
       matchResult,
       differences,
       includeAllPairs,
+      cache: figmaResult.cache,
     })
 
     logTextCompareSummary(response.summary, differences)
     res.json(response)
   } catch (error) {
-    const mappedError = mapTextCompareError(error)
-    res.status(mappedError.status).json({ message: mappedError.message })
+    const mappedError = mapFigmaLoaderError(error, 'text-compare')
+    res.status(mappedError.status).json(mappedError.body)
+  }
+})
+
+app.post('/api/figma/cache/clear', async (req, res) => {
+  const clearAll = req.body?.clearAll === true
+  const figmaUrl = typeof req.body?.figmaUrl === 'string' ? req.body.figmaUrl.trim() : ''
+
+  try {
+    if (clearAll) {
+      const result = figmaApiClient.clearAllCache()
+      res.json({ success: true, clearAll: true, clearedCount: result.clearedCount || 0 })
+      return
+    }
+
+    const { fileKey, nodeId } = parseFigmaUrl(figmaUrl)
+    const result = figmaApiClient.clearCache({ fileKey, nodeId })
+    res.json({ success: true, clearAll: false, cleared: result.cleared, nodeId })
+  } catch (error) {
+    const mappedError = mapFigmaLoaderError(error, 'cache-clear')
+    res.status(mappedError.status).json(mappedError.body)
   }
 })
 
@@ -255,37 +286,18 @@ function normalizeFigmaNodeId(value) {
   throw new FigmaInspectError(400, 'figma_node_id_invalid', 'Figma URL의 node-id 형식이 올바르지 않습니다.')
 }
 
-async function inspectFigmaNode({ fileKey, nodeId, token, includeTextNodes }) {
-  const requestUrl = `${FIGMA_API_BASE_URL}/files/${encodeURIComponent(fileKey)}/nodes?ids=${encodeURIComponent(nodeId)}`
+async function inspectFigmaNode({ fileKey, nodeId, token, includeTextNodes, includeStructure, includeFlatNodes, forceRefresh = false }) {
+  const figmaNodeData = await figmaApiClient.getFigmaNodeData({
+    fileKey,
+    nodeId,
+    token,
+    forceRefresh,
+  })
 
-  let response
-  try {
-    response = await fetch(requestUrl, {
-      headers: {
-        'X-Figma-Token': token,
-      },
-    })
-  } catch {
-    throw new FigmaInspectError(502, 'figma_network_error', 'Figma API 네트워크 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.')
-  }
-
-  if (!response.ok) {
-    throw createFigmaApiStatusError(response.status)
-  }
-
-  let payload
-  try {
-    payload = await response.json()
-  } catch {
-    throw new FigmaInspectError(502, 'figma_response_invalid', 'Figma API 응답을 처리하지 못했습니다.')
-  }
-
-  const targetNode = payload?.nodes?.[nodeId]?.document
-  if (!targetNode || typeof targetNode !== 'object') {
-    throw new FigmaInspectError(404, 'figma_node_not_found', '파일 또는 node를 찾을 수 없습니다.')
-  }
+  const targetNode = figmaNodeData.targetNode
 
   const extraction = extractVisibleFigmaTextNodes(targetNode)
+  const structureExtraction = extractFigmaStructure(targetNode)
   const result = {
     fileKey,
     nodeId,
@@ -294,68 +306,87 @@ async function inspectFigmaNode({ fileKey, nodeId, token, includeTextNodes }) {
     visibleTextCount: extraction.visibleTextCount,
     totalDescendantCount: extraction.totalDescendantCount,
     textPreview: createFigmaTextPreview(extraction.textNodes),
+    structureSummary: structureExtraction.structureSummary,
+    structurePreview: structureExtraction.structurePreview,
+    cache: figmaNodeData.cache,
   }
 
   if (includeTextNodes) {
     result.textNodes = extraction.textNodes
   }
 
+  if (includeStructure) {
+    result.figmaStructure = structureExtraction.figmaStructure
+  }
+
+  if (includeFlatNodes) {
+    result.figmaFlatNodes = structureExtraction.figmaFlatNodes
+  }
+
   return result
 }
 
-function createFigmaApiStatusError(status) {
-  if (status === 400) {
-    return new FigmaInspectError(400, 'figma_api_bad_request', 'Figma URL 또는 node ID 형식이 올바르지 않습니다.')
-  }
-  if (status === 401) {
-    return new FigmaInspectError(401, 'figma_token_invalid', 'Figma 토큰이 유효하지 않습니다.')
-  }
-  if (status === 403) {
-    return new FigmaInspectError(403, 'figma_forbidden', '해당 토큰 계정에 이 Figma 파일 접근 권한이 없습니다.')
-  }
-  if (status === 404) {
-    return new FigmaInspectError(404, 'figma_not_found', '파일 또는 node를 찾을 수 없습니다.')
-  }
-  if (status === 429) {
-    return new FigmaInspectError(429, 'figma_rate_limited', 'Figma API 호출 제한에 도달했습니다. 잠시 후 다시 시도해 주세요.')
-  }
+function logFigmaStructureExtractionSuccess(result) {
+  const summary = result.structureSummary || {}
+  const preview = Array.isArray(result.structurePreview) ? result.structurePreview.slice(0, 5) : []
 
-  return new FigmaInspectError(502, 'figma_api_error', 'Figma API 요청 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.')
-}
-
-function logFigmaTextExtractionSuccess(result) {
-  console.log('[Figma API] Text extraction success')
+  console.log('[Figma Structure] Extraction success')
   console.log(`- nodeName: ${result.nodeName}`)
-  console.log(`- visibleTextCount: ${result.visibleTextCount}`)
-  console.log('- first 5 text previews:')
+  console.log(`- totalNodeCount: ${summary.totalNodeCount ?? 0}`)
+  console.log(`- visibleNodeCount: ${summary.visibleNodeCount ?? 0}`)
+  console.log(`- hiddenNodeCount: ${summary.hiddenNodeCount ?? 0}`)
+  console.log(`- containerCount: ${summary.containerCount ?? 0}`)
+  console.log(`- textNodeCount: ${summary.textNodeCount ?? 0}`)
+  console.log(`- imageFillNodeCount: ${summary.imageFillNodeCount ?? 0}`)
+  console.log(`- interactiveCandidateCount: ${summary.interactiveCandidateCount ?? 0}`)
+  console.log(`- maxDepth: ${summary.maxDepth ?? 0}`)
+  console.log('- structurePreview:')
 
-  result.textPreview.forEach((textNode, index) => {
-    console.log(`  ${index + 1}. ${truncateFigmaLogText(textNode.characters, 80)} | ${textNode.layerPath || 'N/A'} | yRatio=${formatFigmaLogRatio(textNode.yRatio)} | fontSize=${textNode.fontSize ?? 'null'}`)
+  preview.forEach((node, index) => {
+    console.log(`  ${index + 1}. ${node.name || 'Unnamed'} | ${node.type || 'UNKNOWN'} | depth=${node.depth ?? 'null'} | childCount=${node.childCount ?? 0} | image=${Boolean(node.hasImageFill)} | interactive=${Boolean(node.isInteractiveCandidate)} | yRatio=${formatFigmaLogRatio(node.yRatio)}`)
   })
 }
 
-function mapFigmaInspectError(error) {
-  if (error instanceof FigmaInspectError) {
-    return { status: error.status, message: error.message }
+function mapFigmaLoaderError(error, source) {
+  if (error instanceof FigmaRateLimitError) {
+    return {
+      status: 429,
+      body: {
+        message: error.message,
+        retryAfterSeconds: error.retryAfterSeconds || 0,
+        cacheAvailable: error.cacheAvailable === true,
+      },
+    }
   }
 
-  return {
-    status: 502,
-    message: 'Figma 연결 확인 중 예상하지 못한 오류가 발생했습니다.',
+  if (error instanceof FigmaApiError) {
+    return {
+      status: error.status,
+      body: { message: error.message },
+    }
   }
-}
 
-function mapTextCompareError(error) {
   if (error instanceof FigmaInspectError) {
-    return { status: error.status, message: error.message }
+    return {
+      status: error.status,
+      body: { message: error.message },
+    }
   }
+
   if (error instanceof TextCompareError) {
-    return { status: error.status, message: error.message }
+    return {
+      status: error.status,
+      body: { message: error.message },
+    }
   }
 
   return {
     status: 502,
-    message: '텍스트 비교 중 예상하지 못한 오류가 발생했습니다.',
+    body: {
+      message: source === 'text-compare'
+        ? '텍스트 비교 중 예상하지 못한 오류가 발생했습니다.'
+        : 'Figma 연결 확인 중 예상하지 못한 오류가 발생했습니다.',
+    },
   }
 }
 
@@ -1818,7 +1849,7 @@ async function scanWebTextForCompare(targetUrl) {
   }
 }
 
-function createTextCompareResponse({ figmaTextNodes, webTextElements, matchResult, differences, includeAllPairs }) {
+function createTextCompareResponse({ figmaTextNodes, webTextElements, matchResult, differences, includeAllPairs, cache }) {
   const matchedPairs = Array.isArray(matchResult.matchedPairs) ? matchResult.matchedPairs : []
   const summary = {
     figmaTextCount: figmaTextNodes.length,
@@ -1834,6 +1865,7 @@ function createTextCompareResponse({ figmaTextNodes, webTextElements, matchResul
 
   const response = {
     success: true,
+    cache: cache || null,
     summary,
     differences: differences.slice(0, 20),
     matchedPreview: createMatchedPreview(matchedPairs),

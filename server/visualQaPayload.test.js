@@ -519,3 +519,56 @@ test('canonical counts and section assignment stay consistent across payload and
   assert.equal(payload.aiHints.ctaButtons.some((item) => item.text === 'Legal Link'), false)
   assert.equal(payload.aiHints.ctaButtons.every((item) => item.comparisonScope === 'primary' || item.comparisonScope === 'secondary'), true)
 })
+
+test('source hero consistency and candidate trace metrics are true when figma and web hero roots both resolve once', () => {
+  const { payloadQuality, debugArtifacts } = buildVisualQaPayloadArtifacts(createBaseInput({
+    figmaAnalysis: {
+      textNodes: [
+        createFigmaTextNode({ nodeId: 'figma-hero-title', layerPath: 'Page / Hero / Title', parentFrameName: 'Hero', characters: 'Hero Title' }),
+        createFigmaTextNode({ nodeId: 'figma-hero-body', layerPath: 'Page / Hero / Body', parentFrameName: 'Hero', characters: 'Hero Body', yRatio: 0.12, fontSize: 20, fontWeight: 500 }),
+      ],
+      flatNodes: [
+        createFigmaFlatNode({ id: 'figma-page', nodeId: 'figma-page', name: 'Page', type: 'FRAME', layerPath: 'Page', widthRatio: 0.96, heightRatio: 0.96, absoluteBoundingBox: { width: 1440, height: 4200 } }),
+        createFigmaFlatNode({ id: 'figma-hero', nodeId: 'figma-hero', name: 'Main_visual', type: 'FRAME', layerPath: 'Page / Hero', parentId: 'figma-page', widthRatio: 0.92, heightRatio: 0.32, yRatio: 0.03, absoluteBoundingBox: { width: 1400, height: 680 }, hasImageFill: true }),
+        createFigmaFlatNode({ id: 'figma-hero-btn', nodeId: 'figma-hero-btn', name: 'Primary Button', type: 'INSTANCE', layerPath: 'Page / Hero / CTA', parentId: 'figma-hero', isInteractiveCandidate: true, hasSolidFill: true }),
+        createFigmaFlatNode({ id: 'figma-hero-btn-label', nodeId: 'figma-hero-btn-label', type: 'TEXT', layerPath: 'Page / Hero / CTA / Label', parentId: 'figma-hero-btn', characters: 'Apply Now' }),
+      ],
+    },
+    webAnalysis: {
+      textNodes: [
+        createWebTextNode({ text: 'Hero Title', selector: '.hero h2', parentSelector: '.hero .txt', domPath: 'body > main > section.hero > div.txt > h2', role: 'heading', tagName: 'h2', sectionHint: 'hero' }),
+        createWebTextNode({ text: 'Hero Body', selector: '.hero p', parentSelector: '.hero .txt', domPath: 'body > main > section.hero > div.txt > p', role: 'body', tagName: 'p', sectionHint: 'hero', yRatio: 0.12 }),
+      ],
+      ctaCandidates: [createWebCtaCandidate({ text: 'Hero Action', selector: '.hero a.primary', parentContext: '.hero .btn_wrap', parentSelector: '.hero .btn_wrap', href: '/hero', section: 'hero', yRatio: 0.14, xRatio: 0.1 })],
+      videoCandidates: [{ type: 'video', source: 'web', sourceId: 'hero-video', text: 'Hero Video', selector: '.hero video', parentContext: '.hero', parentSelector: '.hero', section: 'hero', confidence: 'high', reasons: ['video element'], width: 1600, height: 900, yRatio: 0.05 }],
+    },
+  }))
+
+  assert.equal(payloadQuality.sourceHeroCountConsistencyPassed, true)
+  assert.equal(payloadQuality.figmaHeroCandidateCount > 0, true)
+  assert.equal(payloadQuality.webHeroCandidateCount > 0, true)
+  assert.equal(payloadQuality.figmaHeroContainsText, true)
+  assert.equal(payloadQuality.webHeroContainsMedia, true)
+  assert.equal(Array.isArray(debugArtifacts.heroCandidateTrace.figma), true)
+  assert.equal(debugArtifacts.heroCandidateTrace.figma.some((item) => item.selected === true), true)
+  assert.equal(debugArtifacts.heroCandidateTrace.web.some((item) => item.selected === true), true)
+})
+
+test('leaf hero descendants do not each create separate section entities', () => {
+  const { payload } = buildVisualQaPayloadArtifacts(createBaseInput({
+    figmaAnalysis: { textNodes: [] },
+    webAnalysis: {
+      textNodes: [
+        createWebTextNode({ text: 'Hero Title', selector: '.hero h2', parentSelector: '.hero .txt', domPath: 'body > main > section.hero > div.txt > h2', role: 'heading', tagName: 'h2', sectionHint: 'hero' }),
+        createWebTextNode({ text: 'Hero Body', selector: '.hero p', parentSelector: '.hero .txt', domPath: 'body > main > section.hero > div.txt > p', role: 'body', tagName: 'p', sectionHint: 'hero', yRatio: 0.12 }),
+      ],
+      ctaCandidates: [createWebCtaCandidate({ text: 'Hero Action', selector: '.hero a.primary', parentContext: '.hero .btn_wrap', parentSelector: '.hero .btn_wrap', href: '/hero', section: 'hero', yRatio: 0.14, xRatio: 0.1 })],
+      videoCandidates: [{ type: 'video', source: 'web', sourceId: 'hero-video', text: 'Hero Video', selector: '.hero video', parentContext: '.hero', parentSelector: '.hero', section: 'hero', confidence: 'high', reasons: ['video element'], width: 1600, height: 900, yRatio: 0.05 }],
+    },
+  }))
+
+  const webSections = payload.aiHints.canonicalEvidence.sections.filter((item) => item.source === 'web')
+  assert.equal(webSections.filter((item) => item.role === 'hero').length, 1)
+  assert.equal(webSections.some((item) => /\.hero h2|\.hero p|\.hero video|\.hero a\.primary/.test(item.path)), false)
+  assert.equal(webSections.length <= 2, true)
+})

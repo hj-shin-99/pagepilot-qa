@@ -45,12 +45,21 @@ export function buildVisualQaPayloadArtifacts({ figmaAnalysis, webAnalysis, text
     figmaAnalysis: safeFigmaAnalysis,
     figmaTextCandidates,
   })
-  const annotatedFigmaTextCandidates = annotateCandidatesWithSections(figmaTextCandidates, sectionContexts)
-  const annotatedWebTextCandidates = annotateCandidatesWithSections(webTextCandidates, sectionContexts)
-  const annotatedRawActions = annotateCandidatesWithSections(rawInteractions.allCandidates, sectionContexts)
-  const annotatedRawNumericCandidates = annotateCandidatesWithSections(rawNumericCandidates, sectionContexts)
-  const annotatedRawImages = annotateCandidatesWithSections(rawImages, sectionContexts)
-  const annotatedRawVideos = annotateCandidatesWithSections(rawVideos, sectionContexts)
+  const heroSelection = selectHeroRoots({
+    figmaTextCandidates,
+    webTextCandidates,
+    rawActions: rawInteractions.allCandidates,
+    rawImages,
+    rawVideos,
+    sectionContexts,
+  })
+  const heroSections = heroSelection.heroSections
+  const annotatedFigmaTextCandidates = annotateCandidatesWithSections(figmaTextCandidates, sectionContexts, heroSelection)
+  const annotatedWebTextCandidates = annotateCandidatesWithSections(webTextCandidates, sectionContexts, heroSelection)
+  const annotatedRawActions = annotateCandidatesWithSections(rawInteractions.allCandidates, sectionContexts, heroSelection)
+  const annotatedRawNumericCandidates = annotateCandidatesWithSections(rawNumericCandidates, sectionContexts, heroSelection)
+  const annotatedRawImages = annotateCandidatesWithSections(rawImages, sectionContexts, heroSelection)
+  const annotatedRawVideos = annotateCandidatesWithSections(rawVideos, sectionContexts, heroSelection)
   const draftSections = createSectionEntities({
     candidates: [
       ...annotatedFigmaTextCandidates,
@@ -61,7 +70,6 @@ export function buildVisualQaPayloadArtifacts({ figmaAnalysis, webAnalysis, text
       ...annotatedRawVideos,
     ],
   })
-  const heroSections = detectHeroSections(draftSections)
   quality.heroSectionDetected = Boolean(heroSections.figmaSectionId || heroSections.webSectionId)
   const interactions = createInteractionHints({
     rawInteractions: {
@@ -123,6 +131,8 @@ export function buildVisualQaPayloadArtifacts({ figmaAnalysis, webAnalysis, text
     canonicalEvidence,
     comparisonActions: ctaButtons,
     sectionTrace,
+    sections: canonicalEvidence.sections,
+    heroSelection,
   })
 
   const payload = {
@@ -185,6 +195,7 @@ export function buildVisualQaPayloadArtifacts({ figmaAnalysis, webAnalysis, text
     payloadQuality: quality,
     debugArtifacts: {
       sectionTrace,
+      heroCandidateTrace: heroSelection.heroCandidateTrace,
     },
   }
 }
@@ -245,11 +256,22 @@ function createPayloadQuality() {
     webHeroActionCount: 0,
     figmaHeroMediaCount: 0,
     webHeroMediaCount: 0,
+    figmaHeroCandidateCount: 0,
+    webHeroCandidateCount: 0,
+    figmaHeroRootPromotedCount: 0,
+    webHeroRootPromotedCount: 0,
+    figmaHeroContainsText: false,
+    figmaHeroContainsAction: false,
+    figmaHeroContainsMedia: false,
+    webHeroContainsText: false,
+    webHeroContainsAction: false,
+    webHeroContainsMedia: false,
     unassignedCanonicalEntityCount: 0,
     multiAssignedCanonicalEntityCount: 0,
     comparisonActionCount: 0,
     referenceOnlyActionCount: 0,
     canonicalCountConsistencyPassed: false,
+    sourceHeroCountConsistencyPassed: false,
     warnings: [],
   }
 
@@ -318,14 +340,211 @@ function createSectionContexts({ figmaAnalysis, figmaTextCandidates }) {
   }
 }
 
-function annotateCandidatesWithSections(candidates, sectionContexts) {
+function annotateCandidatesWithSections(candidates, sectionContexts, heroSelection) {
   return (Array.isArray(candidates) ? candidates : []).map((candidate) => ({
     ...candidate,
-    sectionDescriptor: createSectionDescriptorForCandidate(candidate, sectionContexts),
+    sectionDescriptor: createSectionDescriptorForCandidate(candidate, sectionContexts, heroSelection),
   }))
 }
 
-function createSectionDescriptorForCandidate(candidate, sectionContexts) {
+function selectHeroRoots({ figmaTextCandidates, webTextCandidates, rawActions, rawImages, rawVideos, sectionContexts }) {
+  const figmaSelection = selectHeroRootForSource({
+    source: 'figma',
+    textCandidates: figmaTextCandidates,
+    actionCandidates: (Array.isArray(rawActions) ? rawActions : []).filter((item) => item?.source === 'figma'),
+    mediaCandidates: [...(Array.isArray(rawImages) ? rawImages : []).filter((item) => item?.source === 'figma'), ...(Array.isArray(rawVideos) ? rawVideos : []).filter((item) => item?.source === 'figma')],
+    figmaContext: sectionContexts?.figma,
+  })
+  const webSelection = selectHeroRootForSource({
+    source: 'web',
+    textCandidates: webTextCandidates,
+    actionCandidates: (Array.isArray(rawActions) ? rawActions : []).filter((item) => item?.source === 'web'),
+    mediaCandidates: [...(Array.isArray(rawImages) ? rawImages : []).filter((item) => item?.source === 'web'), ...(Array.isArray(rawVideos) ? rawVideos : []).filter((item) => item?.source === 'web')],
+  })
+
+  return {
+    figmaHeroDescriptor: figmaSelection.descriptor,
+    webHeroDescriptor: webSelection.descriptor,
+    heroSections: {
+      figmaSectionId: figmaSelection.descriptor?.sectionId || '',
+      webSectionId: webSelection.descriptor?.sectionId || '',
+    },
+    heroCandidateTrace: {
+      figma: figmaSelection.trace,
+      web: webSelection.trace,
+    },
+    quality: {
+      figmaHeroCandidateCount: figmaSelection.candidateCount,
+      webHeroCandidateCount: webSelection.candidateCount,
+      figmaHeroRootPromotedCount: figmaSelection.promoted ? 1 : 0,
+      webHeroRootPromotedCount: webSelection.promoted ? 1 : 0,
+      figmaHeroContainsText: figmaSelection.containsText,
+      figmaHeroContainsAction: figmaSelection.containsAction,
+      figmaHeroContainsMedia: figmaSelection.containsMedia,
+      webHeroContainsText: webSelection.containsText,
+      webHeroContainsAction: webSelection.containsAction,
+      webHeroContainsMedia: webSelection.containsMedia,
+    },
+  }
+}
+
+function selectHeroRootForSource({ source, textCandidates, actionCandidates, mediaCandidates, figmaContext }) {
+  const topTextCandidates = (Array.isArray(textCandidates) ? textCandidates : []).filter((candidate) => isTopHeroTextCandidate(candidate)).sort(compareHeroSignalCandidates).slice(0, 8)
+  const topActionCandidates = (Array.isArray(actionCandidates) ? actionCandidates : []).filter((candidate) => isTopHeroActionCandidate(candidate)).sort(compareHeroSignalCandidates).slice(0, 8)
+  const topMediaCandidates = (Array.isArray(mediaCandidates) ? mediaCandidates : []).filter((candidate) => isTopHeroMediaCandidate(candidate)).sort(compareHeroSignalCandidates).slice(0, 8)
+  const heroSignals = [
+    ...topTextCandidates.map((candidate) => ({ kind: 'text', candidate })),
+    ...topActionCandidates.map((candidate) => ({ kind: 'action', candidate })),
+    ...topMediaCandidates.map((candidate) => ({ kind: 'media', candidate })),
+  ]
+  const anchorCandidates = buildHeroAnchorCandidates({ source, heroSignals, figmaContext })
+  const scoredCandidates = anchorCandidates
+    .map((anchor) => scoreHeroAnchorCandidate({ source, anchor, heroSignals, figmaContext }))
+    .sort(compareHeroAnchorScores)
+
+  const selected = scoredCandidates.find((candidate) => candidate.isValid) || scoredCandidates[0] || null
+  const descriptor = selected ? createSectionDescriptorFromHeroAnchor({ source, anchor: selected, figmaContext }) : null
+  const leafLikeSelected = selected ? selected.leafLike : false
+  const trace = scoredCandidates.slice(0, 10).map((candidate) => ({
+    sourceId: candidate.rootSourceId,
+    path: candidate.path,
+    nodeType: candidate.nodeType,
+    childCount: candidate.childCount,
+    containsText: candidate.containsText,
+    containsAction: candidate.containsAction,
+    containsMedia: candidate.containsMedia,
+    score: candidate.score,
+    rejectedReasons: candidate.rejectedReasons,
+    selected: descriptor ? candidate.path === descriptor.path && candidate.rootSourceId === descriptor.rootSourceId : false,
+  }))
+
+  return {
+    descriptor,
+    trace,
+    candidateCount: scoredCandidates.length,
+    promoted: Boolean(selected && (leafLikeSelected || heroSignals.some(({ candidate }) => {
+      const directPath = getCandidateDirectAnchorPath(candidate, source)
+      return directPath && directPath !== selected.path && isCandidateUnderAnchor(candidate, source, selected.path)
+    }))),
+    containsText: Boolean(selected?.containsText),
+    containsAction: Boolean(selected?.containsAction),
+    containsMedia: Boolean(selected?.containsMedia),
+  }
+}
+
+function buildHeroAnchorCandidates({ source, heroSignals, figmaContext }) {
+  const candidateMap = new Map()
+  heroSignals.forEach(({ candidate }) => {
+    const anchors = source === 'figma'
+      ? buildFigmaAnchorCandidates(candidate?.layerPath || candidate?.context || candidate?.parentContext, candidate, figmaContext)
+      : buildWebAnchorCandidates(candidate)
+    anchors.forEach((anchor) => {
+      const path = normalizeString(anchor?.path)
+      if (!path) return
+      const rootSourceId = source === 'figma'
+        ? normalizeString(anchor?.node?.nodeId || anchor?.node?.id || path)
+        : path
+      const key = `${rootSourceId}:${path}`
+      if (candidateMap.has(key)) return
+      candidateMap.set(key, {
+        path,
+        rootSourceId,
+        node: anchor?.node || null,
+      })
+    })
+  })
+  return Array.from(candidateMap.values())
+}
+
+function scoreHeroAnchorCandidate({ source, anchor, heroSignals, figmaContext }) {
+  const matchedSignals = heroSignals.filter(({ candidate }) => isCandidateUnderAnchor(candidate, source, anchor.path))
+  const containsText = matchedSignals.some((item) => item.kind === 'text')
+  const containsAction = matchedSignals.some((item) => item.kind === 'action')
+  const containsMedia = matchedSignals.some((item) => item.kind === 'media')
+  const featureKindCount = [containsText, containsAction, containsMedia].filter(Boolean).length
+  const layoutLike = isLayoutLikeHeroAnchor(anchor, source, figmaContext)
+  const childCount = source === 'figma'
+    ? countFigmaAnchorChildren(anchor.node, figmaContext)
+    : estimateWebAnchorChildCount(anchor.path, matchedSignals)
+  const nodeType = source === 'figma'
+    ? normalizeString(anchor.node?.type || 'CONTAINER')
+    : inferWebAnchorNodeType(anchor.path)
+  const rejectedReasons = []
+
+  if (isInvalidHeroRootAnchor(anchor, source, { childCount, containsText, containsAction, containsMedia, layoutLike, nodeType, figmaContext })) {
+    rejectedReasons.push('leaf-or-narrow-wrapper')
+  }
+  if (isPageRootAnchor(anchor, source, figmaContext)) rejectedReasons.push('page-root')
+  if (isNavigationOrFooterAnchor(anchor, source)) rejectedReasons.push('navigation-or-footer')
+  if (featureKindCount < 2 && !layoutLike) rejectedReasons.push('insufficient-signal-types')
+
+  let score = 0
+  score += featureKindCount * 120
+  score += containsMedia ? 40 : 0
+  score += containsText ? 30 : 0
+  score += containsAction ? 25 : 0
+  score += layoutLike ? 35 : 0
+  score += Math.min(matchedSignals.length, 6) * 8
+  score += scoreHeroAnchorSemantics(anchor.path)
+  score += source === 'figma' ? scoreFigmaHeroAnchorGeometry(anchor.node) : scoreWebHeroAnchorGeometry(matchedSignals)
+  score += getHeroAnchorDepth(anchor.path, source) * 3
+  if (rejectedReasons.includes('leaf-or-narrow-wrapper')) score -= 180
+  if (rejectedReasons.includes('page-root')) score -= 220
+  if (rejectedReasons.includes('navigation-or-footer')) score -= 180
+  if (rejectedReasons.includes('insufficient-signal-types')) score -= 90
+
+  return {
+    ...anchor,
+    score,
+    isValid: rejectedReasons.length === 0,
+    rejectedReasons,
+    containsText,
+    containsAction,
+    containsMedia,
+    nodeType,
+    childCount,
+    leafLike: rejectedReasons.includes('leaf-or-narrow-wrapper'),
+  }
+}
+
+function createSectionDescriptorFromHeroAnchor({ source, anchor, figmaContext }) {
+  const role = 'hero'
+  const xRatio = source === 'figma'
+    ? normalizeNumber(anchor.node?.xRatio)
+    : null
+  const yRatio = source === 'figma'
+    ? normalizeNumber(anchor.node?.yRatio)
+    : null
+  const widthRatio = source === 'figma'
+    ? normalizeNumber(anchor.node?.widthRatio)
+    : null
+  const heightRatio = source === 'figma'
+    ? normalizeNumber(anchor.node?.heightRatio)
+    : null
+  const parentSectionId = source === 'figma'
+    ? findParentHeroAnchorSectionId(anchor.path, figmaContext)
+    : findWebParentHeroAnchorSectionId(anchor.path)
+  return createSectionDescriptor({
+    source,
+    path: anchor.path,
+    rootSourceId: anchor.rootSourceId,
+    parentSectionId,
+    role,
+    xRatio,
+    yRatio,
+    widthRatio,
+    heightRatio,
+    confidence: anchor.score >= 220 ? 'high' : anchor.score >= 140 ? 'medium' : 'low',
+    reasons: ['hero common ancestor root'],
+  })
+}
+
+function createSectionDescriptorForCandidate(candidate, sectionContexts, heroSelection) {
+  const source = normalizeString(candidate?.source)
+  const selectedHeroDescriptor = source === 'figma' ? heroSelection?.figmaHeroDescriptor : source === 'web' ? heroSelection?.webHeroDescriptor : null
+  if (selectedHeroDescriptor && isCandidateWithinSectionDescriptor(candidate, selectedHeroDescriptor)) {
+    return selectedHeroDescriptor
+  }
   if (candidate?.source === 'figma') return createFigmaSectionDescriptor(candidate, sectionContexts?.figma)
   if (candidate?.source === 'web') return createWebSectionDescriptor(candidate)
   return createFallbackSectionDescriptor(candidate)
@@ -334,9 +553,10 @@ function createSectionDescriptorForCandidate(candidate, sectionContexts) {
 function createFigmaSectionDescriptor(candidate, context) {
   const layerPath = normalizeString(candidate?.layerPath || candidate?.context || candidate?.parentContext)
   const anchors = buildFigmaAnchorCandidates(layerPath, candidate, context)
-  const selected = anchors
+  const scoredAnchors = anchors
     .map((anchor) => ({ ...anchor, score: getFigmaAnchorScore(anchor, candidate, context) }))
-    .sort((first, second) => second.score - first.score)[0]
+    .sort((first, second) => second.score - first.score)
+  const selected = scoredAnchors.find((anchor) => isUsableFigmaSectionAnchor(anchor, context)) || scoredAnchors[0]
 
   if (!selected || selected.score <= 0) return createFallbackSectionDescriptor(candidate)
 
@@ -373,9 +593,10 @@ function createFigmaSectionDescriptor(candidate, context) {
 
 function createWebSectionDescriptor(candidate) {
   const anchors = buildWebAnchorCandidates(candidate)
-  const selected = anchors
+  const scoredAnchors = anchors
     .map((anchor) => ({ ...anchor, score: getWebAnchorScore(anchor, candidate) }))
-    .sort((first, second) => second.score - first.score)[0]
+    .sort((first, second) => second.score - first.score)
+  const selected = scoredAnchors.find((anchor) => isUsableWebSectionAnchor(anchor)) || scoredAnchors[0]
 
   if (!selected || selected.score <= 0) return createFallbackSectionDescriptor(candidate)
 
@@ -458,7 +679,7 @@ function buildSectionId(source, rootSourceId, path) {
 function buildFigmaAnchorCandidates(layerPath, candidate, context) {
   const paths = buildFigmaCumulativePaths(layerPath)
   if (paths.length === 0) return [{ path: getFigmaSectionPath(layerPath) || 'unknown', node: null }]
-  return paths.map((path) => ({ path, node: context?.nodeByPath?.get(path) || null }))
+  return paths.map((path) => ({ path, node: findFigmaNodeByNormalizedPath(context, path) }))
 }
 
 function buildFigmaCumulativePaths(layerPath) {
@@ -514,8 +735,21 @@ function countFigmaTextsUnderPath(layerPath, context) {
     .filter((node) => node?.type === 'TEXT')
     .filter((node) => {
       const childPath = normalizeString(node?.layerPath)
-      return childPath === normalizedPath || childPath.startsWith(`${normalizedPath} /`)
+      return buildFigmaCumulativePaths(childPath).includes(normalizedPath)
     }).length
+}
+
+function findFigmaNodeByNormalizedPath(context, normalizedPath) {
+  const targetPath = normalizeString(normalizedPath)
+  if (!targetPath) return null
+  return (Array.isArray(context?.flatNodes) ? context.flatNodes : [])
+    .filter((node) => buildFigmaCumulativePaths(normalizeString(node?.layerPath)).includes(targetPath))
+    .sort((first, second) => {
+      const firstDepth = getHeroAnchorDepth(normalizeString(first?.layerPath), 'figma')
+      const secondDepth = getHeroAnchorDepth(normalizeString(second?.layerPath), 'figma')
+      if (firstDepth !== secondDepth) return firstDepth - secondDepth
+      return countFigmaAnchorChildren(second, context) - countFigmaAnchorChildren(first, context)
+    })[0] || null
 }
 
 function isLikelyFigmaSubsectionWrapper(node, context) {
@@ -624,6 +858,184 @@ function mergeConfidence(first, second) {
   return (rank[normalizeConfidence(second)] || 0) > (rank[normalizeConfidence(first)] || 0) ? normalizeConfidence(second) : normalizeConfidence(first)
 }
 
+function isCandidateWithinSectionDescriptor(candidate, descriptor) {
+  if (!candidate || !descriptor) return false
+  return isCandidateUnderAnchor(candidate, descriptor.source, descriptor.path)
+}
+
+function isTopHeroTextCandidate(candidate) {
+  if (!candidate?.text) return false
+  if (candidate.source === 'figma') return candidate.role === 'heading' || isHeroLikeSection(candidate.section) || (candidate.yRatio ?? 1) <= 0.35
+  return candidate.role === 'heading' || isHeroLikeSection(candidate.section) || /hero|banner|main.?visual|kv/.test(`${candidate.selector || ''} ${candidate.parentContext || ''}`.toLowerCase()) || (candidate.yRatio ?? 1) <= 0.25
+}
+
+function isTopHeroActionCandidate(candidate) {
+  if (!candidate?.text) return false
+  if (isNavigationLikeCandidate(candidate) || looksLikeTabCandidate(candidate) || looksLikeMediaControlCandidate(candidate) || looksLikeCarouselControlCandidate(candidate) || looksLikeUtilityControlCandidate(candidate)) return false
+  return looksLikeActionCandidate(candidate) && (isHeroLikeSection(candidate.section) || (candidate.yRatio ?? 1) <= 0.35)
+}
+
+function isTopHeroMediaCandidate(candidate) {
+  if (!candidate) return false
+  return candidate.visible !== false && (isHeroLikeSection(candidate.section) || (candidate.yRatio ?? 1) <= 0.35)
+}
+
+function compareHeroSignalCandidates(first, second) {
+  const yDiff = (first?.yRatio ?? 1) - (second?.yRatio ?? 1)
+  if (yDiff !== 0) return yDiff
+  return getCandidateScore(second) - getCandidateScore(first)
+}
+
+function getCandidateDirectAnchorPath(candidate, source) {
+  if (source === 'figma') {
+    const paths = buildFigmaCumulativePaths(candidate?.layerPath || candidate?.context || candidate?.parentContext)
+    return paths[paths.length - 1] || ''
+  }
+  return normalizeString(candidate?.selector || candidate?.context || candidate?.parentContext)
+}
+
+function compareHeroAnchorScores(first, second) {
+  if ((second?.score || 0) !== (first?.score || 0)) return (second?.score || 0) - (first?.score || 0)
+  return getHeroAnchorDepth(second?.path || '', second?.source || '') - getHeroAnchorDepth(first?.path || '', first?.source || '')
+}
+
+function isCandidateUnderAnchor(candidate, source, anchorPath) {
+  const targetPath = normalizeString(anchorPath)
+  if (!targetPath) return false
+  if (source === 'figma') {
+    const layerPath = normalizeString(candidate?.layerPath || candidate?.context || candidate?.parentContext)
+    return buildFigmaCumulativePaths(layerPath).includes(targetPath)
+  }
+  const ancestryPaths = buildWebAnchorCandidates(candidate).map((item) => normalizeString(item.path))
+  return ancestryPaths.includes(targetPath)
+}
+
+function isLayoutLikeHeroAnchor(anchor, source, figmaContext) {
+  if (source === 'figma') {
+    const widthRatio = Number(anchor?.node?.widthRatio) || 0
+    const heightRatio = Number(anchor?.node?.heightRatio) || 0
+    const childCount = countFigmaAnchorChildren(anchor?.node, figmaContext)
+    return widthRatio >= 0.55 || heightRatio >= 0.14 || childCount >= 3
+  }
+  return /section|hero|banner|main_visual|visual|kv|wrap|container|inner|main/.test(normalizeString(anchor?.path).toLowerCase())
+}
+
+function countFigmaAnchorChildren(node, figmaContext) {
+  if (!node) return 0
+  return (figmaContext?.childMap?.get(normalizeString(node?.nodeId || node?.id)) || []).length
+}
+
+function estimateWebAnchorChildCount(anchorPath, matchedSignals) {
+  const descendants = matchedSignals.filter((item) => isCandidateUnderAnchor(item.candidate, 'web', anchorPath))
+  return descendants.length
+}
+
+function inferWebAnchorNodeType(anchorPath) {
+  const lastToken = getLastPathToken(anchorPath, anchorPath.includes('>') ? '>' : ' ')
+  if (/^(section|main|article|header|footer|nav)([.#]|\[|$)/.test(lastToken)) return 'CONTAINER'
+  if (/^(div|ul|ol|li)([.#]|\[|$)/.test(lastToken)) return 'WRAPPER'
+  if (/^(h[1-6]|p|span|small|img|video|a|button)([.#]|\[|$)/.test(lastToken)) return 'LEAF'
+  return 'WRAPPER'
+}
+
+function isUsableFigmaSectionAnchor(anchor, figmaContext) {
+  if (!anchor?.node) return false
+  if (isFigmaPageRootNode(anchor.node, figmaContext)) return false
+  const type = normalizeString(anchor.node?.type).toUpperCase()
+  if (['TEXT', 'RECTANGLE', 'VECTOR', 'ELLIPSE', 'LINE', 'POLYGON', 'STAR'].includes(type)) return false
+  if (countFigmaAnchorChildren(anchor.node, figmaContext) === 0) return false
+  if (isLikelyFigmaSubsectionWrapper(anchor.node, figmaContext)) return false
+  return true
+}
+
+function isUsableWebSectionAnchor(anchor) {
+  if (!anchor?.path) return false
+  const nodeType = inferWebAnchorNodeType(anchor.path)
+  if (nodeType === 'LEAF') return false
+  const lowerPath = normalizeString(anchor.path).toLowerCase()
+  if (/\b(txt|text|title|heading|copy|label)\b/.test(lowerPath)) return false
+  if (/^body$|^html$|^main$|^body > main$/i.test(anchor.path)) return false
+  return true
+}
+
+function isInvalidHeroRootAnchor(anchor, source, { childCount, containsText, containsAction, containsMedia, layoutLike, nodeType, figmaContext }) {
+  if (source === 'figma') {
+    const node = anchor?.node
+    if (!node) return true
+    const type = normalizeString(node?.type).toUpperCase()
+    if (['TEXT', 'RECTANGLE', 'VECTOR', 'ELLIPSE', 'LINE', 'POLYGON', 'STAR'].includes(type)) return true
+    if (childCount === 0) return true
+    if (isLikelyFigmaSubsectionWrapper(node, figmaContext) && [containsText, containsAction, containsMedia].filter(Boolean).length < 2) return true
+    return [containsText, containsAction, containsMedia].filter(Boolean).length < 2 && !layoutLike
+  }
+  const lowerPath = normalizeString(anchor?.path).toLowerCase()
+  if (nodeType === 'LEAF') return true
+  if (/\b(txt|text|title|heading|copy|label|btn_wrap|button_wrap)\b/.test(lowerPath) && [containsText, containsAction, containsMedia].filter(Boolean).length < 2) return true
+  return [containsText, containsAction, containsMedia].filter(Boolean).length < 2 && !layoutLike
+}
+
+function isPageRootAnchor(anchor, source, figmaContext) {
+  if (source === 'figma') return isFigmaPageRootNode(anchor?.node, figmaContext)
+  return /^body$|^html$|^main$|^body > main$/i.test(normalizeString(anchor?.path))
+}
+
+function isNavigationOrFooterAnchor(anchor, source) {
+  const path = normalizeString(anchor?.path).toLowerCase()
+  if (source === 'figma') return /nav|navigation|header|menu|footer|legal|cookie|privacy|terms/.test(path)
+  return /nav|navigation|header|menu|footer|legal|cookie|privacy|terms/.test(path)
+}
+
+function scoreHeroAnchorSemantics(path) {
+  const searchable = normalizeString(path).toLowerCase()
+  let score = 0
+  if (/hero|main.?visual|main_visual|kv|banner|visual/.test(searchable)) score += 90
+  if (/section|container|wrap|inner/.test(searchable)) score += 20
+  if (/txt|text|title|heading/.test(searchable)) score -= 35
+  if (/img|image|video/.test(searchable)) score -= 20
+  return score
+}
+
+function scoreFigmaHeroAnchorGeometry(node) {
+  if (!node) return 0
+  let score = 0
+  const widthRatio = Number(node?.widthRatio) || 0
+  const heightRatio = Number(node?.heightRatio) || 0
+  const yRatio = Number(node?.yRatio) || 1
+  if (widthRatio >= 0.55) score += 25
+  if (heightRatio >= 0.14 && heightRatio <= 0.7) score += 25
+  if (yRatio <= 0.25) score += 30
+  return score
+}
+
+function scoreWebHeroAnchorGeometry(matchedSignals) {
+  const topMostY = matchedSignals.reduce((lowest, item) => Math.min(lowest, Number(item?.candidate?.yRatio) || 1), 1)
+  return topMostY <= 0.25 ? 25 : topMostY <= 0.35 ? 10 : 0
+}
+
+function getHeroAnchorDepth(path, source) {
+  if (!source && normalizeString(path).includes('/')) return normalizeString(path).split('/').map((item) => item.trim()).filter(Boolean).length
+  if (source === 'figma') return normalizeString(path).split('/').map((item) => item.trim()).filter(Boolean).length
+  if (normalizeString(path).includes('>')) return normalizeString(path).split('>').map((item) => item.trim()).filter(Boolean).length
+  return normalizeString(path).split(/\s+/).filter(Boolean).length
+}
+
+function findParentHeroAnchorSectionId(anchorPath, figmaContext) {
+  const ancestors = buildFigmaCumulativePaths(anchorPath)
+  if (ancestors.length <= 1) return null
+  const parentPath = ancestors[ancestors.length - 2]
+  const parentNode = figmaContext?.nodeByPath?.get(parentPath)
+  if (!parentPath || isFigmaPageRootNode(parentNode, figmaContext)) return null
+  return buildSectionId('figma', normalizeString(parentNode?.nodeId || parentNode?.id || parentPath), parentPath)
+}
+
+function findWebParentHeroAnchorSectionId(anchorPath) {
+  const ancestors = buildWebCumulativePaths(anchorPath)
+  if (ancestors.length <= 1) return null
+  const parentPath = ancestors[ancestors.length - 2]
+  if (!parentPath || /^body$|^html$|^main$|^body > main$/i.test(parentPath)) return null
+  return buildSectionId('web', parentPath, parentPath)
+}
+
 function createSectionEntities({ candidates }) {
   const sectionMap = new Map()
   ;(Array.isArray(candidates) ? candidates : []).forEach((candidate) => {
@@ -631,16 +1043,8 @@ function createSectionEntities({ candidates }) {
   })
 
   return Array.from(sectionMap.values())
+    .filter((section) => shouldKeepSectionEntity(section))
     .sort(compareSectionEntities)
-}
-
-function detectHeroSections(sections) {
-  const figma = selectHeroSectionForSource(sections, 'figma')
-  const web = selectHeroSectionForSource(sections, 'web')
-  return {
-    figmaSectionId: figma?.sectionId || '',
-    webSectionId: web?.sectionId || '',
-  }
 }
 
 function createCanonicalEvidence({ actions, numericValues, media, texts, sections }) {
@@ -1261,6 +1665,16 @@ function compareSectionEntities(first, second) {
   return (first.yRatio ?? 1) - (second.yRatio ?? 1)
 }
 
+function shouldKeepSectionEntity(section) {
+  if (!section) return false
+  if (['hero', 'navigation', 'footer', 'legal', 'banner', 'cards'].includes(section.role)) return true
+  if (normalizeCount(section.__candidateCount, 0) >= 2) return true
+  if (normalizeCount(section.__actionCount, 0) + normalizeCount(section.__imageCount, 0) + normalizeCount(section.__videoCount, 0) >= 1) return true
+  if (normalizeCount(section.__headingCount, 0) >= 1 && (section.widthRatio ?? 0) >= 0.4) return true
+  if ((section.widthRatio ?? 0) >= 0.55 && (section.heightRatio ?? 0) >= 0.12) return true
+  return false
+}
+
 function getSectionEntityScore(section) {
   let score = 0
   if (section.role === 'hero') score += 200
@@ -1273,39 +1687,6 @@ function getSectionEntityScore(section) {
   score += normalizeCount(section.__videoCount, 0) * 14
   score += normalizeCount(section.__textCount, 0) * 3
   score += Math.max(0, 50 - Math.round((section.yRatio ?? 1) * 100))
-  return score
-}
-
-function selectHeroSectionForSource(sections, source) {
-  const candidates = sections.filter((item) => item.source === source && !['navigation', 'footer', 'legal'].includes(item.role))
-  if (candidates.length === 0) return null
-  return candidates
-    .map((section) => ({ section, score: getHeroSectionScore(section) }))
-    .filter((entry) => entry.score > 0)
-    .sort((first, second) => second.score - first.score)
-    .map((entry) => entry.section)[0] || null
-}
-
-function getHeroSectionScore(section) {
-  let score = 0
-  const textCount = normalizeCount(section.__textCount, 0)
-  const actionCount = normalizeCount(section.__actionCount, 0)
-  const imageCount = normalizeCount(section.__imageCount, 0)
-  const videoCount = normalizeCount(section.__videoCount, 0)
-  const headingCount = normalizeCount(section.__headingCount, 0)
-  if (section.role === 'hero') score += 220
-  if (section.role === 'banner') score += 160
-  if (/hero|kv|banner|main.?visual|visual/.test(section.path.toLowerCase())) score += 180
-  if ((imageCount + videoCount) > 0) score += 60
-  if (headingCount > 0) score += 50
-  if (actionCount > 0) score += 45
-  if ((section.yRatio ?? 1) <= 0.3) score += 40
-  if ((section.widthRatio ?? 0) >= 0.55) score += 20
-  if ((section.heightRatio ?? 0) >= 0.12 && (section.heightRatio ?? 0) <= 0.72) score += 20
-  if ((section.heightRatio ?? 0) > 0.8) score -= 160
-  if (textCount >= 20) score -= 80
-  if ((section.__candidateCount ?? 0) >= 25) score -= 60
-  if (!section.parentSectionId && (section.heightRatio ?? 0) > 0.7) score -= 120
   return score
 }
 
@@ -1346,7 +1727,7 @@ function finalizeSectionEntities(sections, canonicalEvidence, heroSections) {
   const finalized = sections.map((section) => ({
     sectionId: section.sectionId,
     source: section.source,
-    role: section.sectionId === heroSections.figmaSectionId || section.sectionId === heroSections.webSectionId ? 'hero' : section.role,
+    role: resolveFinalSectionRole(section, heroSections),
     rootSourceId: section.rootSourceId,
     path: section.path,
     parentSectionId: section.parentSectionId || null,
@@ -1392,6 +1773,13 @@ function finalizeSectionEntities(sections, canonicalEvidence, heroSections) {
   })
 
   return finalized.sort(compareSectionEntities)
+}
+
+function resolveFinalSectionRole(section, heroSections) {
+  const isSelectedHero = section.sectionId === heroSections.figmaSectionId || section.sectionId === heroSections.webSectionId
+  if (isSelectedHero) return 'hero'
+  if (section.role === 'hero') return /banner|visual|main/.test(normalizeString(section.path).toLowerCase()) ? 'banner' : 'content'
+  return section.role
 }
 
 function createCanonicalCtaButtons(actions) {
@@ -1771,7 +2159,7 @@ function buildHeroSectionTrace(section) {
   }
 }
 
-function applyCanonicalQualityMetrics(quality, { heroCtaGroup, heroMediaGroup, canonicalEvidence, comparisonActions, sectionTrace }) {
+function applyCanonicalQualityMetrics(quality, { heroCtaGroup, heroMediaGroup, canonicalEvidence, comparisonActions, sectionTrace, sections, heroSelection }) {
   quality.canonicalActionCount = canonicalEvidence.actions.length
   quality.canonicalNumericCount = canonicalEvidence.numericValues.length
   quality.figmaHeroTextCount = normalizeCount(sectionTrace?.figmaHero?.textCount, 0)
@@ -1780,6 +2168,16 @@ function applyCanonicalQualityMetrics(quality, { heroCtaGroup, heroMediaGroup, c
   quality.webHeroActionCount = heroCtaGroup.web.count
   quality.figmaHeroMediaCount = normalizeCount(sectionTrace?.figmaHero?.mediaCount, 0)
   quality.webHeroMediaCount = normalizeCount(sectionTrace?.webHero?.mediaCount, 0)
+  quality.figmaHeroCandidateCount = normalizeCount(heroSelection?.quality?.figmaHeroCandidateCount, 0)
+  quality.webHeroCandidateCount = normalizeCount(heroSelection?.quality?.webHeroCandidateCount, 0)
+  quality.figmaHeroRootPromotedCount = normalizeCount(heroSelection?.quality?.figmaHeroRootPromotedCount, 0)
+  quality.webHeroRootPromotedCount = normalizeCount(heroSelection?.quality?.webHeroRootPromotedCount, 0)
+  quality.figmaHeroContainsText = heroSelection?.quality?.figmaHeroContainsText === true
+  quality.figmaHeroContainsAction = heroSelection?.quality?.figmaHeroContainsAction === true
+  quality.figmaHeroContainsMedia = heroSelection?.quality?.figmaHeroContainsMedia === true
+  quality.webHeroContainsText = heroSelection?.quality?.webHeroContainsText === true
+  quality.webHeroContainsAction = heroSelection?.quality?.webHeroContainsAction === true
+  quality.webHeroContainsMedia = heroSelection?.quality?.webHeroContainsMedia === true
   quality.unassignedCanonicalEntityCount = normalizeCount(sectionTrace?.unassignedEntityCount, 0)
   quality.multiAssignedCanonicalEntityCount = normalizeCount(sectionTrace?.multiAssignedEntityCount, 0)
   quality.comparisonActionCount = Array.isArray(comparisonActions) ? comparisonActions.length : 0
@@ -1787,6 +2185,8 @@ function applyCanonicalQualityMetrics(quality, { heroCtaGroup, heroMediaGroup, c
   quality.heroPrimaryMediaCount = normalizeCount(heroMediaGroup.figma.primaryCount, 0) + normalizeCount(heroMediaGroup.web.primaryCount, 0)
   quality.canonicalCountConsistencyPassed = quality.canonicalActionCount === canonicalEvidence.actions.length
     && quality.canonicalNumericCount === canonicalEvidence.numericValues.length
+  quality.sourceHeroCountConsistencyPassed = sections.filter((item) => item.source === 'figma' && item.role === 'hero').length === 1
+    && sections.filter((item) => item.source === 'web' && item.role === 'hero').length === 1
 }
 
 function normalizeSelector(value) {

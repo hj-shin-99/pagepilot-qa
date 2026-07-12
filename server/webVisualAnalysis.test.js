@@ -22,7 +22,7 @@ test('createWebVisualAnalysis transforms one scan result and saves screenshot on
     visualPayloadData: {
       page: { viewportWidth: 1920, viewportHeight: 1080, scrollWidth: 1920, scrollHeight: 3200 },
       textNodes: [{ text: 'Headline', rawText: 'Headline', tagName: 'h1', selector: 'h1', yRatio: 0.05, role: 'heading', sectionHint: 'hero' }],
-      videoCandidates: [{ tagName: 'video', selector: 'video.hero', section: 'top', autoplay: true, controls: true }],
+      videoCandidates: [{ tagName: 'video', selector: 'video.hero', parentSelector: '.hero', domPath: 'body > main > section.hero > video.hero', section: 'top', autoplay: true, controls: true, x: 20, y: 30, xRatio: 0.01, yRatio: 0.05, widthRatio: 0.8, heightRatio: 0.2, width: 1600, height: 900, visible: true }],
       playwrightRunCount: 1,
     },
   }
@@ -53,6 +53,9 @@ test('createWebVisualAnalysis transforms one scan result and saves screenshot on
   assert.equal(Array.isArray(analysis.ctaCandidates[0].reasons), true)
   assert.equal(analysis.imageCandidates.length, 1)
   assert.equal(analysis.videoCandidates.length, 1)
+  assert.equal(analysis.videoCandidates[0].parentSelector, '.hero')
+  assert.equal(analysis.videoCandidates[0].contextPath.includes('section.hero'), true)
+  assert.equal(analysis.videoCandidates[0].autoplay, true)
   assert.equal(analysis.page.scrollHeight, 3200)
   assert.equal(analysis.meta.playwrightRunCount, 1)
   assert.equal(analysis.scanResult, scanResult)

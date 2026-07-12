@@ -2137,8 +2137,29 @@ async function safeVisualPayloadData(page, instrumentation) {
       scrollHeight: Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0, window.innerHeight || 0),
       videoCandidates: Array.from(document.querySelectorAll('video, iframe[src*="youtube"], iframe[src*="vimeo"], [data-video], [data-youtube]'))
         .map((element) => {
+          function getSimpleSelector(target) {
+            if (!target) return ''
+            if (target.id) return `#${target.id}`
+            const tagName = target.tagName?.toLowerCase() || ''
+            const classNames = Array.from(target.classList || []).filter(Boolean).slice(0, 3)
+            return `${tagName}${classNames.length > 0 ? `.${classNames.join('.')}` : ''}`
+          }
+
+          function getDomPath(target) {
+            const segments = []
+            let current = target
+            while (current && segments.length < 6) {
+              segments.unshift(getSimpleSelector(current) || current.tagName?.toLowerCase() || '')
+              current = current.parentElement
+            }
+            return segments.filter(Boolean).join(' > ')
+          }
+
           const rect = element.getBoundingClientRect()
+          const parent = element.parentElement
           const y = rect.y + window.scrollY
+          const x = rect.x + window.scrollX
+          const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1
           const documentHeight = Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0, window.innerHeight || 1)
           const searchable = `${element.tagName.toLowerCase()} ${element.getAttribute('role') || ''} ${element.getAttribute('aria-label') || ''} ${element.getAttribute('title') || ''} ${element.getAttribute('class') || ''}`.toLowerCase()
           const section = /nav|navigation|gnb|menu|header/.test(searchable)
@@ -2153,15 +2174,23 @@ async function safeVisualPayloadData(page, instrumentation) {
 
           return {
             tagName: element.tagName.toLowerCase(),
-            selector: element.id ? `#${element.id}` : element.tagName.toLowerCase(),
+            selector: getSimpleSelector(element),
+            parentSelector: getSimpleSelector(parent),
+            domPath: getDomPath(element),
             title: element.getAttribute('title') || '',
             ariaLabel: element.getAttribute('aria-label') || '',
             autoplay: element.autoplay === true,
             controls: element.controls === true,
             section,
+            x: Math.round(x * 100) / 100,
+            y: Math.round(y * 100) / 100,
+            xRatio: viewportWidth > 0 ? Math.max(0, Math.min(1, x / viewportWidth)) : null,
             yRatio: documentHeight > 0 ? Math.max(0, Math.min(1, y / documentHeight)) : null,
+            widthRatio: viewportWidth > 0 ? Math.max(0, Math.min(1, rect.width / viewportWidth)) : null,
+            heightRatio: documentHeight > 0 ? Math.max(0, Math.min(1, rect.height / documentHeight)) : null,
             width: Math.round(rect.width * 100) / 100,
             height: Math.round(rect.height * 100) / 100,
+            visible: rect.width > 0 && rect.height > 0,
           }
         })
         .slice(0, 20),

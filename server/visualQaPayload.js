@@ -81,18 +81,25 @@ export function buildVisualQaPayloadArtifacts({ figmaAnalysis, webAnalysis, text
     heroSections,
   }, quality)
   const numericHints = createNumericHints({ rawNumericCandidates: annotatedRawNumericCandidates, sections: draftSections, heroSections }, quality)
-  const mediaHints = createCanonicalMediaHints({ images: annotatedRawImages, videos: annotatedRawVideos, sections: draftSections, heroSections })
+  const mediaHints = createCanonicalMediaHints({ images: annotatedRawImages, videos: annotatedRawVideos, sections: draftSections, heroSections, quality })
   const textHints = createCanonicalTextHints({ textCandidates: [...annotatedFigmaTextCandidates, ...annotatedWebTextCandidates] })
-  const canonicalEvidence = createCanonicalEvidence({
+  const resolvedCanonicalEvidence = remapCanonicalEvidenceToSelectedHeroes({
     actions: interactions.allActions,
     numericValues: numericHints.numericEntities,
     media: mediaHints.media,
     texts: textHints.texts,
+    heroSelection,
+  })
+  const canonicalEvidence = createCanonicalEvidence({
+    actions: resolvedCanonicalEvidence.actions,
+    numericValues: resolvedCanonicalEvidence.numericValues,
+    media: resolvedCanonicalEvidence.media,
+    texts: resolvedCanonicalEvidence.texts,
     sections: finalizeSectionEntities(draftSections, {
-      actions: interactions.allActions,
-      numericValues: numericHints.numericEntities,
-      media: mediaHints.media,
-      texts: textHints.texts,
+      actions: resolvedCanonicalEvidence.actions,
+      numericValues: resolvedCanonicalEvidence.numericValues,
+      media: resolvedCanonicalEvidence.media,
+      texts: resolvedCanonicalEvidence.texts,
     }, heroSections),
   })
   const ctaButtons = createCanonicalCtaButtons(canonicalEvidence.actions)
@@ -125,6 +132,14 @@ export function buildVisualQaPayloadArtifacts({ figmaAnalysis, webAnalysis, text
     canonicalEvidence,
   })
   const sectionTrace = createSectionTrace({ sections: canonicalEvidence.sections, heroSections, canonicalEvidence })
+  const entitySectionTrace = createEntitySectionTrace({
+    rawActions: rawInteractions.allCandidates,
+    annotatedRawActions,
+    annotatedRawVideos,
+    heroSelection,
+    sectionContexts,
+    canonicalEvidence,
+  })
   applyCanonicalQualityMetrics(quality, {
     heroCtaGroup,
     heroMediaGroup,
@@ -133,6 +148,7 @@ export function buildVisualQaPayloadArtifacts({ figmaAnalysis, webAnalysis, text
     sectionTrace,
     sections: canonicalEvidence.sections,
     heroSelection,
+    entitySectionTrace,
   })
 
   const payload = {
@@ -196,6 +212,8 @@ export function buildVisualQaPayloadArtifacts({ figmaAnalysis, webAnalysis, text
     debugArtifacts: {
       sectionTrace,
       heroCandidateTrace: heroSelection.heroCandidateTrace,
+      entitySectionTrace,
+      webVideoTrace: entitySectionTrace.webVideoTrace,
     },
   }
 }
@@ -266,12 +284,22 @@ function createPayloadQuality() {
     webHeroContainsText: false,
     webHeroContainsAction: false,
     webHeroContainsMedia: false,
+    rawFigmaHeroActionCandidateCount: 0,
+    resolvedFigmaHeroActionCount: 0,
+    rejectedFigmaHeroActionCount: 0,
+    rawWebHeroMediaCandidateCount: 0,
+    resolvedWebHeroMediaCount: 0,
+    webSelectorSignatureMergedCount: 0,
+    duplicateHeroActionMergedCount: 0,
+    duplicateHeroNumericMergedCount: 0,
     unassignedCanonicalEntityCount: 0,
     multiAssignedCanonicalEntityCount: 0,
     comparisonActionCount: 0,
     referenceOnlyActionCount: 0,
     canonicalCountConsistencyPassed: false,
     sourceHeroCountConsistencyPassed: false,
+    heroActionResolutionPassed: false,
+    heroMediaResolutionPassed: false,
     warnings: [],
   }
 
@@ -1235,6 +1263,7 @@ function createFigmaInteractionCandidate(node, flatNodes, childMap, quality) {
     context,
     layerPath,
     parentContext: normalizeString(node?.parentName),
+    parentName: normalizeString(node?.parentName),
     section: inferFigmaSection(node),
     confidence: classifyConfidence(reasons.length >= 3 ? 'high' : reasons.length >= 2 ? 'medium' : 'low'),
     reasons,
@@ -1454,8 +1483,11 @@ function createNumericCandidate(candidate, quality) {
     numericTokens,
     unitTokens,
     context: truncateText(candidate.context || candidate.layerPath || '', 180),
+    contextPath: truncateText(candidate.contextPath || candidate.context || candidate.layerPath || '', 220),
     selector: candidate.selector || '',
+    selectorSignature: candidate.selectorSignature || createSelectorSignature(candidate.selector || candidate.contextPath || candidate.context),
     parentContext: candidate.parentContext || '',
+    parentSelector: candidate.parentSelector || '',
     section: candidate.section,
     confidence: classifyConfidence(reasons.length >= 3 ? 'high' : reasons.length >= 2 ? 'medium' : 'low'),
     reasons,
@@ -1464,8 +1496,8 @@ function createNumericCandidate(candidate, quality) {
   }
 }
 
-function createCanonicalMediaHints({ images, videos, sections, heroSections }) {
-  const canonicalMedia = createCanonicalMediaEntities([...images, ...videos], sections, heroSections)
+function createCanonicalMediaHints({ images, videos, sections, heroSections, quality }) {
+  const canonicalMedia = createCanonicalMediaEntities([...images, ...videos], sections, heroSections, quality)
   return {
     media: canonicalMedia,
   }
@@ -1827,6 +1859,11 @@ function createCanonicalActionEntity(candidate, heroSections) {
     displayText: candidate.displayText,
     href: candidate.href || '',
     selector: candidate.selector || '',
+    selectorSignature: candidate.selectorSignature || createSelectorSignature(candidate.selector || candidate.contextPath || candidate.context),
+    contextPath: candidate.contextPath || candidate.context || '',
+    parentSelector: candidate.parentSelector || '',
+    layerPath: candidate.layerPath || '',
+    parentId: candidate.parentId || '',
     sectionId: candidate.sectionId || '',
     sectionRootId: candidate.sectionRootId || '',
     sectionPath: candidate.sectionPath || '',
@@ -1844,6 +1881,8 @@ function createCanonicalActionEntity(candidate, heroSections) {
 }
 
 function mergeCanonicalActionEntity(entity, candidate, quality) {
+  const previousSelector = entity.selector
+  const previousSelectorSignature = entity.selectorSignature
   entity.sources.push(buildSourceEvidence(candidate))
   entity.sources = dedupeSourceEvidence(entity.sources)
   entity.reasons = uniqueStrings([...entity.reasons, ...(candidate.reasons || [])])
@@ -1853,13 +1892,21 @@ function mergeCanonicalActionEntity(entity, candidate, quality) {
     entity.displayText = candidate.displayText || entity.displayText
     entity.href = candidate.href || entity.href
     entity.selector = candidate.selector || entity.selector
+    entity.selectorSignature = candidate.selectorSignature || entity.selectorSignature
+    entity.contextPath = candidate.contextPath || entity.contextPath
+    entity.parentSelector = candidate.parentSelector || entity.parentSelector
+    entity.layerPath = candidate.layerPath || entity.layerPath
+    entity.parentId = candidate.parentId || entity.parentId
     entity.confidence = candidate.confidence || entity.confidence
     entity.xRatio = normalizeNumber(candidate.xRatio)
     entity.yRatio = normalizeNumber(candidate.yRatio)
     entity.widthRatio = normalizeNumber(candidate.widthRatio)
     entity.heightRatio = normalizeNumber(candidate.heightRatio)
   }
-  if (candidate.source === 'web') quality.webActionSourcesMergedCount += 1
+  if (candidate.source === 'web') {
+    quality.webActionSourcesMergedCount += 1
+    if (previousSelector !== candidate.selector && hasEquivalentSelectorSignature(previousSelectorSignature, candidate.selectorSignature)) quality.webSelectorSignatureMergedCount += 1
+  }
   if (candidate.source === 'figma') quality.figmaNestedActionMergedCount += 1
 }
 
@@ -1868,10 +1915,12 @@ function isSameCanonicalAction(entity, candidate) {
   if (entity.source !== candidate.source) return false
   if (entity.source === 'web') {
     const sameSelector = normalizeSelector(entity.selector) && normalizeSelector(entity.selector) === normalizeSelector(candidate.selector)
+    const sameSelectorSignature = hasEquivalentSelectorSignature(entity.selectorSignature, candidate.selectorSignature)
     const sameHref = normalizeString(entity.href) === normalizeString(candidate.href)
     const sameText = normalizeComparableText(entity.text) === normalizeComparableText(candidate.text)
     const sameParent = normalizeString(entity.sectionPath) === normalizeString(candidate.sectionPath)
-    return sameText && hasSimilarPosition(entity.yRatio, candidate.yRatio) && (sameSelector || (sameHref && sameParent))
+    const similarSize = hasSimilarSize(entity.widthRatio, candidate.widthRatio, entity.heightRatio, candidate.heightRatio, entity.width, candidate.width, entity.height, candidate.height)
+    return sameText && hasSimilarPosition(entity.yRatio, candidate.yRatio) && (sameSelector || sameSelectorSignature || (sameHref && sameParent && similarSize))
   }
   const sameText = normalizeComparableText(entity.text) === normalizeComparableText(candidate.text)
   const sameSection = normalizeString(entity.sectionPath) === normalizeString(candidate.sectionPath)
@@ -1884,6 +1933,9 @@ function buildSourceEvidence(candidate) {
     source: candidate.sourceKind || `${candidate.source}-${candidate.type}`,
     sourceId: candidate.sourceId || '',
     selector: candidate.selector || '',
+    parentSelector: candidate.parentSelector || '',
+    contextPath: candidate.contextPath || candidate.context || '',
+    selectorSignature: candidate.selectorSignature || createSelectorSignature(candidate.selector || candidate.contextPath || candidate.context),
     href: candidate.href || '',
     text: candidate.text || '',
   }
@@ -1959,6 +2011,10 @@ function createCanonicalNumericEntity(candidate, heroSections) {
     numericTokens: candidate.numericTokens,
     unitTokens: candidate.unitTokens,
     context: candidate.context,
+    selector: candidate.selector || '',
+    selectorSignature: candidate.selectorSignature || createSelectorSignature(candidate.selector || candidate.contextPath || candidate.context),
+    contextPath: candidate.contextPath || candidate.context || '',
+    parentSelector: candidate.parentSelector || '',
     sectionId: candidate.sectionId || '',
     sectionRootId: candidate.sectionRootId || '',
     sectionPath: candidate.sectionPath || '',
@@ -1974,7 +2030,7 @@ function isSameCanonicalNumeric(entity, candidate) {
   return entity.source === candidate.source
     && entity.numericType === candidate.numericType
     && normalizeComparableText(entity.displayText) === normalizeComparableText(candidate.displayText)
-    && normalizeComparableSectionPath(entity.sectionPath) === normalizeComparableSectionPath(candidate.sectionPath)
+    && isSameNumericContext(entity, candidate)
     && JSON.stringify(entity.numericTokens) === JSON.stringify(candidate.numericTokens)
     && JSON.stringify(entity.unitTokens) === JSON.stringify(candidate.unitTokens)
     && hasSimilarPosition(entity.yRatio, candidate.yRatio)
@@ -1989,7 +2045,7 @@ function getNumericRepresentativeScore(candidate) {
   return score
 }
 
-function createCanonicalMediaEntities(rawMedia, sections, heroSections) {
+function createCanonicalMediaEntities(rawMedia, sections, heroSections, quality) {
   const canonical = []
   rawMedia.forEach((candidate) => {
     const section = resolveSectionForCandidate(candidate, sections)
@@ -2010,6 +2066,12 @@ function createCanonicalMediaEntities(rawMedia, sections, heroSections) {
         mediaType: normalized.type,
         source: normalized.source,
         text: normalized.text,
+        selector: normalized.selector || '',
+        selectorSignature: normalized.selectorSignature || createSelectorSignature(normalized.selector || normalized.contextPath || normalized.context),
+        contextPath: normalized.contextPath || normalized.context || '',
+        parentSelector: normalized.parentSelector || '',
+        autoplay: normalized.autoplay === true,
+        controls: normalized.controls === true,
         sectionId: normalized.sectionId,
         sectionRootId: normalized.sectionRootId,
         sectionPath: normalized.sectionPath,
@@ -2028,8 +2090,11 @@ function createCanonicalMediaEntities(rawMedia, sections, heroSections) {
       })
       return
     }
+    const previousSelector = existing.selector
+    const previousSelectorSignature = existing.selectorSignature
     existing.sources.push(buildSourceEvidence(normalized))
     existing.sources = dedupeSourceEvidence(existing.sources)
+    if (normalized.source === 'web' && previousSelector !== normalized.selector && hasEquivalentSelectorSignature(previousSelectorSignature, normalized.selectorSignature)) quality.webSelectorSignatureMergedCount += 1
   })
   return canonical
 }
@@ -2037,8 +2102,10 @@ function createCanonicalMediaEntities(rawMedia, sections, heroSections) {
 function isSameCanonicalMedia(entity, candidate) {
   return entity.source === candidate.source
     && entity.mediaType === candidate.type
-    && (normalizeString(entity.sectionPath) === normalizeString(candidate.sectionPath))
-    && (normalizeString(entity.text) === normalizeString(candidate.text) || normalizeString(entity.entityId).endsWith(normalizeString(candidate.sourceId)))
+    && (normalizeString(entity.sectionPath) === normalizeString(candidate.sectionPath) || hasEquivalentSelectorSignature(entity.selectorSignature, candidate.selectorSignature))
+    && (normalizeString(entity.text) === normalizeString(candidate.text)
+      || normalizeString(entity.entityId).endsWith(normalizeString(candidate.sourceId))
+      || hasEquivalentSelectorSignature(entity.selectorSignature, candidate.selectorSignature))
 }
 
 function resolveSectionForCandidate(candidate, sections) {
@@ -2067,11 +2134,57 @@ function createCanonicalTextHints({ textCandidates }) {
       entityId: `text:${candidate.source}:${candidate.sourceId || candidate.selector || candidate.layerPath || normalizeComparableText(candidate.text)}`,
       source: candidate.source,
       text: candidate.text,
+      selector: candidate.selector || '',
+      selectorSignature: candidate.selectorSignature || createSelectorSignature(candidate.selector || candidate.contextPath || candidate.context),
+      parentSelector: candidate.parentSelector || '',
+      contextPath: candidate.contextPath || candidate.context || '',
+      layerPath: candidate.layerPath || '',
+      parentId: candidate.parentId || '',
       sectionId: candidate?.sectionDescriptor?.sectionId || '',
       role: mapTextEntityRole(candidate),
       sourceIds: uniqueStrings([candidate.sourceId]),
     })),
   }
+}
+
+function remapCanonicalEvidenceToSelectedHeroes({ actions, numericValues, media, texts, heroSelection }) {
+  return {
+    actions: remapCanonicalEntitiesToHero(actions, heroSelection),
+    numericValues: remapCanonicalEntitiesToHero(numericValues, heroSelection),
+    media: remapCanonicalEntitiesToHero(media, heroSelection),
+    texts: remapCanonicalEntitiesToHero(texts, heroSelection),
+  }
+}
+
+function remapCanonicalEntitiesToHero(entities, heroSelection) {
+  return (Array.isArray(entities) ? entities : []).map((entity) => {
+    const heroDescriptor = resolveHeroDescriptorForEntity(entity, heroSelection)
+    if (!heroDescriptor) return entity
+    return {
+      ...entity,
+      sectionId: heroDescriptor.sectionId,
+      sectionRootId: heroDescriptor.rootSourceId,
+      sectionPath: heroDescriptor.path,
+      sectionRole: heroDescriptor.role,
+      isHeroAction: entity.type === 'action' ? isCtaRole(entity.role) : entity.isHeroAction,
+      isHeroPrimary: entity.entityType === 'media' ? true : entity.isHeroPrimary,
+      comparisonScope: entity.comparisonScope === 'reference-only' || entity.comparisonScope === 'excluded'
+        ? entity.comparisonScope
+        : 'primary',
+    }
+  })
+}
+
+function resolveHeroDescriptorForEntity(entity, heroSelection) {
+  if (!entity) return null
+  if (entity.source === 'figma' && heroSelection?.figmaHeroDescriptor && isEntityWithinHeroDescriptor(entity, heroSelection.figmaHeroDescriptor)) return heroSelection.figmaHeroDescriptor
+  if (entity.source === 'web' && heroSelection?.webHeroDescriptor && isEntityWithinHeroDescriptor(entity, heroSelection.webHeroDescriptor)) return heroSelection.webHeroDescriptor
+  return null
+}
+
+function isEntityWithinHeroDescriptor(entity, descriptor) {
+  if (!entity || !descriptor) return false
+  return isCandidateUnderAnchor(entity, descriptor.source, descriptor.path)
 }
 
 function mapTextEntityRole(candidate) {
@@ -2147,6 +2260,90 @@ function createSectionTrace({ sections, heroSections, canonicalEvidence }) {
   }
 }
 
+function createEntitySectionTrace({ rawActions, annotatedRawActions, annotatedRawVideos, heroSelection, sectionContexts, canonicalEvidence }) {
+  const figmaHeroActions = buildActionEntityTrace({
+    source: 'figma',
+    rawCandidates: rawActions,
+    annotatedCandidates: annotatedRawActions,
+    heroDescriptor: heroSelection?.figmaHeroDescriptor,
+    sectionContexts,
+    canonicalEntities: canonicalEvidence.actions,
+  })
+  const webHeroActions = buildActionEntityTrace({
+    source: 'web',
+    rawCandidates: rawActions,
+    annotatedCandidates: annotatedRawActions,
+    heroDescriptor: heroSelection?.webHeroDescriptor,
+    sectionContexts,
+    canonicalEntities: canonicalEvidence.actions,
+  })
+  const webHeroMedia = buildMediaEntityTrace({
+    source: 'web',
+    annotatedCandidates: annotatedRawVideos,
+    heroDescriptor: heroSelection?.webHeroDescriptor,
+    sectionContexts,
+    canonicalEntities: canonicalEvidence.media,
+  })
+  return {
+    figmaHeroActions,
+    webHeroActions,
+    webHeroMedia,
+    webVideoTrace: webHeroMedia,
+  }
+}
+
+function buildActionEntityTrace({ source, rawCandidates, annotatedCandidates, heroDescriptor, sectionContexts, canonicalEntities }) {
+  const sourceRawCandidates = (Array.isArray(rawCandidates) ? rawCandidates : []).filter((candidate) => candidate?.source === source)
+  const sourceAnnotatedCandidates = (Array.isArray(annotatedCandidates) ? annotatedCandidates : []).filter((candidate) => candidate?.source === source)
+  return sourceRawCandidates
+    .map((candidate) => {
+      const originalDescriptor = createSectionDescriptorForCandidate(candidate, sectionContexts, null)
+      const annotatedCandidate = sourceAnnotatedCandidates.find((item) => item.sourceId === candidate.sourceId && item.text === candidate.text) || null
+      const resolvedEntity = findCanonicalEntityForCandidate(annotatedCandidate || candidate, canonicalEntities)
+      const heroDescendant = Boolean(heroDescriptor && isCandidateWithinSectionDescriptor(candidate, heroDescriptor))
+      return {
+        sourceId: candidate.sourceId || '',
+        text: candidate.text || '',
+        originalSectionId: originalDescriptor?.sectionId || '',
+        resolvedSectionId: resolvedEntity?.sectionId || annotatedCandidate?.sectionDescriptor?.sectionId || '',
+        heroDescendant,
+        excludedReason: heroDescendant && !resolvedEntity ? 'excluded-during-canonicalization' : null,
+      }
+    })
+    .filter((item) => item.heroDescendant || item.excludedReason)
+    .slice(0, 10)
+}
+
+function buildMediaEntityTrace({ source, annotatedCandidates, heroDescriptor, sectionContexts, canonicalEntities }) {
+  return (Array.isArray(annotatedCandidates) ? annotatedCandidates : [])
+    .filter((candidate) => candidate?.source === source)
+    .map((candidate) => {
+      const originalDescriptor = createSectionDescriptorForCandidate(candidate, sectionContexts, null)
+      const resolvedEntity = findCanonicalEntityForCandidate(candidate, canonicalEntities)
+      const heroDescendant = Boolean(heroDescriptor && isCandidateWithinSectionDescriptor(candidate, heroDescriptor))
+      return {
+        sourceId: candidate.sourceId || '',
+        selector: candidate.selector || '',
+        parentSelector: candidate.parentSelector || '',
+        originalSectionId: originalDescriptor?.sectionId || '',
+        resolvedSectionId: resolvedEntity?.sectionId || candidate?.sectionDescriptor?.sectionId || '',
+        heroDescendant,
+        excludedReason: heroDescendant && !resolvedEntity ? 'excluded-during-canonicalization' : null,
+      }
+    })
+    .filter((item) => item.heroDescendant || item.excludedReason)
+    .slice(0, 10)
+}
+
+function findCanonicalEntityForCandidate(candidate, canonicalEntities) {
+  return (Array.isArray(canonicalEntities) ? canonicalEntities : []).find((entity) => {
+    if (!entity || !candidate) return false
+    if (entity.source !== candidate.source) return false
+    if (Array.isArray(entity.sources) && entity.sources.some((source) => source.sourceId === candidate.sourceId)) return true
+    return false
+  }) || null
+}
+
 function buildHeroSectionTrace(section) {
   return {
     sectionId: section?.sectionId || '',
@@ -2159,7 +2356,7 @@ function buildHeroSectionTrace(section) {
   }
 }
 
-function applyCanonicalQualityMetrics(quality, { heroCtaGroup, heroMediaGroup, canonicalEvidence, comparisonActions, sectionTrace, sections, heroSelection }) {
+function applyCanonicalQualityMetrics(quality, { heroCtaGroup, heroMediaGroup, canonicalEvidence, comparisonActions, sectionTrace, sections, heroSelection, entitySectionTrace }) {
   quality.canonicalActionCount = canonicalEvidence.actions.length
   quality.canonicalNumericCount = canonicalEvidence.numericValues.length
   quality.figmaHeroTextCount = normalizeCount(sectionTrace?.figmaHero?.textCount, 0)
@@ -2178,6 +2375,15 @@ function applyCanonicalQualityMetrics(quality, { heroCtaGroup, heroMediaGroup, c
   quality.webHeroContainsText = heroSelection?.quality?.webHeroContainsText === true
   quality.webHeroContainsAction = heroSelection?.quality?.webHeroContainsAction === true
   quality.webHeroContainsMedia = heroSelection?.quality?.webHeroContainsMedia === true
+  quality.rawFigmaHeroActionCandidateCount = Array.isArray(entitySectionTrace?.figmaHeroActions) ? entitySectionTrace.figmaHeroActions.length : 0
+  quality.resolvedFigmaHeroActionCount = heroCtaGroup.figma.count
+  quality.rejectedFigmaHeroActionCount = Math.max(0, quality.rawFigmaHeroActionCandidateCount - quality.resolvedFigmaHeroActionCount)
+  quality.rawWebHeroMediaCandidateCount = Array.isArray(entitySectionTrace?.webHeroMedia) ? entitySectionTrace.webHeroMedia.length : 0
+  quality.resolvedWebHeroMediaCount = heroMediaGroup.web.candidateCount
+  quality.duplicateHeroActionMergedCount = Math.max(0,
+    quality.rawFigmaHeroActionCandidateCount + (Array.isArray(entitySectionTrace?.webHeroActions) ? entitySectionTrace.webHeroActions.length : 0)
+      - (heroCtaGroup.figma.count + heroCtaGroup.web.count))
+  quality.duplicateHeroNumericMergedCount = canonicalEvidence.numericValues.filter((item) => item.comparisonScope === 'primary' && Array.isArray(item.sources) && item.sources.length > 1).length
   quality.unassignedCanonicalEntityCount = normalizeCount(sectionTrace?.unassignedEntityCount, 0)
   quality.multiAssignedCanonicalEntityCount = normalizeCount(sectionTrace?.multiAssignedEntityCount, 0)
   quality.comparisonActionCount = Array.isArray(comparisonActions) ? comparisonActions.length : 0
@@ -2187,10 +2393,54 @@ function applyCanonicalQualityMetrics(quality, { heroCtaGroup, heroMediaGroup, c
     && quality.canonicalNumericCount === canonicalEvidence.numericValues.length
   quality.sourceHeroCountConsistencyPassed = sections.filter((item) => item.source === 'figma' && item.role === 'hero').length === 1
     && sections.filter((item) => item.source === 'web' && item.role === 'hero').length === 1
+  quality.heroActionResolutionPassed = heroCtaGroup.figma.count >= 1 && heroCtaGroup.web.count >= 1
+  quality.heroMediaResolutionPassed = heroMediaGroup.figma.candidateCount >= 1 && heroMediaGroup.web.candidateCount >= 1
 }
 
 function normalizeSelector(value) {
   return normalizeString(value).replace(/:nth-of-type\(\d+\)/g, '')
+}
+
+function createSelectorSignature(selector) {
+  const normalized = normalizeString(selector)
+    .replace(/[?#].*$/, '')
+    .replace(/\s*>\s*/g, ' > ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!normalized) return ''
+  const segments = normalized.includes('>')
+    ? normalized.split('>').map((item) => item.trim()).filter(Boolean)
+    : normalized.split(/\s+/).map((item) => item.trim()).filter(Boolean)
+  return segments
+    .slice(-5)
+    .map(normalizeSelectorSegment)
+    .join(' > ')
+}
+
+function normalizeSelectorSegment(segment) {
+  const normalized = normalizeString(segment).replace(/:nth-of-type\((\d+)\)/g, ':nth($1)')
+  if (!normalized) return ''
+  const tagMatch = normalized.match(/^[a-z0-9_-]+/i)
+  const tag = tagMatch ? tagMatch[0].toLowerCase() : ''
+  const idMatches = normalized.match(/#[a-z0-9_-]+/gi) || []
+  const classMatches = (normalized.match(/\.[a-z0-9_-]+/gi) || []).map((item) => item.toLowerCase()).sort()
+  const attrMatches = normalized.match(/\[[^\]]+\]/g) || []
+  const nthMatches = normalized.match(/:nth\(\d+\)/g) || []
+  return uniqueStrings([tag, ...idMatches.map((item) => item.toLowerCase()), ...classMatches, ...attrMatches, ...nthMatches]).join('')
+}
+
+function hasEquivalentSelectorSignature(firstSignature, secondSignature) {
+  const first = splitSelectorSignature(firstSignature)
+  const second = splitSelectorSignature(secondSignature)
+  if (first.length === 0 || second.length === 0) return false
+  if (first.join(' > ') === second.join(' > ')) return true
+  const tailLength = Math.min(first.length, second.length, 3)
+  if (tailLength < 2) return false
+  return first.slice(-tailLength).join(' > ') === second.slice(-tailLength).join(' > ')
+}
+
+function splitSelectorSignature(signature) {
+  return normalizeString(signature).split('>').map((item) => item.trim()).filter(Boolean)
 }
 
 function normalizeComparableSectionPath(value) {
@@ -2317,8 +2567,11 @@ function normalizeWebTextCandidates(textNodes) {
         reasons,
         section,
         context,
+        contextPath: truncateText(node?.domPath || node?.selector || '', 220),
         selector: truncateText(node?.selector || '', 180),
         parentContext: truncateText(node?.parentSelector || node?.domPath || '', 160),
+        parentSelector: truncateText(node?.parentSelector || '', 160),
+        selectorSignature: createSelectorSignature(node?.selector || node?.domPath || ''),
         yRatio: normalizeNumber(node?.yRatio),
         xRatio: normalizeNumber(node?.xRatio),
         widthRatio: normalizeNumber(node?.widthRatio),
@@ -2348,7 +2601,10 @@ function normalizeWebHintCandidate(item, fallbackType) {
     href: normalizeString(item?.href),
     selector: truncateText(item?.selector || '', 180),
     context: truncateText(item?.context || item?.selector || item?.layerPath || '', 180),
+    contextPath: truncateText(item?.domPath || item?.context || item?.selector || '', 220),
     parentContext: truncateText(item?.parentContext || item?.parentSelector || item?.domPath || '', 160),
+    parentSelector: truncateText(item?.parentSelector || '', 160),
+    selectorSignature: createSelectorSignature(item?.selector || item?.domPath || ''),
     section: normalizeString(item?.section || item?.area) || 'unknown',
     confidence: normalizeConfidence(item?.confidence),
     reasons: Array.isArray(item?.reasons) ? item.reasons.map((reason) => truncateText(reason, 120)) : [],
@@ -2367,11 +2623,12 @@ function normalizeWebHintCandidate(item, fallbackType) {
     ariaHidden: item?.ariaHidden === true || normalizeString(item?.ariaHidden).toLowerCase() === 'true',
     parentId: normalizeString(item?.parentId),
     layerPath: truncateText(item?.layerPath || '', 180),
-    parentSelector: truncateText(item?.parentSelector || '', 160),
     inputType: normalizeString(item?.inputType || item?.typeAttribute),
     isDuplicate: item?.isDuplicate === true,
     isActive: typeof item?.isActive === 'boolean' ? item.isActive : null,
     isCurrent: typeof item?.isCurrent === 'boolean' ? item.isCurrent : (normalizeString(item?.ariaCurrent).toLowerCase() === 'true' ? true : null),
+    autoplay: item?.autoplay === true,
+    controls: item?.controls === true,
   }
 }
 
@@ -2444,7 +2701,12 @@ function buildFigmaInteractionEvidence(node, childMap) {
   if (['INSTANCE', 'COMPONENT', 'FRAME'].includes(normalizeString(node?.type)) && Number(node?.widthRatio) >= 0.05 && Number(node?.heightRatio) >= 0.02) evidence.push('button-sized container')
   if (node?.hasSolidFill || Array.isArray(node?.strokes) && node.strokes.length > 0 || Number(node?.cornerRadius) > 0) evidence.push('shape-backed control')
   const siblings = childMap.get(normalizeString(node?.parentId)) || []
-  if (siblings.filter((item) => isSemanticFigmaInteractiveNode(item, childMap)).length >= 2) evidence.push('repeated sibling action component')
+  const repeatedSiblingCount = siblings.filter((item) => {
+    const searchable = `${item?.name || ''} ${item?.layerPath || ''}`.toLowerCase()
+    return ['INSTANCE', 'COMPONENT', 'FRAME'].includes(normalizeString(item?.type))
+      && (item?.isInteractiveCandidate === true || /button|btn|cta|action|link/.test(searchable))
+  }).length
+  if (repeatedSiblingCount >= 2) evidence.push('repeated sibling action component')
   return uniqueStrings(evidence)
 }
 
@@ -2527,10 +2789,15 @@ function isSemanticFigmaInteractiveNode(node, childMap, flatNodes, quality) {
   if (!['FRAME', 'INSTANCE', 'COMPONENT'].includes(type)) return false
   const searchable = `${node?.name || ''} ${node?.layerPath || ''}`.toLowerCase()
   const descendantTexts = getFigmaDescendantTexts(node, flatNodes)
+  const interactionEvidence = buildFigmaInteractionEvidence(node, childMap)
   const compactActionLabel = descendantTexts.length > 0 && descendantTexts.every(isCompactActionLabel)
   const hasInteraction = node?.isInteractiveCandidate === true
   const looksButtonLike = /button|btn|cta|action|link/.test(searchable)
-  const hasButtonStructure = looksButtonLike && compactActionLabel && (node?.hasSolidFill || Number(node?.cornerRadius) > 0 || Array.isArray(node?.strokes) && node.strokes.length > 0)
+  const hasButtonStructure = compactActionLabel
+    && (looksButtonLike
+      || interactionEvidence.includes('button-sized container')
+      || interactionEvidence.includes('shape-backed control')
+      || interactionEvidence.includes('repeated sibling action component'))
   if (!hasInteraction && !hasButtonStructure) return false
   if (shouldRejectFigmaActionNode(node, descendantTexts, childMap)) {
     if (quality) quality.oversizedFigmaActionRejectedCount += 1
@@ -2699,13 +2966,23 @@ function shouldRejectFigmaActionNode(node, descendantTexts, childMap) {
   const longTextCount = descendantTexts.filter((text) => !isCompactActionLabel(text)).length
   const sentenceLikeCount = descendantTexts.filter((text) => /[.!?]|\s{2,}|[,;:]|다$|요$/.test(text) || text.length > 28).length
   const hasMixedContent = children.some((child) => child?.hasImageFill || child?.hasVideoLikeContent) && descendantTexts.length > 0
+  const rootHasMixedContent = (node?.hasImageFill || node?.hasVideoLikeContent) && descendantTexts.length > 0
   const isLarge = widthRatio > 0.35 || heightRatio > 0.05 || width >= 640 || height >= 120
   const isRootLargeSection = !normalizeString(node?.parentId) && (widthRatio > 0.35 || heightRatio > 0.12 || children.length >= 3)
   const isSectionLike = children.length >= 4 || descendantTexts.length >= 3 || hasMixedContent
+  const actionLikeChildren = children.filter((child) => {
+    const type = normalizeString(child?.type)
+    if (!['FRAME', 'INSTANCE', 'COMPONENT'].includes(type)) return false
+    const childSearchable = `${child?.name || ''} ${child?.layerPath || ''}`.toLowerCase()
+    return child?.isInteractiveCandidate === true || /button|btn|cta|action|link/.test(childSearchable)
+  }).length
   const isFooterOrNavigation = /footer|nav|navigation|header|menu|legal/.test(searchable)
   const isHeadingGroup = /title|heading|hero\s*title/.test(searchable) && descendantTexts.length > 0
+  const isActionWrapper = actionLikeChildren >= 2 && descendantTexts.length >= 2 && !normalizeString(node?.characters)
   if (isFooterOrNavigation) return true
   if (isRootLargeSection) return true
+  if (isActionWrapper) return true
+  if (rootHasMixedContent) return true
   if (isLarge && isSectionLike) return true
   if (longTextCount > 0 || sentenceLikeCount > 0) return true
   if (isHeadingGroup) return true
@@ -2935,6 +3212,29 @@ function hasSimilarXAxis(firstXRatio, secondXRatio) {
   const second = normalizeNumber(secondXRatio)
   if (!Number.isFinite(first) || !Number.isFinite(second)) return false
   return Math.abs(first - second) <= SIMILAR_X_RATIO_THRESHOLD
+}
+
+function hasSimilarSize(firstWidthRatio, secondWidthRatio, firstHeightRatio, secondHeightRatio, firstWidth, secondWidth, firstHeight, secondHeight) {
+  const widthRatioA = normalizeNumber(firstWidthRatio)
+  const widthRatioB = normalizeNumber(secondWidthRatio)
+  const heightRatioA = normalizeNumber(firstHeightRatio)
+  const heightRatioB = normalizeNumber(secondHeightRatio)
+  if (Number.isFinite(widthRatioA) && Number.isFinite(widthRatioB) && Math.abs(widthRatioA - widthRatioB) <= 0.06
+    && Number.isFinite(heightRatioA) && Number.isFinite(heightRatioB) && Math.abs(heightRatioA - heightRatioB) <= 0.04) return true
+  const widthA = normalizeNumber(firstWidth)
+  const widthB = normalizeNumber(secondWidth)
+  const heightA = normalizeNumber(firstHeight)
+  const heightB = normalizeNumber(secondHeight)
+  if (Number.isFinite(widthA) && Number.isFinite(widthB) && Math.abs(widthA - widthB) <= Math.max(40, Math.min(widthA, widthB) * 0.15)
+    && Number.isFinite(heightA) && Number.isFinite(heightB) && Math.abs(heightA - heightB) <= Math.max(24, Math.min(heightA, heightB) * 0.2)) return true
+  return false
+}
+
+function isSameNumericContext(entity, candidate) {
+  const sameSection = normalizeComparableSectionPath(entity.sectionPath) === normalizeComparableSectionPath(candidate.sectionPath)
+  const sameSelectorSignature = hasEquivalentSelectorSignature(entity.selectorSignature, candidate.selectorSignature)
+  const sameParentSelector = normalizeString(entity.parentSelector) && normalizeString(entity.parentSelector) === normalizeString(candidate.parentSelector)
+  return sameSection || sameSelectorSignature || sameParentSelector
 }
 
 function isSameCandidateFamily(first, second) {

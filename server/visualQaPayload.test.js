@@ -572,3 +572,128 @@ test('leaf hero descendants do not each create separate section entities', () =>
   assert.equal(webSections.some((item) => /\.hero h2|\.hero p|\.hero video|\.hero a\.primary/.test(item.path)), false)
   assert.equal(webSections.length <= 2, true)
 })
+
+test('hero-root descendant figma button instances resolve to hero actions while wrapper is excluded', () => {
+  const { payload, payloadQuality, debugArtifacts } = buildVisualQaPayloadArtifacts(createBaseInput({
+    figmaAnalysis: {
+      textNodes: [
+        createFigmaTextNode({ nodeId: 'hero-title', layerPath: 'Page / Hero / Title', parentFrameName: 'Hero', characters: 'Hero Title' }),
+      ],
+      flatNodes: [
+        createFigmaFlatNode({ id: 'page-root', nodeId: 'page-root', name: 'Page', type: 'FRAME', layerPath: 'Page', widthRatio: 0.96, heightRatio: 0.96, absoluteBoundingBox: { width: 1440, height: 4200 } }),
+        createFigmaFlatNode({ id: 'hero-root', nodeId: 'hero-root', name: 'Main_visual', type: 'FRAME', layerPath: 'Page / Hero', parentId: 'page-root', widthRatio: 0.92, heightRatio: 0.34, yRatio: 0.03, absoluteBoundingBox: { width: 1400, height: 720 }, hasImageFill: true }),
+        createFigmaFlatNode({ id: 'btn-wrap', nodeId: 'btn-wrap', name: 'btn', type: 'FRAME', layerPath: 'Page / Hero / CTA Wrap', parentId: 'hero-root', widthRatio: 0.32, heightRatio: 0.08, yRatio: 0.16 }),
+        createFigmaFlatNode({ id: 'btn-a', nodeId: 'btn-a', name: 'Button', type: 'INSTANCE', layerPath: 'Page / Hero / CTA Wrap / Primary Button', parentId: 'btn-wrap', widthRatio: 0.15, heightRatio: 0.04, isInteractiveCandidate: true, hasSolidFill: true, cornerRadius: 12 }),
+        createFigmaFlatNode({ id: 'btn-a-label', nodeId: 'btn-a-label', name: 'Label', type: 'TEXT', layerPath: 'Page / Hero / CTA Wrap / Primary Button / Label', parentId: 'btn-a', characters: '프로모션 바로가기' }),
+        createFigmaFlatNode({ id: 'btn-b', nodeId: 'btn-b', name: 'Button', type: 'INSTANCE', layerPath: 'Page / Hero / CTA Wrap / Secondary Button', parentId: 'btn-wrap', widthRatio: 0.15, heightRatio: 0.04, isInteractiveCandidate: true, hasSolidFill: true, cornerRadius: 12, xRatio: 0.28 }),
+        createFigmaFlatNode({ id: 'btn-b-label', nodeId: 'btn-b-label', name: 'Label', type: 'TEXT', layerPath: 'Page / Hero / CTA Wrap / Secondary Button / Label', parentId: 'btn-b', characters: '온라인 구매 상담' }),
+      ],
+    },
+    webAnalysis: {
+      textNodes: [createWebTextNode({ text: 'Hero Title', selector: '.hero h2', parentSelector: '.hero', role: 'heading', tagName: 'h2', sectionHint: 'hero' })],
+      ctaCandidates: [createWebCtaCandidate({ text: 'Hero Action', selector: '.hero a.primary', parentContext: '.hero .actions', href: '/hero', section: 'hero', yRatio: 0.12, xRatio: 0.1 })],
+      videoCandidates: [{ type: 'video', source: 'web', sourceId: 'hero-video', text: 'Hero Video', selector: '.hero video', parentContext: '.hero', parentSelector: '.hero', section: 'hero', confidence: 'high', reasons: ['video element'], width: 1600, height: 900, yRatio: 0.05 }],
+    },
+  }))
+
+  const figmaActions = payload.aiHints.canonicalEvidence.actions.filter((item) => item.source === 'figma')
+  assert.equal(figmaActions.length, 2)
+  assert.equal(figmaActions.every((item) => item.sectionId === payload.aiHints.heroSection.figmaSectionId), true)
+  assert.equal(figmaActions.some((item) => item.text === '프로모션 바로가기'), true)
+  assert.equal(figmaActions.some((item) => item.text === '온라인 구매 상담'), true)
+  assert.equal(payload.aiHints.heroCtaGroup.figma.count, 2)
+  assert.equal(debugArtifacts.entitySectionTrace.figmaHeroActions.length >= 2, true)
+  assert.equal(payloadQuality.rawFigmaHeroActionCandidateCount >= 2, true)
+  assert.equal(payloadQuality.resolvedFigmaHeroActionCount, 2)
+  assert.equal(payloadQuality.heroActionResolutionPassed, true)
+})
+
+test('oversized parent wrapper does not suppress child figma hero buttons', () => {
+  const { payload } = buildVisualQaPayloadArtifacts(createBaseInput({
+    figmaAnalysis: {
+      textNodes: [],
+      flatNodes: [
+        createFigmaFlatNode({ id: 'page-root', nodeId: 'page-root', name: 'Page', type: 'FRAME', layerPath: 'Page', widthRatio: 0.96, heightRatio: 0.96, absoluteBoundingBox: { width: 1440, height: 4200 } }),
+        createFigmaFlatNode({ id: 'hero-root', nodeId: 'hero-root', name: 'Main_visual', type: 'FRAME', layerPath: 'Page / Hero', parentId: 'page-root', widthRatio: 0.92, heightRatio: 0.34, yRatio: 0.03, absoluteBoundingBox: { width: 1400, height: 720 }, hasImageFill: true }),
+        createFigmaFlatNode({ id: 'huge-wrap', nodeId: 'huge-wrap', name: 'CTA Wrap', type: 'FRAME', layerPath: 'Page / Hero / CTA Wrap', parentId: 'hero-root', widthRatio: 0.7, heightRatio: 0.16, absoluteBoundingBox: { width: 1100, height: 220 }, isInteractiveCandidate: true }),
+        createFigmaFlatNode({ id: 'btn-a', nodeId: 'btn-a', name: 'Button', type: 'INSTANCE', layerPath: 'Page / Hero / CTA Wrap / Button', parentId: 'huge-wrap', widthRatio: 0.16, heightRatio: 0.04, absoluteBoundingBox: { width: 280, height: 64 }, isInteractiveCandidate: true, hasSolidFill: true }),
+        createFigmaFlatNode({ id: 'btn-a-label', nodeId: 'btn-a-label', name: 'Label', type: 'TEXT', layerPath: 'Page / Hero / CTA Wrap / Button / Label', parentId: 'btn-a', characters: '신청하기' }),
+      ],
+    },
+    webAnalysis: { textNodes: [] },
+  }))
+
+  assert.equal(payload.aiHints.canonicalEvidence.actions.filter((item) => item.source === 'figma').length, 1)
+})
+
+test('web video parent selector descendant resolves into hero media and trace', () => {
+  const { payload, payloadQuality, debugArtifacts } = buildVisualQaPayloadArtifacts(createBaseInput({
+    figmaAnalysis: {
+      textNodes: [createFigmaTextNode({ characters: 'Hero Title', layerPath: 'Page / Hero / Title', parentFrameName: 'Hero' })],
+      flatNodes: [createFigmaFlatNode({ id: 'hero-root', nodeId: 'hero-root', name: 'Hero', type: 'FRAME', layerPath: 'Page / Hero', widthRatio: 0.92, heightRatio: 0.34, hasImageFill: true })],
+    },
+    webAnalysis: {
+      textNodes: [createWebTextNode({ text: 'Hero Title', selector: 'div.main_visual.active div.txt h2', parentSelector: 'div.main_visual.active div.txt', domPath: 'body > main > div.main_visual.active > div.txt > h2', role: 'heading', tagName: 'h2', sectionHint: 'hero' })],
+      ctaCandidates: [createWebCtaCandidate({ text: 'Hero Action', selector: 'div.main_visual.active div.btn_wrap a.primary', parentContext: 'div.main_visual.active div.btn_wrap', parentSelector: 'div.main_visual.active div.btn_wrap', href: '/hero', section: 'hero', yRatio: 0.12, xRatio: 0.1 })],
+      videoCandidates: [{ type: 'video', source: 'web', sourceId: 'hero-video', text: 'Hero Video', selector: 'div.main_visual.active video', parentContext: 'div.main_visual.active', parentSelector: 'div.main_visual.active', contextPath: 'body > main > div.main_visual.active > video', section: 'hero', confidence: 'high', reasons: ['video element'], width: 1600, height: 900, xRatio: 0.02, yRatio: 0.05, widthRatio: 0.83, heightRatio: 0.22 }],
+    },
+  }))
+
+  assert.equal(payload.aiHints.heroMediaGroup.web.candidateCount, 1)
+  assert.equal(payload.aiHints.heroMediaGroup.web.mediaTypes.includes('video'), true)
+  assert.equal(payloadQuality.resolvedWebHeroMediaCount, 1)
+  assert.equal(payloadQuality.heroMediaResolutionPassed, true)
+  assert.equal(debugArtifacts.webVideoTrace[0].heroDescendant, true)
+})
+
+test('web selector signature merges full and short selector hero CTAs into one canonical action', () => {
+  const { payload, payloadQuality } = buildVisualQaPayloadArtifacts(createBaseInput({
+    figmaAnalysis: { textNodes: [] },
+    webAnalysis: {
+      textNodes: [createWebTextNode({ text: 'Hero Title', selector: '.hero h2', parentSelector: '.hero', role: 'heading', tagName: 'h2', sectionHint: 'hero' })],
+      ctaCandidates: [
+        createWebCtaCandidate({ sourceId: 'cta-long', text: '프로모션 바로가기', selector: 'body > main > div.container > section.hero > div.btn_wrap > a.btn.primary', parentContext: 'body > main > div.container > section.hero > div.btn_wrap', parentSelector: 'section.hero > div.btn_wrap', href: '/promo', section: 'hero', yRatio: 0.12, xRatio: 0.1, widthRatio: 0.14, heightRatio: 0.04 }),
+        createWebCtaCandidate({ sourceId: 'cta-short', text: '프로모션 바로가기', selector: 'section.hero > div.btn_wrap > a.btn.primary', parentContext: 'section.hero > div.btn_wrap', parentSelector: 'section.hero > div.btn_wrap', href: '/promo', section: 'hero', yRatio: 0.121, xRatio: 0.1, widthRatio: 0.14, heightRatio: 0.04 }),
+      ],
+      imageCandidates: [{ type: 'image', source: 'web', sourceId: 'hero-img', selector: '.hero img', parentContext: '.hero', parentSelector: '.hero', section: 'hero', alt: 'Hero', loaded: true, naturalWidth: 1200, naturalHeight: 700 }],
+    },
+  }))
+
+  const heroActions = payload.aiHints.canonicalEvidence.actions.filter((item) => item.source === 'web' && item.text === '프로모션 바로가기')
+  assert.equal(heroActions.length, 1)
+  assert.equal(heroActions[0].sources.length, 2)
+  assert.equal(payloadQuality.webSelectorSignatureMergedCount >= 1, true)
+})
+
+test('same text and href in different positions remain separate web actions', () => {
+  const { payload } = buildVisualQaPayloadArtifacts(createBaseInput({
+    figmaAnalysis: { textNodes: [] },
+    webAnalysis: {
+      textNodes: [createWebTextNode({ text: 'Hero Title', selector: '.hero h2', parentSelector: '.hero', role: 'heading', tagName: 'h2', sectionHint: 'hero' })],
+      ctaCandidates: [
+        createWebCtaCandidate({ sourceId: 'hero-cta-a', text: '온라인 구매 상담', selector: 'section.hero > div.btn_wrap > a.btn', parentContext: 'section.hero > div.btn_wrap', parentSelector: 'section.hero > div.btn_wrap', href: '/consult', section: 'hero', yRatio: 0.12, xRatio: 0.1 }),
+        createWebCtaCandidate({ sourceId: 'content-cta-b', text: '온라인 구매 상담', selector: 'section.offer > div.btn_wrap > a.btn', parentContext: 'section.offer > div.btn_wrap', parentSelector: 'section.offer > div.btn_wrap', href: '/consult', section: 'content', yRatio: 0.42, xRatio: 0.1 }),
+      ],
+      imageCandidates: [{ type: 'image', source: 'web', sourceId: 'hero-img', selector: '.hero img', parentContext: '.hero', parentSelector: '.hero', section: 'hero', alt: 'Hero', loaded: true, naturalWidth: 1200, naturalHeight: 700 }],
+    },
+  }))
+
+  assert.equal(payload.aiHints.canonicalEvidence.actions.filter((item) => item.text === '온라인 구매 상담').length, 2)
+})
+
+test('hero numeric duplicates merge and active slide remains preferred', () => {
+  const { payload, payloadQuality } = buildVisualQaPayloadArtifacts(createBaseInput({
+    figmaAnalysis: { textNodes: [] },
+    webAnalysis: {
+      textNodes: [
+        createWebTextNode({ id: 'hero-card-price', text: 'BMW 뉴 iX, 월 50만원.', rawText: 'BMW 뉴 iX, 월 50만원.', selector: '.swiper-slide-active .card', parentSelector: '.swiper-slide-active', role: 'body', tagName: 'div', sectionHint: 'content', yRatio: 0.41, xRatio: 0.2 }),
+        createWebTextNode({ id: 'hero-card-price-child', text: 'BMW 뉴 iX, 월 50만원.', rawText: 'BMW 뉴 iX, 월 50만원.', selector: '.swiper-slide-active .card p.price', parentSelector: '.swiper-slide-active .card', role: 'body', tagName: 'p', sectionHint: 'content', yRatio: 0.415, xRatio: 0.21 }),
+        createWebTextNode({ id: 'dup-slide-price', text: 'BMW 뉴 iX, 월 50만원.', rawText: 'BMW 뉴 iX, 월 50만원.', selector: '.swiper-slide-duplicate .card p.price', parentSelector: '.swiper-slide-duplicate .card', role: 'body', tagName: 'p', sectionHint: 'content', yRatio: 0.415, xRatio: 0.21 }),
+      ],
+    },
+  }))
+
+  assert.equal(payload.aiHints.prices.length, 1)
+  assert.equal(payload.aiHints.prices[0].sources.length, 2)
+  assert.equal(payloadQuality.duplicateNumericMergedCount >= 1, true)
+})

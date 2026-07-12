@@ -141,6 +141,9 @@ export async function buildVisualPayloadResponse(input, dependencies) {
       webVideoPipelineTrace: artifacts.debugArtifacts?.webVideoPipelineTrace || null,
       entitySectionTrace: artifacts.debugArtifacts?.entitySectionTrace || null,
       webVideoTrace: artifacts.debugArtifacts?.webVideoTrace || null,
+      heroActionResolution: artifacts.debugArtifacts?.heroActionResolution || null,
+      heroMediaResolution: artifacts.debugArtifacts?.heroMediaResolution || null,
+      canonicalMergeTrace: artifacts.debugArtifacts?.canonicalMergeTrace || null,
       imageValidation,
     })
   }
@@ -148,7 +151,7 @@ export async function buildVisualPayloadResponse(input, dependencies) {
   return response
 }
 
-function createDebugPayload({ figmaResult, figmaRender, webAnalysis, textComparison, timings, payloadQuality, sectionTrace, heroCandidateTrace, figmaActionInputTrace, webVideoPipelineTrace, entitySectionTrace, webVideoTrace, imageValidation }) {
+function createDebugPayload({ figmaResult, figmaRender, webAnalysis, textComparison, timings, payloadQuality, sectionTrace, heroCandidateTrace, figmaActionInputTrace, webVideoPipelineTrace, entitySectionTrace, webVideoTrace, heroActionResolution, heroMediaResolution, canonicalMergeTrace, imageValidation }) {
   return {
     counts: {
       figmaTextNodes: Array.isArray(figmaResult.textNodes) ? figmaResult.textNodes.length : 0,
@@ -177,11 +180,94 @@ function createDebugPayload({ figmaResult, figmaRender, webAnalysis, textCompari
     sectionTrace,
     heroCandidateTrace,
     figmaActionInputTrace,
+    actionPipelineTrace: figmaActionInputTrace ? artifactsDebugActionPipelineTrace(heroActionResolution) : null,
+    figmaActionTrace: figmaActionInputTrace ? artifactsDebugFigmaActionTrace(figmaActionInputTrace) : null,
     webVideoPipelineTrace,
     entitySectionTrace,
     webVideoTrace,
+    heroActionResolution,
+    heroMediaResolution,
+    canonicalMergeTrace,
+    ctaMergeTrace: artifactsDebugCtaMergeTrace(canonicalMergeTrace),
+    numericMergeTrace: artifactsDebugNumericMergeTrace(canonicalMergeTrace),
     payloadQuality,
   }
+}
+
+function artifactsDebugActionPipelineTrace(heroActionResolution) {
+  const trace = heroActionResolution || {}
+  return {
+    stage1RawCandidates: {
+      count: Number(trace.stage1RawCandidates || 0),
+      candidateIds: Array.isArray(trace.stage1CandidateIds) ? trace.stage1CandidateIds : [],
+    },
+    stage2Rejected: {
+      count: Number(trace.stage2Rejected || 0),
+      candidateIds: Array.isArray(trace.stage2RejectedIds) ? trace.stage2RejectedIds : [],
+    },
+    stage3Canonical: {
+      count: Number(trace.stage3Canonical || 0),
+      candidateIds: Array.isArray(trace.stage3CanonicalIds) ? trace.stage3CanonicalIds : [],
+    },
+    stage4HeroResolved: {
+      count: Number(trace.stage4HeroResolved || 0),
+      candidateIds: Array.isArray(trace.stage4HeroResolvedIds) ? trace.stage4HeroResolvedIds : [],
+    },
+    stage5HeroGroup: {
+      count: Number(trace.stage5HeroGroup || 0),
+      candidateIds: Array.isArray(trace.stage5HeroGroupIds) ? trace.stage5HeroGroupIds : [],
+    },
+  }
+}
+
+function artifactsDebugFigmaActionTrace(figmaActionInputTrace) {
+  return Array.isArray(figmaActionInputTrace?.nodes) ? figmaActionInputTrace.nodes.map((node) => ({
+    id: node.id || '',
+    parentId: node.parentId || '',
+    layerPath: node.layerPath || '',
+    nodeType: node.type || '',
+    isInteractiveCandidate: node.isInteractiveCandidate === true,
+    interactionSummary: {
+      hasPrototypeInteractions: node.hasPrototypeInteractions === true,
+      hasReactions: node.hasReactions === true,
+    },
+    descendantTexts: Array.isArray(node.descendantTextPreview) ? node.descendantTextPreview : [],
+    rejectionReasons: Array.isArray(node.rejectionReasons) ? node.rejectionReasons : [],
+    selectedStage: node.candidateCreated ? 'raw-candidate' : 'rejected',
+    heroAncestorMatched: true,
+    heroRootId: figmaActionInputTrace?.heroRootId || '',
+  })) : []
+}
+
+function artifactsDebugCtaMergeTrace(canonicalMergeTrace) {
+  return Array.isArray(canonicalMergeTrace?.actionPairs) ? canonicalMergeTrace.actionPairs.map((pair) => ({
+    leftId: pair.existingEntityId || '',
+    rightId: pair.incomingSourceId || '',
+    sameText: pair.sameText === true,
+    sameHref: pair.sameHref === true,
+    sameSelectorSignature: pair.sameSelectorSignature === true,
+    samePosition: pair.samePosition === true,
+    sameSection: pair.sameSection === true,
+    merged: pair.merged === true,
+    reason: pair.reason || '',
+    finalRepresentativeId: pair.merged ? (pair.existingEntityId || '') : '',
+  })) : []
+}
+
+function artifactsDebugNumericMergeTrace(canonicalMergeTrace) {
+  return Array.isArray(canonicalMergeTrace?.numericPairs) ? canonicalMergeTrace.numericPairs.map((pair) => ({
+    leftId: pair.existingEntityId || '',
+    rightId: pair.incomingSourceId || '',
+    sameNumericType: pair.sameNumericType === true,
+    sameDisplayText: pair.sameDisplayText === true,
+    sameTokens: pair.sameTokens === true,
+    sameUnits: pair.sameUnits === true,
+    sameContext: pair.sameContext === true,
+    samePosition: pair.samePosition === true,
+    merged: pair.merged === true,
+    reason: pair.reason || '',
+    representativeNumericId: pair.merged ? (pair.existingEntityId || '') : '',
+  })) : []
 }
 
 function normalizeTimingMetrics(timings) {

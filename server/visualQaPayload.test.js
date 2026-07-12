@@ -597,11 +597,23 @@ test('hero-root descendant figma button instances resolve to hero actions while 
   }))
 
   const figmaActions = payload.aiHints.canonicalEvidence.actions.filter((item) => item.source === 'figma')
+  const wrapperTrace = debugArtifacts.figmaActionInputTrace.nodes.find((item) => item.id === 'btn-wrap')
+  const primaryTrace = debugArtifacts.figmaActionInputTrace.nodes.find((item) => item.id === 'btn-a')
+  const secondaryTrace = debugArtifacts.figmaActionInputTrace.nodes.find((item) => item.id === 'btn-b')
+
   assert.equal(figmaActions.length, 2)
   assert.equal(figmaActions.every((item) => item.sectionId === payload.aiHints.heroSection.figmaSectionId), true)
   assert.equal(figmaActions.some((item) => item.text === '프로모션 바로가기'), true)
   assert.equal(figmaActions.some((item) => item.text === '온라인 구매 상담'), true)
   assert.equal(payload.aiHints.heroCtaGroup.figma.count, 2)
+  assert.deepEqual(wrapperTrace.descendantTextPreview.sort(), ['온라인 구매 상담', '프로모션 바로가기'].sort())
+  assert.deepEqual(primaryTrace.descendantTextPreview, ['프로모션 바로가기'])
+  assert.deepEqual(secondaryTrace.descendantTextPreview, ['온라인 구매 상담'])
+  assert.equal(primaryTrace.subtreeTextIsolationPassed, true)
+  assert.equal(secondaryTrace.subtreeTextIsolationPassed, true)
+  assert.deepEqual(primaryTrace.rejectionReasons, [])
+  assert.deepEqual(secondaryTrace.rejectionReasons, [])
+  assert.equal(wrapperTrace.rejectionReasons.includes('section-wrapper'), true)
   assert.equal(debugArtifacts.figmaActionInputTrace.heroDescendantNodeCount >= 5, true)
   assert.equal(debugArtifacts.figmaActionInputTrace.buttonLikeNodeCount >= 3, true)
   assert.equal(debugArtifacts.figmaActionInputTrace.rawActionCandidateCount, 2)
@@ -615,6 +627,8 @@ test('hero-root descendant figma button instances resolve to hero actions while 
   assert.equal(payloadQuality.rawFigmaHeroActionCandidateCount >= 2, true)
   assert.equal(payloadQuality.resolvedFigmaHeroActionCount, 2)
   assert.equal(payloadQuality.heroActionResolutionPassed, true)
+  assert.equal(debugArtifacts.heroActionResolution.stage1RawCandidates >= 2, true)
+  assert.equal(Array.isArray(debugArtifacts.canonicalMergeTrace.actionPairs), true)
 })
 
 test('oversized parent wrapper does not suppress child figma hero buttons', () => {
@@ -662,6 +676,7 @@ test('web video parent selector descendant resolves into hero media and trace', 
   assert.equal(payloadQuality.resolvedWebHeroMediaCount, 1)
   assert.equal(payloadQuality.heroMediaResolutionPassed, true)
   assert.equal(debugArtifacts.webVideoTrace[0].heroDescendant, true)
+  assert.equal(debugArtifacts.heroMediaResolution.stage2Canonical >= 1, true)
 })
 
 test('web selector signature merges full and short selector hero CTAs into one canonical action', () => {

@@ -82,6 +82,7 @@ export function normalizeFigmaNode(node, context = {}) {
   const absoluteBoundingBox = getFigmaBoundingBox(node)
   const relativeBoundingBox = getRelativeBoundingBox(absoluteBoundingBox, rootBoundingBox)
   const paints = getFigmaMediaSummary(node)
+  const interactionSummary = createFigmaInteractionSummary(node)
   const selfHidden = node?.visible === false
   const ancestorHidden = Boolean(context.ancestorHidden)
   const effectivelyVisible = !selfHidden && !ancestorHidden
@@ -134,6 +135,21 @@ export function normalizeFigmaNode(node, context = {}) {
     hasSolidFill: paints.hasSolidFill,
     hasVideoLikeContent: detectVideoLikeContent(node),
     isInteractiveCandidate: isInteractiveFigmaNode(node),
+    interactionSummary,
+    prototypeInteractionCount: interactionSummary.prototypeInteractionCount,
+    reactionCount: interactionSummary.reactionCount,
+    hasPrototypeInteractions: interactionSummary.prototypeInteractionCount > 0,
+    hasReactions: interactionSummary.reactionCount > 0,
+    hasTransitionTarget: interactionSummary.hasTransitionTarget,
+    transitionNodeId: interactionSummary.transitionNodeId,
+    hasComponentPropertyReferences: interactionSummary.hasComponentPropertyReferences,
+    componentPropertyReferenceCount: interactionSummary.componentPropertyReferenceCount,
+    hasComponentProperties: interactionSummary.componentPropertyCount > 0,
+    componentPropertyCount: interactionSummary.componentPropertyCount,
+    componentId: interactionSummary.componentId,
+    mainComponentId: interactionSummary.mainComponentId,
+    hasOverrides: interactionSummary.overrideCount > 0,
+    overrideCount: interactionSummary.overrideCount,
     isContainer: childIds.length > 0 || CONTAINER_TYPES.has(normalizeString(node?.type) || ''),
     isVisibleLeaf: false,
     selfHidden,
@@ -373,6 +389,36 @@ function isInteractiveFigmaNode(node) {
   const name = String(node?.name || '').toLowerCase()
   if (['INSTANCE', 'COMPONENT', 'FRAME'].includes(type) && /button|btn|cta|link/.test(name)) return true
   return false
+}
+
+function createFigmaInteractionSummary(node) {
+  const prototypeInteractionCount = Array.isArray(node?.prototypeInteractions) ? node.prototypeInteractions.length : 0
+  const reactionCount = Array.isArray(node?.reactions) ? node.reactions.length : 0
+  const transitionNodeId = normalizeString(node?.transitionNodeID) || normalizeString(node?.transitionNodeId)
+  const componentPropertyReferenceCount = node?.componentPropertyReferences && typeof node.componentPropertyReferences === 'object'
+    ? Object.keys(node.componentPropertyReferences).length
+    : 0
+  const componentPropertyCount = node?.componentProperties && typeof node.componentProperties === 'object'
+    ? Object.keys(node.componentProperties).length
+    : 0
+  const componentId = normalizeString(node?.componentId)
+  const mainComponentId = normalizeString(node?.mainComponent?.id || node?.mainComponent?.nodeId)
+  const overrideCount = Array.isArray(node?.overrides)
+    ? node.overrides.length
+    : (node?.overrides && typeof node.overrides === 'object' ? Object.keys(node.overrides).length : 0)
+
+  return {
+    prototypeInteractionCount,
+    reactionCount,
+    hasTransitionTarget: Boolean(transitionNodeId),
+    transitionNodeId,
+    hasComponentPropertyReferences: componentPropertyReferenceCount > 0,
+    componentPropertyReferenceCount,
+    componentPropertyCount,
+    componentId: componentId || null,
+    mainComponentId: mainComponentId || null,
+    overrideCount,
+  }
 }
 
 function detectVideoLikeContent(node) {

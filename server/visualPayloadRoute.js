@@ -137,6 +137,8 @@ export async function buildVisualPayloadResponse(input, dependencies) {
       payloadQuality: artifacts.payloadQuality,
       sectionTrace: artifacts.debugArtifacts?.sectionTrace || null,
       heroCandidateTrace: artifacts.debugArtifacts?.heroCandidateTrace || null,
+      figmaActionInputTrace: artifacts.debugArtifacts?.figmaActionInputTrace || null,
+      webVideoPipelineTrace: artifacts.debugArtifacts?.webVideoPipelineTrace || null,
       entitySectionTrace: artifacts.debugArtifacts?.entitySectionTrace || null,
       webVideoTrace: artifacts.debugArtifacts?.webVideoTrace || null,
       imageValidation,
@@ -146,7 +148,7 @@ export async function buildVisualPayloadResponse(input, dependencies) {
   return response
 }
 
-function createDebugPayload({ figmaResult, figmaRender, webAnalysis, textComparison, timings, payloadQuality, sectionTrace, heroCandidateTrace, entitySectionTrace, webVideoTrace, imageValidation }) {
+function createDebugPayload({ figmaResult, figmaRender, webAnalysis, textComparison, timings, payloadQuality, sectionTrace, heroCandidateTrace, figmaActionInputTrace, webVideoPipelineTrace, entitySectionTrace, webVideoTrace, imageValidation }) {
   return {
     counts: {
       figmaTextNodes: Array.isArray(figmaResult.textNodes) ? figmaResult.textNodes.length : 0,
@@ -174,6 +176,8 @@ function createDebugPayload({ figmaResult, figmaRender, webAnalysis, textCompari
     imageValidation,
     sectionTrace,
     heroCandidateTrace,
+    figmaActionInputTrace,
+    webVideoPipelineTrace,
     entitySectionTrace,
     webVideoTrace,
     payloadQuality,

@@ -602,7 +602,16 @@ test('hero-root descendant figma button instances resolve to hero actions while 
   assert.equal(figmaActions.some((item) => item.text === '프로모션 바로가기'), true)
   assert.equal(figmaActions.some((item) => item.text === '온라인 구매 상담'), true)
   assert.equal(payload.aiHints.heroCtaGroup.figma.count, 2)
+  assert.equal(debugArtifacts.figmaActionInputTrace.heroDescendantNodeCount >= 5, true)
+  assert.equal(debugArtifacts.figmaActionInputTrace.buttonLikeNodeCount >= 3, true)
+  assert.equal(debugArtifacts.figmaActionInputTrace.rawActionCandidateCount, 2)
+  assert.equal(debugArtifacts.figmaActionInputTrace.nodes.some((item) => item.id === 'btn-wrap' && item.candidateCreated === false), true)
   assert.equal(debugArtifacts.entitySectionTrace.figmaHeroActions.length >= 2, true)
+  assert.equal(payloadQuality.figmaHeroDescendantNodeCount >= 5, true)
+  assert.equal(payloadQuality.figmaButtonLikeNodeCount >= 3, true)
+  assert.equal(payloadQuality.figmaInteractiveNodeCount >= 2, true)
+  assert.equal(payloadQuality.rawFigmaActionCandidateCount, 2)
+  assert.equal(payloadQuality.canonicalFigmaActionCount, 2)
   assert.equal(payloadQuality.rawFigmaHeroActionCandidateCount >= 2, true)
   assert.equal(payloadQuality.resolvedFigmaHeroActionCount, 2)
   assert.equal(payloadQuality.heroActionResolutionPassed, true)
@@ -633,6 +642,11 @@ test('web video parent selector descendant resolves into hero media and trace', 
       flatNodes: [createFigmaFlatNode({ id: 'hero-root', nodeId: 'hero-root', name: 'Hero', type: 'FRAME', layerPath: 'Page / Hero', widthRatio: 0.92, heightRatio: 0.34, hasImageFill: true })],
     },
     webAnalysis: {
+      scanResult: {
+        visualPayloadData: {
+          videoCandidates: [{ sourceId: 'hero-video', selector: 'div.main_visual.active video', parentSelector: 'div.main_visual.active', domPath: 'body > main > div.main_visual.active > video', autoplay: true, controls: false, visible: true }],
+        },
+      },
       textNodes: [createWebTextNode({ text: 'Hero Title', selector: 'div.main_visual.active div.txt h2', parentSelector: 'div.main_visual.active div.txt', domPath: 'body > main > div.main_visual.active > div.txt > h2', role: 'heading', tagName: 'h2', sectionHint: 'hero' })],
       ctaCandidates: [createWebCtaCandidate({ text: 'Hero Action', selector: 'div.main_visual.active div.btn_wrap a.primary', parentContext: 'div.main_visual.active div.btn_wrap', parentSelector: 'div.main_visual.active div.btn_wrap', href: '/hero', section: 'hero', yRatio: 0.12, xRatio: 0.1 })],
       videoCandidates: [{ type: 'video', source: 'web', sourceId: 'hero-video', text: 'Hero Video', selector: 'div.main_visual.active video', parentContext: 'div.main_visual.active', parentSelector: 'div.main_visual.active', contextPath: 'body > main > div.main_visual.active > video', section: 'hero', confidence: 'high', reasons: ['video element'], width: 1600, height: 900, xRatio: 0.02, yRatio: 0.05, widthRatio: 0.83, heightRatio: 0.22 }],
@@ -641,6 +655,10 @@ test('web video parent selector descendant resolves into hero media and trace', 
 
   assert.equal(payload.aiHints.heroMediaGroup.web.candidateCount, 1)
   assert.equal(payload.aiHints.heroMediaGroup.web.mediaTypes.includes('video'), true)
+  assert.equal(debugArtifacts.webVideoPipelineTrace.scanResultCount, 1)
+  assert.equal(debugArtifacts.webVideoPipelineTrace.webAnalysisCount, 1)
+  assert.equal(debugArtifacts.webVideoPipelineTrace.rawMediaCandidateCount, 1)
+  assert.equal(debugArtifacts.webVideoPipelineTrace.canonicalMediaCount, 1)
   assert.equal(payloadQuality.resolvedWebHeroMediaCount, 1)
   assert.equal(payloadQuality.heroMediaResolutionPassed, true)
   assert.equal(debugArtifacts.webVideoTrace[0].heroDescendant, true)

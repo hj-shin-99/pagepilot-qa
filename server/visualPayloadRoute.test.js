@@ -168,6 +168,8 @@ test('buildVisualPayloadResponse exposes limited debug previews only when debug 
   assert.equal(typeof result.debug.sectionTrace.unassignedEntityCount, 'number')
   assert.equal(Array.isArray(result.debug.heroCandidateTrace.figma), true)
   assert.equal(Array.isArray(result.debug.heroCandidateTrace.web), true)
+  assert.equal(typeof result.debug.figmaActionInputTrace.heroDescendantNodeCount, 'number')
+  assert.equal(typeof result.debug.webVideoPipelineTrace.webAnalysisCount, 'number')
   assert.equal(Array.isArray(result.debug.entitySectionTrace.figmaHeroActions), true)
   assert.equal(Array.isArray(result.debug.webVideoTrace), true)
   assert.equal(result.debug.payloadQuality.heroMediaGroupCreated, true)

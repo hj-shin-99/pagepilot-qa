@@ -116,6 +116,13 @@ function createStructureFixture() {
         type: 'INSTANCE',
         visible: true,
         reactions: [{ action: { type: 'NODE' } }],
+        prototypeInteractions: [{ type: 'ON_CLICK' }],
+        transitionNodeID: 'target:1',
+        componentPropertyReferences: { text: 'label' },
+        componentProperties: { label: { type: 'TEXT', value: 'Apply now' } },
+        componentId: 'component:primary',
+        mainComponent: { id: 'component:main' },
+        overrides: [{ id: 'override:1' }],
         absoluteBoundingBox: {
           x: 130,
           y: 390,
@@ -290,4 +297,26 @@ test('visible text count parity is maintained with figmaText extractor', () => {
   const structureVisibleTextCount = structure.figmaFlatNodes.filter((node) => node.type === 'TEXT' && node.effectivelyVisible && typeof node.characters === 'string' && node.characters.trim()).length
 
   assert.equal(structureVisibleTextCount, visibleTextResult.visibleTextCount)
+})
+
+test('interaction summary fields are preserved on flat nodes', () => {
+  const result = extractFigmaStructure(createStructureFixture())
+  const instanceNode = result.figmaFlatNodes.find((node) => node.id === 'instance:1')
+
+  assert.equal(instanceNode.isInteractiveCandidate, true)
+  assert.equal(instanceNode.prototypeInteractionCount, 1)
+  assert.equal(instanceNode.reactionCount, 1)
+  assert.equal(instanceNode.hasPrototypeInteractions, true)
+  assert.equal(instanceNode.hasReactions, true)
+  assert.equal(instanceNode.hasTransitionTarget, true)
+  assert.equal(instanceNode.transitionNodeId, 'target:1')
+  assert.equal(instanceNode.hasComponentPropertyReferences, true)
+  assert.equal(instanceNode.componentPropertyReferenceCount, 1)
+  assert.equal(instanceNode.hasComponentProperties, true)
+  assert.equal(instanceNode.componentPropertyCount, 1)
+  assert.equal(instanceNode.componentId, 'component:primary')
+  assert.equal(instanceNode.mainComponentId, 'component:main')
+  assert.equal(instanceNode.hasOverrides, true)
+  assert.equal(instanceNode.overrideCount, 1)
+  assert.equal(instanceNode.interactionSummary.prototypeInteractionCount, 1)
 })

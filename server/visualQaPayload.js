@@ -132,6 +132,17 @@ export function buildVisualQaPayloadArtifacts({ figmaAnalysis, webAnalysis, text
     canonicalEvidence,
   })
   const sectionTrace = createSectionTrace({ sections: canonicalEvidence.sections, heroSections, canonicalEvidence })
+  const figmaActionInputTrace = createFigmaActionInputTrace({
+    figmaAnalysis: safeFigmaAnalysis,
+    heroSelection,
+    rawFigmaActions: rawInteractions.allCandidates.filter((candidate) => candidate?.source === 'figma'),
+  })
+  const webVideoPipelineTrace = createWebVideoPipelineTrace({
+    webAnalysis: safeWebAnalysis,
+    rawVideos,
+    annotatedRawVideos,
+    canonicalEvidence: resolvedCanonicalEvidence,
+  })
   const entitySectionTrace = createEntitySectionTrace({
     rawActions: rawInteractions.allCandidates,
     annotatedRawActions,
@@ -149,6 +160,7 @@ export function buildVisualQaPayloadArtifacts({ figmaAnalysis, webAnalysis, text
     sections: canonicalEvidence.sections,
     heroSelection,
     entitySectionTrace,
+    figmaActionInputTrace,
   })
 
   const payload = {
@@ -212,6 +224,8 @@ export function buildVisualQaPayloadArtifacts({ figmaAnalysis, webAnalysis, text
     debugArtifacts: {
       sectionTrace,
       heroCandidateTrace: heroSelection.heroCandidateTrace,
+      figmaActionInputTrace,
+      webVideoPipelineTrace,
       entitySectionTrace,
       webVideoTrace: entitySectionTrace.webVideoTrace,
     },
@@ -284,6 +298,11 @@ function createPayloadQuality() {
     webHeroContainsText: false,
     webHeroContainsAction: false,
     webHeroContainsMedia: false,
+    figmaHeroDescendantNodeCount: 0,
+    figmaButtonLikeNodeCount: 0,
+    figmaInteractiveNodeCount: 0,
+    rawFigmaActionCandidateCount: 0,
+    canonicalFigmaActionCount: 0,
     rawFigmaHeroActionCandidateCount: 0,
     resolvedFigmaHeroActionCount: 0,
     rejectedFigmaHeroActionCount: 0,
@@ -2260,6 +2279,133 @@ function createSectionTrace({ sections, heroSections, canonicalEvidence }) {
   }
 }
 
+function createFigmaActionInputTrace({ figmaAnalysis, heroSelection, rawFigmaActions }) {
+  const flatNodes = Array.isArray(figmaAnalysis?.flatNodes) ? figmaAnalysis.flatNodes : []
+  const heroDescriptor = heroSelection?.figmaHeroDescriptor || null
+  const heroRootPath = normalizeString(heroDescriptor?.path)
+  const heroRootId = normalizeString(heroDescriptor?.rootSourceId)
+  const heroDescendants = flatNodes.filter((node) => heroRootPath && isCandidateUnderAnchor(node, 'figma', heroRootPath))
+  const buttonLikeNodes = heroDescendants.filter(isFigmaButtonLikeTraceNode)
+  const interactiveNodes = heroDescendants.filter((node) => node?.isInteractiveCandidate === true || node?.hasPrototypeInteractions === true || node?.hasReactions === true)
+  const rawActionIds = new Set((Array.isArray(rawFigmaActions) ? rawFigmaActions : []).map((item) => normalizeString(item?.sourceId)).filter(Boolean))
+  const traceNodes = heroDescendants
+    .filter((node) => shouldIncludeFigmaActionTraceNode(node))
+    .slice(0, 20)
+    .map((node) => {
+      const descendantTexts = getFigmaDescendantTexts(node, flatNodes)
+      const candidateCreated = rawActionIds.has(normalizeString(node?.nodeId || node?.id))
+      return {
+        id: normalizeString(node?.id),
+        type: normalizeString(node?.type),
+        name: normalizeString(node?.name),
+        layerPath: normalizeString(node?.layerPath),
+        parentId: normalizeString(node?.parentId),
+        childCount: normalizeCount(node?.childCount, 0),
+        isInteractiveCandidate: node?.isInteractiveCandidate === true,
+        hasPrototypeInteractions: node?.hasPrototypeInteractions === true || normalizeCount(node?.prototypeInteractionCount, 0) > 0,
+        hasReactions: node?.hasReactions === true || normalizeCount(node?.reactionCount, 0) > 0,
+        widthRatio: normalizeNumber(node?.widthRatio),
+        heightRatio: normalizeNumber(node?.heightRatio),
+        descendantTextPreview: descendantTexts.slice(0, 3),
+        candidateCreated,
+        excludedReason: candidateCreated ? null : classifyFigmaActionTraceExclusion(node, descendantTexts, flatNodes),
+      }
+    })
+
+  return {
+    heroRootId,
+    heroRootPath,
+    heroDescendantNodeCount: heroDescendants.length,
+    buttonLikeNodeCount: buttonLikeNodes.length,
+    interactiveCandidateCount: interactiveNodes.length,
+    rawActionCandidateCount: traceNodes.filter((node) => node.candidateCreated).length,
+    nodes: traceNodes,
+  }
+}
+
+function shouldIncludeFigmaActionTraceNode(node) {
+  if (!node) return false
+  if (['INSTANCE', 'COMPONENT', 'FRAME', 'TEXT'].includes(normalizeString(node?.type))) return true
+  if (isFigmaButtonLikeTraceNode(node)) return true
+  if (node?.isInteractiveCandidate === true) return true
+  if (normalizeCount(node?.prototypeInteractionCount, 0) > 0 || normalizeCount(node?.reactionCount, 0) > 0 || node?.hasTransitionTarget === true) return true
+  return false
+}
+
+function isFigmaButtonLikeTraceNode(node) {
+  const searchable = `${node?.name || ''} ${node?.layerPath || ''}`.toLowerCase()
+  return /button|btn|action|cta|component/.test(searchable)
+}
+
+function classifyFigmaActionTraceExclusion(node, descendantTexts, flatNodes) {
+  if (!node?.effectivelyVisible) return 'not-visible'
+  if (!['FRAME', 'INSTANCE', 'COMPONENT'].includes(normalizeString(node?.type))) return 'unsupported-type'
+  const interactionEvidence = buildFigmaInteractionEvidence(node, buildFigmaChildMap(flatNodes))
+  const compactActionLabel = descendantTexts.length > 0 && descendantTexts.every(isCompactActionLabel)
+  const hasInteraction = node?.isInteractiveCandidate === true || normalizeCount(node?.prototypeInteractionCount, 0) > 0 || normalizeCount(node?.reactionCount, 0) > 0 || node?.hasTransitionTarget === true
+  const looksButtonLike = /button|btn|cta|action|link/.test(`${node?.name || ''} ${node?.layerPath || ''}`.toLowerCase())
+  const hasButtonStructure = compactActionLabel
+    && (looksButtonLike
+      || interactionEvidence.includes('button-sized container')
+      || interactionEvidence.includes('shape-backed control')
+      || interactionEvidence.includes('repeated sibling action component'))
+  if (!hasInteraction && !hasButtonStructure) return 'no-button-or-interaction-signal'
+  if (shouldRejectFigmaActionNode(node, descendantTexts, buildFigmaChildMap(flatNodes))) return 'rejected-by-structure'
+  if (!compactActionLabel) return 'no-compact-descendant-label'
+  return 'filtered-before-canonicalization'
+}
+
+function buildFigmaChildMap(flatNodes) {
+  const childMap = new Map()
+  ;(Array.isArray(flatNodes) ? flatNodes : []).forEach((node) => {
+    const parentId = normalizeString(node?.parentId)
+    if (!parentId) return
+    const siblings = childMap.get(parentId) || []
+    siblings.push(node)
+    childMap.set(parentId, siblings)
+  })
+  return childMap
+}
+
+function createWebVideoPipelineTrace({ webAnalysis, rawVideos, annotatedRawVideos, canonicalEvidence }) {
+  const scanResultVideos = Array.isArray(webAnalysis?.scanResult?.visualPayloadData?.videoCandidates) ? webAnalysis.scanResult.visualPayloadData.videoCandidates : []
+  const visualPayloadDataVideos = Array.isArray(webAnalysis?.scanResult?.visualPayloadData?.videoCandidates) ? webAnalysis.scanResult.visualPayloadData.videoCandidates : []
+  const webAnalysisVideos = Array.isArray(webAnalysis?.videoCandidates) ? webAnalysis.videoCandidates : []
+  const payloadInputVideos = (Array.isArray(rawVideos) ? rawVideos : []).filter((item) => item?.source === 'web')
+  const rawMediaCandidates = (Array.isArray(annotatedRawVideos) ? annotatedRawVideos : []).filter((item) => item?.source === 'web')
+  const canonicalMediaVideos = (Array.isArray(canonicalEvidence?.media) ? canonicalEvidence.media : []).filter((item) => item?.source === 'web' && item?.mediaType === 'video')
+
+  return {
+    scanResultCount: scanResultVideos.length,
+    visualPayloadDataCount: visualPayloadDataVideos.length,
+    webAnalysisCount: webAnalysisVideos.length,
+    payloadInputCount: payloadInputVideos.length,
+    rawMediaCandidateCount: rawMediaCandidates.length,
+    canonicalMediaCount: canonicalMediaVideos.length,
+    items: [
+      ...createWebVideoTraceStageItems('scanResult', scanResultVideos),
+      ...createWebVideoTraceStageItems('visualPayloadData', visualPayloadDataVideos),
+      ...createWebVideoTraceStageItems('webAnalysis', webAnalysisVideos),
+      ...createWebVideoTraceStageItems('payloadInput', payloadInputVideos),
+      ...createWebVideoTraceStageItems('rawMediaCandidate', rawMediaCandidates),
+      ...createWebVideoTraceStageItems('canonicalMedia', canonicalMediaVideos),
+    ].slice(0, 30),
+  }
+}
+
+function createWebVideoTraceStageItems(stage, items) {
+  return (Array.isArray(items) ? items : []).slice(0, 5).map((item) => ({
+    stage,
+    sourceId: normalizeString(item?.sourceId || item?.selector),
+    selector: normalizeString(item?.selector),
+    parentSelector: normalizeString(item?.parentSelector),
+    contextPath: normalizeString(item?.contextPath || item?.domPath || item?.context),
+    visible: item?.visible !== false,
+    autoplay: item?.autoplay === true,
+    controls: item?.controls === true,
+  }))
+}
+
 function createEntitySectionTrace({ rawActions, annotatedRawActions, annotatedRawVideos, heroSelection, sectionContexts, canonicalEvidence }) {
   const figmaHeroActions = buildActionEntityTrace({
     source: 'figma',
@@ -2356,7 +2502,7 @@ function buildHeroSectionTrace(section) {
   }
 }
 
-function applyCanonicalQualityMetrics(quality, { heroCtaGroup, heroMediaGroup, canonicalEvidence, comparisonActions, sectionTrace, sections, heroSelection, entitySectionTrace }) {
+function applyCanonicalQualityMetrics(quality, { heroCtaGroup, heroMediaGroup, canonicalEvidence, comparisonActions, sectionTrace, sections, heroSelection, entitySectionTrace, figmaActionInputTrace }) {
   quality.canonicalActionCount = canonicalEvidence.actions.length
   quality.canonicalNumericCount = canonicalEvidence.numericValues.length
   quality.figmaHeroTextCount = normalizeCount(sectionTrace?.figmaHero?.textCount, 0)
@@ -2375,6 +2521,11 @@ function applyCanonicalQualityMetrics(quality, { heroCtaGroup, heroMediaGroup, c
   quality.webHeroContainsText = heroSelection?.quality?.webHeroContainsText === true
   quality.webHeroContainsAction = heroSelection?.quality?.webHeroContainsAction === true
   quality.webHeroContainsMedia = heroSelection?.quality?.webHeroContainsMedia === true
+  quality.figmaHeroDescendantNodeCount = normalizeCount(figmaActionInputTrace?.heroDescendantNodeCount, 0)
+  quality.figmaButtonLikeNodeCount = normalizeCount(figmaActionInputTrace?.buttonLikeNodeCount, 0)
+  quality.figmaInteractiveNodeCount = normalizeCount(figmaActionInputTrace?.interactiveCandidateCount, 0)
+  quality.rawFigmaActionCandidateCount = normalizeCount(figmaActionInputTrace?.rawActionCandidateCount, 0)
+  quality.canonicalFigmaActionCount = canonicalEvidence.actions.filter((item) => item.source === 'figma').length
   quality.rawFigmaHeroActionCandidateCount = Array.isArray(entitySectionTrace?.figmaHeroActions) ? entitySectionTrace.figmaHeroActions.length : 0
   quality.resolvedFigmaHeroActionCount = heroCtaGroup.figma.count
   quality.rejectedFigmaHeroActionCount = Math.max(0, quality.rawFigmaHeroActionCandidateCount - quality.resolvedFigmaHeroActionCount)

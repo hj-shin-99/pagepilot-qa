@@ -135,6 +135,7 @@ export async function buildVisualPayloadResponse(input, dependencies) {
       textComparison,
       timings,
       payloadQuality: artifacts.payloadQuality,
+      sectionTrace: artifacts.debugArtifacts?.sectionTrace || null,
       imageValidation,
     })
   }
@@ -142,7 +143,7 @@ export async function buildVisualPayloadResponse(input, dependencies) {
   return response
 }
 
-function createDebugPayload({ figmaResult, figmaRender, webAnalysis, textComparison, timings, payloadQuality, imageValidation }) {
+function createDebugPayload({ figmaResult, figmaRender, webAnalysis, textComparison, timings, payloadQuality, sectionTrace, imageValidation }) {
   return {
     counts: {
       figmaTextNodes: Array.isArray(figmaResult.textNodes) ? figmaResult.textNodes.length : 0,
@@ -168,6 +169,7 @@ function createDebugPayload({ figmaResult, figmaRender, webAnalysis, textCompari
     },
     timing: normalizeTimingMetrics(timings),
     imageValidation,
+    sectionTrace,
     payloadQuality,
   }
 }

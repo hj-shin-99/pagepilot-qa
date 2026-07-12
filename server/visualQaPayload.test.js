@@ -407,3 +407,115 @@ test('payloadQuality exposes canonical merge counters', () => {
   assert.equal(payloadQuality.figmaHeroCanonicalActionCount >= 0, true)
   assert.equal(typeof payloadQuality.heroSectionDetected, 'boolean')
 })
+
+test('root page container is not selected as hero and figma hero membership stays descendant-only', () => {
+  const { payload, payloadQuality } = buildVisualQaPayloadArtifacts(createBaseInput({
+    figmaAnalysis: {
+      textNodes: [
+        createFigmaTextNode({ nodeId: 'hero-title', layerPath: 'Page / Hero / Title', parentFrameName: 'Hero', characters: 'Hero Title', yRatio: 0.08 }),
+        createFigmaTextNode({ nodeId: 'hero-body', layerPath: 'Page / Hero / Body', parentFrameName: 'Hero', characters: 'Hero Body', yRatio: 0.12, fontSize: 20, fontWeight: 500 }),
+        createFigmaTextNode({ nodeId: 'content-title', layerPath: 'Page / Smart Advisor / Title', parentFrameName: 'Smart Advisor', characters: 'Smart Advisor', yRatio: 0.42, fontSize: 24, fontWeight: 700 }),
+      ],
+      flatNodes: [
+        createFigmaFlatNode({ id: 'page-root', nodeId: 'page-root', name: 'Page', type: 'FRAME', layerPath: 'Page', widthRatio: 0.96, heightRatio: 0.96, absoluteBoundingBox: { width: 1440, height: 4200 } }),
+        createFigmaFlatNode({ id: 'hero-frame', nodeId: 'hero-frame', name: 'Hero', type: 'FRAME', layerPath: 'Page / Hero', parentId: 'page-root', widthRatio: 0.92, heightRatio: 0.34, yRatio: 0.03, absoluteBoundingBox: { width: 1400, height: 720 }, hasImageFill: true }),
+        createFigmaFlatNode({ id: 'hero-cta', nodeId: 'hero-cta', name: 'Primary Button', type: 'INSTANCE', layerPath: 'Page / Hero / CTA', parentId: 'hero-frame', isInteractiveCandidate: true, hasSolidFill: true, yRatio: 0.16 }),
+        createFigmaFlatNode({ id: 'content-frame', nodeId: 'content-frame', name: 'Smart Advisor', type: 'FRAME', layerPath: 'Page / Smart Advisor', parentId: 'page-root', widthRatio: 0.92, heightRatio: 0.18, yRatio: 0.4, absoluteBoundingBox: { width: 1400, height: 460 } }),
+      ],
+    },
+    webAnalysis: { textNodes: [] },
+  }))
+
+  assert.equal(payload.aiHints.heroSection.sections[0].path, 'Hero')
+  assert.notEqual(payload.aiHints.heroSection.figmaSectionId, 'section:figma:page-root')
+  assert.equal(payload.aiHints.heroSection.figmaTextCount, 2)
+  assert.equal(payload.aiHints.evidenceSummary.hero.figmaTextCount, 2)
+  assert.equal(payload.aiHints.canonicalEvidence.sections.some((section) => section.sectionId === 'section:figma:page-root' && section.role === 'hero'), false)
+  assert.equal(payloadQuality.figmaHeroTextCount, 2)
+})
+
+test('web hero video descendant is included and non-hero video is excluded from hero media group', () => {
+  const { payload, payloadQuality } = buildVisualQaPayloadArtifacts(createBaseInput({
+    figmaAnalysis: { textNodes: [] },
+    webAnalysis: {
+      textNodes: [createWebTextNode({ text: 'Hero Title', selector: '.hero h1', parentSelector: '.hero', role: 'heading', tagName: 'h1', sectionHint: 'hero' })],
+      ctaCandidates: [createWebCtaCandidate({ text: 'Hero Action', selector: '.hero a.primary', parentContext: '.hero .actions', href: '/hero', section: 'hero', yRatio: 0.12, xRatio: 0.1 })],
+      imageCandidates: [],
+      videoCandidates: [
+        { type: 'video', source: 'web', sourceId: 'hero-video', text: 'Hero Video', selector: '.hero video', parentContext: '.hero', section: 'hero', confidence: 'high', reasons: ['video element'], width: 1600, height: 900, yRatio: 0.05 },
+        { type: 'video', source: 'web', sourceId: 'notice-video', text: 'Notice Video', selector: '.notice video', parentContext: '.notice', section: 'top', confidence: 'medium', reasons: ['video element'], width: 600, height: 320, yRatio: 0.18 },
+      ],
+    },
+  }))
+
+  assert.equal(payload.aiHints.heroSection.webSectionId, 'section:web:.hero')
+  assert.equal(payload.aiHints.heroMediaGroup.web.candidateCount, 1)
+  assert.equal(payload.aiHints.heroMediaGroup.web.primaryCandidates[0].mediaType, 'video')
+  assert.equal(payload.aiHints.evidenceSummary.hero.webPrimaryMediaCount, 1)
+  assert.equal(payloadQuality.webHeroMediaCount, 1)
+})
+
+test('hero action keeps hero sectionId while other section action stays out of hero group', () => {
+  const { payload } = buildVisualQaPayloadArtifacts(createBaseInput({
+    figmaAnalysis: { textNodes: [] },
+    webAnalysis: {
+      textNodes: [createWebTextNode({ text: 'Hero Title', selector: '.hero h1', parentSelector: '.hero', role: 'heading', tagName: 'h1', sectionHint: 'hero' })],
+      ctaCandidates: [
+        createWebCtaCandidate({ text: 'Hero Action', selector: '.hero a.primary', parentContext: '.hero .actions', href: '/hero', section: 'hero', yRatio: 0.12, xRatio: 0.1 }),
+        createWebCtaCandidate({ text: 'Advisor Start', selector: '.smart-advisor a.primary', parentContext: '.smart-advisor .actions', href: '/advisor', section: 'content', yRatio: 0.42, xRatio: 0.2 }),
+      ],
+      imageCandidates: [{ type: 'image', source: 'web', sourceId: 'hero-img', selector: '.hero img', parentContext: '.hero', section: 'hero', alt: 'Hero', loaded: true, naturalWidth: 1200, naturalHeight: 700 }],
+    },
+  }))
+
+  const heroAction = payload.aiHints.canonicalEvidence.actions.find((item) => item.text === 'Hero Action')
+  const advisorAction = payload.aiHints.canonicalEvidence.actions.find((item) => item.text === 'Advisor Start')
+
+  assert.equal(heroAction.sectionId, payload.aiHints.heroSection.webSectionId)
+  assert.notEqual(advisorAction.sectionId, payload.aiHints.heroSection.webSectionId)
+  assert.deepEqual(payload.aiHints.heroCtaGroup.web.actions.map((item) => item.text), ['Hero Action'])
+})
+
+test('canonical counts and section assignment stay consistent across payload and quality', () => {
+  const { payload, payloadQuality } = buildVisualQaPayloadArtifacts(createBaseInput({
+    figmaAnalysis: { textNodes: [] },
+    webAnalysis: {
+      textNodes: [
+        createWebTextNode({ text: '월 47만원', rawText: '월 47만원', selector: '.card p.price', parentSelector: '.card', role: 'body', tagName: 'p', sectionHint: 'content', yRatio: 0.4, xRatio: 0.2 }),
+        createWebTextNode({ text: 'Footer Legal', selector: 'footer .legal', parentSelector: 'footer', role: 'body', tagName: 'small', sectionHint: 'legal', yRatio: 0.92, xRatio: 0.1 }),
+      ],
+      ctaCandidates: [
+        createWebCtaCandidate({ text: 'Hero Action', selector: '.hero a.cta', parentContext: '.hero .actions', href: '/hero', section: 'hero', yRatio: 0.1, xRatio: 0.1 }),
+        createWebCtaCandidate({ text: 'Legal Link', selector: 'footer .legal a', parentContext: 'footer .legal', parentSelector: 'footer .legal', href: '/legal', section: 'footer', yRatio: 0.93, xRatio: 0.1 }),
+      ],
+      imageCandidates: [{ type: 'image', source: 'web', sourceId: 'hero-img', selector: '.hero img', parentContext: '.hero', section: 'hero', alt: 'Hero', loaded: true, naturalWidth: 1200, naturalHeight: 700 }],
+    },
+    textComparison: {
+      summary: { matchedCount: 0, differenceCount: 3, figmaOnlyCount: 1, webOnlyCount: 2 },
+      differences: [
+        { figmaText: 'A', webText: 'B', matchConfidence: 'high', evidence: ['hero'] },
+        { figmaText: 'C', webText: 'D', matchConfidence: 'medium', evidence: ['content'] },
+        { figmaText: 'E', webText: 'F', matchConfidence: 'low', evidence: ['footer'] },
+      ],
+    },
+  }))
+
+  const allCanonicalEntities = [
+    ...payload.aiHints.canonicalEvidence.actions,
+    ...payload.aiHints.canonicalEvidence.numericValues,
+    ...payload.aiHints.canonicalEvidence.media,
+    ...payload.aiHints.canonicalEvidence.texts,
+  ]
+  const legalAction = payload.aiHints.canonicalEvidence.actions.find((item) => item.text === 'Legal Link')
+
+  assert.equal(payload.aiHints.evidenceSummary.canonical.actionCount, payloadQuality.canonicalActionCount)
+  assert.equal(payload.aiHints.evidenceSummary.canonical.numericCount, payloadQuality.canonicalNumericCount)
+  assert.equal(payload.comparison.differenceCount, 3)
+  assert.equal(allCanonicalEntities.every((item) => typeof item.sectionId === 'string' && item.sectionId.length > 0), true)
+  assert.equal(payloadQuality.unassignedCanonicalEntityCount, 0)
+  assert.equal(payloadQuality.multiAssignedCanonicalEntityCount, 0)
+  assert.equal(payloadQuality.canonicalCountConsistencyPassed, true)
+  assert.equal(legalAction.comparisonScope, 'reference-only')
+  assert.equal(payload.aiHints.ctaButtons.some((item) => item.text === 'Legal Link'), false)
+  assert.equal(payload.aiHints.ctaButtons.every((item) => item.comparisonScope === 'primary' || item.comparisonScope === 'secondary'), true)
+})

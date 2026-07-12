@@ -3,12 +3,15 @@ const MAX_CTA_CANDIDATES = 20
 const MAX_IMAGE_CANDIDATES = 20
 const MAX_VIDEO_CANDIDATES = 10
 const MAX_SECTION_CANDIDATES = 20
-const MAX_PRICE_CANDIDATES = 20
+const MAX_PRICE_CANDIDATES = 15
 const MAX_UNMATCHED_PREVIEW = 10
-const MAX_HERO_TEXTS = 6
 const MAX_NAV_TEXTS = 8
 const MAX_NUMERIC_CANDIDATES = 30
 const MAX_HERO_MEDIA_PRIMARY = 3
+const MAX_HERO_ACTIONS = 5
+const MAX_CONTENT_ACTIONS = 10
+const MAX_NAVIGATION_ITEMS = 15
+const MAX_SECTION_ENTITIES = 15
 const SIMILAR_Y_RATIO_THRESHOLD = 0.03
 const SIMILAR_X_RATIO_THRESHOLD = 0.08
 const PRICE_TYPE_SET = new Set(['amount', 'percentage', 'interest-rate', 'monthly-payment', 'duration'])
@@ -25,44 +28,67 @@ export function buildVisualQaPayloadArtifacts({ figmaAnalysis, webAnalysis, text
 
   const figmaTextCandidates = normalizeFigmaTextCandidates(safeFigmaAnalysis.textNodes)
   const webTextCandidates = normalizeWebTextCandidates(safeWebAnalysis.textNodes)
-  const figmaNavigationItems = dedupeCandidates(figmaTextCandidates.filter(isNavigationCandidate), quality)
-  const webNavigationItems = dedupeCandidates(webTextCandidates.filter(isNavigationCandidate), quality)
   const filteredDifferences = createComparisonSummaries(safeTextComparison, quality)
-  const images = dedupeCandidates(createMergedImageHints(safeFigmaAnalysis, safeWebAnalysis, quality), quality).slice(0, MAX_IMAGE_CANDIDATES)
-  const videos = dedupeCandidates(createMergedVideoHints(safeFigmaAnalysis, safeWebAnalysis, quality), quality).slice(0, MAX_VIDEO_CANDIDATES)
-  const interactions = createInteractionHints({
+  const rawImages = dedupeCandidates(createMergedImageHints(safeFigmaAnalysis, safeWebAnalysis, quality), quality).slice(0, MAX_IMAGE_CANDIDATES)
+  const rawVideos = dedupeCandidates(createMergedVideoHints(safeFigmaAnalysis, safeWebAnalysis, quality), quality).slice(0, MAX_VIDEO_CANDIDATES)
+  const rawInteractions = createRawInteractionArtifacts({
     figmaAnalysis: safeFigmaAnalysis,
     figmaTextCandidates,
     webTextCandidates,
     webAnalysis: safeWebAnalysis,
-    navigationItems: [...figmaNavigationItems, ...webNavigationItems],
   }, quality)
-  const ctaButtons = [...interactions.primaryActions, ...interactions.secondaryActions].slice(0, MAX_CTA_CANDIDATES)
-  const numericHints = createNumericHints({ figmaTextCandidates, webTextCandidates }, quality)
-  const heroMediaGroup = createHeroMediaGroup({ images, videos }, quality)
-  const heroCtaGroup = createHeroCtaGroup(ctaButtons)
-  const heroSection = createHeroSectionHint({
+  const rawNumericCandidates = createRawNumericCandidates({
     figmaTextCandidates,
     webTextCandidates,
-    safeWebAnalysis,
+    webAnalysis: safeWebAnalysis,
+  }, quality)
+  const draftSections = createSectionEntities({
+    figmaAnalysis: safeFigmaAnalysis,
+    figmaTextCandidates,
+    webTextCandidates,
+    rawActions: rawInteractions.allCandidates,
+    rawNumericCandidates,
+    rawImages,
+    rawVideos,
+  })
+  const heroSections = detectHeroSections(draftSections)
+  quality.heroSectionDetected = Boolean(heroSections.figmaSectionId || heroSections.webSectionId)
+  const interactions = createInteractionHints({ rawInteractions, sections: draftSections, heroSections }, quality)
+  const numericHints = createNumericHints({ rawNumericCandidates, sections: draftSections, heroSections }, quality)
+  const mediaHints = createCanonicalMediaHints({ images: rawImages, videos: rawVideos, sections: draftSections, heroSections })
+  const canonicalEvidence = createCanonicalEvidence({
+    actions: interactions.allActions,
+    numericValues: numericHints.numericEntities,
+    media: mediaHints.media,
+    sections: finalizeSectionEntities(draftSections, {
+      actions: interactions.allActions,
+      numericValues: numericHints.numericEntities,
+      media: mediaHints.media,
+    }, heroSections),
+  })
+  const ctaButtons = createCanonicalCtaButtons(canonicalEvidence.actions, heroSections)
+  const heroMediaGroup = createHeroMediaGroup({ media: canonicalEvidence.media, heroSections }, quality)
+  const heroCtaGroup = createHeroCtaGroup(canonicalEvidence.actions, heroSections, quality)
+  const heroSection = createHeroSectionHint({
+    sections: canonicalEvidence.sections,
+    heroSections,
     filteredDifferences,
     ctaButtons,
     heroMediaGroup,
   })
-  const navigation = createNavigationHint({ figmaNavigationItems, webNavigationItems, filteredDifferences, safeWebAnalysis })
+  const navigation = createNavigationHint({ sections: canonicalEvidence.sections, actions: canonicalEvidence.actions, filteredDifferences })
   const evidenceSummary = createEvidenceSummary({
     heroSection,
     heroMediaGroup,
     heroCtaGroup,
     navigation,
-    images,
-    videos,
+    sections: canonicalEvidence.sections,
+    media: canonicalEvidence.media,
     interactions,
     prices: numericHints.prices,
     dates: numericHints.dates,
     filteredDifferences,
-    figmaNavigationItems,
-    webNavigationItems,
+    canonicalEvidence,
   })
 
   const payload = {
@@ -93,6 +119,12 @@ export function buildVisualQaPayloadArtifacts({ figmaAnalysis, webAnalysis, text
       differences: filteredDifferences,
     },
     aiHints: {
+      canonicalEvidence: {
+        actions: canonicalEvidence.actions,
+        numericValues: canonicalEvidence.numericValues,
+        media: canonicalEvidence.media,
+        sections: canonicalEvidence.sections,
+      },
       heroSection,
       heroMediaGroup,
       heroCtaGroup,
@@ -102,8 +134,8 @@ export function buildVisualQaPayloadArtifacts({ figmaAnalysis, webAnalysis, text
       prices: numericHints.prices,
       dates: numericHints.dates,
       numericEntities: numericHints.numericEntities,
-      videos,
-      images,
+      videos: canonicalEvidence.media.filter((item) => item.mediaType === 'video').slice(0, MAX_VIDEO_CANDIDATES),
+      images: canonicalEvidence.media.filter((item) => item.mediaType === 'image').slice(0, MAX_IMAGE_CANDIDATES),
       evidenceSummary,
     },
   }
@@ -150,6 +182,17 @@ function createPayloadQuality() {
     figmaCtaDetectedCount: 0,
     webCtaDetectedCount: 0,
     heroPrimaryMediaCount: 0,
+    canonicalActionCount: 0,
+    canonicalNumericCount: 0,
+    rawActionCount: 0,
+    rawNumericCount: 0,
+    webActionSourcesMergedCount: 0,
+    figmaNestedActionMergedCount: 0,
+    oversizedFigmaActionRejectedCount: 0,
+    duplicateNumericMergedCount: 0,
+    heroSectionDetected: false,
+    figmaHeroCanonicalActionCount: 0,
+    webHeroCanonicalActionCount: 0,
     warnings: [],
   }
 
@@ -189,135 +232,143 @@ function createComparisonSummaries(textComparison, quality) {
     .slice(0, MAX_DIFFERENCES)
 }
 
-function createHeroSectionHint({ figmaTextCandidates, webTextCandidates, safeWebAnalysis, filteredDifferences, ctaButtons, heroMediaGroup }) {
-  const figmaTexts = dedupeCandidates(figmaTextCandidates.filter(isHeroTextCandidate), null).slice(0, MAX_HERO_TEXTS)
-  const webTexts = dedupeCandidates(webTextCandidates.filter(isHeroTextCandidate), null).slice(0, MAX_HERO_TEXTS)
-  const sectionCandidates = limitItems(
-    dedupeCandidates((Array.isArray(safeWebAnalysis.sectionCandidates) ? safeWebAnalysis.sectionCandidates : []).filter((item) => item?.name === 'hero' || item?.name === 'top'), null),
-    MAX_SECTION_CANDIDATES,
-  )
+function createSectionEntities({ figmaAnalysis, figmaTextCandidates, webTextCandidates, rawActions, rawNumericCandidates, rawImages, rawVideos }) {
+  const sectionMap = new Map()
+  const figmaNodes = Array.isArray(figmaAnalysis.flatNodes) ? figmaAnalysis.flatNodes : []
+  const figmaSources = [...figmaNodes, ...figmaTextCandidates]
+  const webSources = [
+    ...webTextCandidates,
+    ...(Array.isArray(rawActions) ? rawActions.filter((item) => item.source === 'web') : []),
+    ...(Array.isArray(rawNumericCandidates) ? rawNumericCandidates.filter((item) => item.source === 'web') : []),
+    ...(Array.isArray(rawImages) ? rawImages.filter((item) => item.source === 'web') : []),
+    ...(Array.isArray(rawVideos) ? rawVideos.filter((item) => item.source === 'web') : []),
+  ]
+
+  figmaSources.forEach((candidate) => upsertSectionEntity(sectionMap, createSectionSeedFromCandidate(candidate, 'figma')))
+  webSources.forEach((candidate) => upsertSectionEntity(sectionMap, createSectionSeedFromCandidate(candidate, 'web')))
+
+  return Array.from(sectionMap.values())
+    .sort(compareSectionEntities)
+    .slice(0, MAX_SECTION_ENTITIES)
+}
+
+function detectHeroSections(sections) {
+  const figma = selectHeroSectionForSource(sections, 'figma')
+  const web = selectHeroSectionForSource(sections, 'web')
+  return {
+    figmaSectionId: figma?.sectionId || '',
+    webSectionId: web?.sectionId || '',
+  }
+}
+
+function createCanonicalEvidence({ actions, numericValues, media, sections }) {
+  return {
+    actions: limitCanonicalActions(actions),
+    numericValues: limitItems(numericValues, MAX_PRICE_CANDIDATES),
+    media: limitItems(media, MAX_IMAGE_CANDIDATES + MAX_VIDEO_CANDIDATES),
+    sections: limitItems(sections, MAX_SECTION_ENTITIES),
+  }
+}
+
+function createHeroSectionHint({ sections, heroSections, filteredDifferences, ctaButtons, heroMediaGroup }) {
+  const figmaHero = sections.find((item) => item.sectionId === heroSections.figmaSectionId) || null
+  const webHero = sections.find((item) => item.sectionId === heroSections.webSectionId) || null
   const reasons = []
-  if (figmaTexts.length > 0) reasons.push('figma hero/top text candidates')
-  if (webTexts.length > 0) reasons.push('web hero/top text candidates')
+  if (figmaHero) reasons.push('figma hero section detected')
+  if (webHero) reasons.push('web hero section detected')
   if (heroMediaGroup.comparisonHint) reasons.push('hero media candidates grouped')
-  if (sectionCandidates.length > 0) reasons.push('section candidates support hero area')
+  if (figmaHero?.actionCount > 0 || webHero?.actionCount > 0) reasons.push('hero action cluster detected')
   if (filteredDifferences.some((item) => item.confidence === 'high')) reasons.push('high confidence text differences present')
 
   return {
     type: 'hero',
-    source: determineCombinedSource(figmaTexts.length, webTexts.length),
+    source: determineCombinedSource(figmaHero ? 1 : 0, webHero ? 1 : 0),
     confidence: classifyConfidence(reasons.length >= 3 ? 'high' : reasons.length >= 2 ? 'medium' : 'low'),
     reasons,
+    figmaSectionId: figmaHero?.sectionId || '',
+    webSectionId: webHero?.sectionId || '',
     mediaTypes: {
       figma: heroMediaGroup.figma.mediaTypes,
       web: heroMediaGroup.web.mediaTypes,
     },
-    figmaTexts,
-    webTexts,
-    ctaButtons: ctaButtons.filter((item) => item.section === 'hero' || item.section === 'top').slice(0, 6),
-    sectionCandidates,
+    figmaTextCount: normalizeCount(figmaHero?.textCount, 0),
+    webTextCount: normalizeCount(webHero?.textCount, 0),
+    ctaButtons: ctaButtons.filter((item) => item.sectionId && (item.sectionId === heroSections.figmaSectionId || item.sectionId === heroSections.webSectionId)).slice(0, MAX_HERO_ACTIONS),
+    sections: [figmaHero, webHero].filter(Boolean),
   }
 }
 
-function createNavigationHint({ figmaNavigationItems, webNavigationItems, filteredDifferences, safeWebAnalysis }) {
-  const sectionCandidates = limitItems(
-    dedupeCandidates((Array.isArray(safeWebAnalysis.sectionCandidates) ? safeWebAnalysis.sectionCandidates : []).filter((item) => item?.name === 'navigation'), null),
-    MAX_SECTION_CANDIDATES,
-  )
+function createNavigationHint({ sections, actions, filteredDifferences }) {
+  const navSections = sections.filter((item) => item.role === 'navigation').slice(0, MAX_NAV_TEXTS)
+  const navigationItems = actions.filter((item) => item.role === 'navigation').slice(0, MAX_NAVIGATION_ITEMS)
   const reasons = []
-  if (figmaNavigationItems.length > 0) reasons.push('figma navigation-like texts')
-  if (webNavigationItems.length > 0) reasons.push('web navigation-like texts')
-  if (sectionCandidates.length > 0) reasons.push('section candidates support navigation area')
+  if (navSections.some((item) => item.source === 'figma')) reasons.push('figma navigation section detected')
+  if (navSections.some((item) => item.source === 'web')) reasons.push('web navigation section detected')
+  if (navigationItems.length > 0) reasons.push('navigation action items detected')
   if (filteredDifferences.some((item) => item.status === 'different' && looksNavigationText(item.text))) reasons.push('navigation text differences detected')
 
   return {
     type: 'navigation',
-    source: determineCombinedSource(figmaNavigationItems.length, webNavigationItems.length),
+    source: determineCombinedSource(navSections.filter((item) => item.source === 'figma').length, navSections.filter((item) => item.source === 'web').length),
     confidence: classifyConfidence(reasons.length >= 3 ? 'high' : reasons.length >= 2 ? 'medium' : 'low'),
     reasons,
-    figmaItems: figmaNavigationItems.slice(0, MAX_NAV_TEXTS),
-    webItems: webNavigationItems.slice(0, MAX_NAV_TEXTS),
-    sectionCandidates,
+    figmaItems: navigationItems.filter((item) => item.source === 'figma').slice(0, MAX_NAVIGATION_ITEMS),
+    webItems: navigationItems.filter((item) => item.source === 'web').slice(0, MAX_NAVIGATION_ITEMS),
+    sections: navSections,
   }
 }
 
-function createInteractionHints({ figmaAnalysis, figmaTextCandidates, webTextCandidates, webAnalysis, navigationItems }, quality) {
-  const figmaCandidates = createFigmaInteractionCandidates(figmaAnalysis, figmaTextCandidates)
+function createRawInteractionArtifacts({ figmaAnalysis, figmaTextCandidates, webTextCandidates, webAnalysis }, quality) {
+  const figmaCandidates = createFigmaInteractionCandidates(figmaAnalysis, figmaTextCandidates, quality)
   const webCandidates = createWebInteractionCandidates(webTextCandidates, webAnalysis)
   const combined = [...figmaCandidates, ...webCandidates]
   const onscreen = combined.filter((candidate) => !hasWebVisualExclusionSignals(candidate, webAnalysis) || !isVisualOnlyExcludedWebCandidate(candidate, webAnalysis, quality))
   const leafPreferred = removeParentInteractionCandidates(onscreen, quality)
-  const deduped = dedupeCandidates(leafPreferred, quality)
+  const exactDeduped = dedupeRawInteractionCandidates(leafPreferred, quality)
+  quality.rawActionCount = exactDeduped.length
 
-  const categorized = {
-    primaryActions: [],
-    secondaryActions: [],
-    navigationItems: [],
-    tabs: [],
-    mediaControls: [],
-    carouselControls: [],
-    formControls: [],
-    utilityControls: [],
-    unknownInteractive: [],
+  return {
+    allCandidates: exactDeduped,
+    dedupedCandidates: exactDeduped,
   }
+}
 
-  const actionLike = []
+function createInteractionHints({ rawInteractions, sections, heroSections }, quality) {
+  const deduped = rawInteractions.dedupedCandidates
 
   deduped.forEach((candidate) => {
-    const role = classifyInteractiveRole(candidate, deduped, navigationItems)
-    const normalizedCandidate = {
-      ...candidate,
-      role,
-      confidence: candidate.confidence || inferCandidateConfidence(candidate),
-      reasons: uniqueStrings([...(candidate.reasons || []), ...buildInteractionRoleReasons(candidate, role)]),
-    }
-
-    if (role === 'navigation') {
-      quality.navigationRemovedFromCtaCount += 1
-      categorized.navigationItems.push(normalizedCandidate)
-      return
-    }
-    if (role === 'tab') {
-      quality.tabRemovedFromCtaCount += 1
-      categorized.tabs.push(normalizedCandidate)
-      return
-    }
-    if (role === 'media-control') {
-      quality.mediaControlRemovedFromCtaCount += 1
-      categorized.mediaControls.push(normalizedCandidate)
-      return
-    }
-    if (role === 'carousel-control') {
-      categorized.carouselControls.push(normalizedCandidate)
-      return
-    }
-    if (role === 'form-control') {
-      categorized.formControls.push(normalizedCandidate)
-      return
-    }
-    if (role === 'utility-control') {
-      categorized.utilityControls.push(normalizedCandidate)
-      return
-    }
-    if (role === 'unknown-interactive') {
-      categorized.unknownInteractive.push(normalizedCandidate)
-      return
-    }
-
-    actionLike.push(normalizedCandidate)
+    const role = classifyInteractiveRole(candidate, deduped, [])
+    candidate.role = role
+    candidate.confidence = candidate.confidence || inferCandidateConfidence(candidate)
+    candidate.reasons = uniqueStrings([...(candidate.reasons || []), ...buildInteractionRoleReasons(candidate, role)])
+    if (role === 'navigation') quality.navigationRemovedFromCtaCount += 1
+    if (role === 'tab') quality.tabRemovedFromCtaCount += 1
+    if (role === 'media-control') quality.mediaControlRemovedFromCtaCount += 1
   })
 
-  const assignedActions = assignActionPriority(actionLike)
-  assignedActions.forEach((candidate) => {
-    if (candidate.role === 'secondary-action') {
-      categorized.secondaryActions.push(candidate)
-      return
-    }
-    categorized.primaryActions.push(candidate)
+  const assignedActions = assignActionPriority(deduped.filter((candidate) => candidate.role === 'primary-action'))
+  const roleMap = new Map(assignedActions.map((candidate) => [buildCandidateKey(candidate), candidate.role]))
+  deduped.forEach((candidate) => {
+    const candidateKey = buildCandidateKey(candidate)
+    if (roleMap.has(candidateKey)) candidate.role = roleMap.get(candidateKey)
   })
 
-  quality.figmaCtaDetectedCount = assignedActions.filter((item) => item.source === 'figma').length
-  quality.webCtaDetectedCount = assignedActions.filter((item) => item.source === 'web').length
+  const canonicalActions = createCanonicalActionEntities(deduped, sections, heroSections, quality)
+  const categorized = {
+    primaryActions: canonicalActions.filter((item) => item.role === 'primary-action'),
+    secondaryActions: canonicalActions.filter((item) => item.role === 'secondary-action'),
+    navigationItems: canonicalActions.filter((item) => item.role === 'navigation'),
+    tabs: canonicalActions.filter((item) => item.role === 'tab'),
+    mediaControls: canonicalActions.filter((item) => item.role === 'media-control'),
+    carouselControls: canonicalActions.filter((item) => item.role === 'carousel-control'),
+    formControls: canonicalActions.filter((item) => item.role === 'form-control'),
+    utilityControls: canonicalActions.filter((item) => item.role === 'utility-control'),
+    unknownInteractive: canonicalActions.filter((item) => item.role === 'unknown-interactive'),
+  }
+
+  quality.figmaCtaDetectedCount = canonicalActions.filter((item) => item.source === 'figma' && isCtaRole(item.role)).length
+  quality.webCtaDetectedCount = canonicalActions.filter((item) => item.source === 'web' && isCtaRole(item.role)).length
+  quality.canonicalActionCount = canonicalActions.length
 
   return {
     primaryActions: categorized.primaryActions.slice(0, MAX_CTA_CANDIDATES),
@@ -329,17 +380,19 @@ function createInteractionHints({ figmaAnalysis, figmaTextCandidates, webTextCan
     formControls: categorized.formControls.slice(0, MAX_CTA_CANDIDATES),
     utilityControls: categorized.utilityControls.slice(0, MAX_CTA_CANDIDATES),
     unknownInteractive: categorized.unknownInteractive.slice(0, MAX_CTA_CANDIDATES),
+    allActions: canonicalActions,
   }
 }
 
-function createFigmaInteractionCandidates(figmaAnalysis, figmaTextCandidates) {
+function createFigmaInteractionCandidates(figmaAnalysis, figmaTextCandidates, quality) {
   const flatNodes = Array.isArray(figmaAnalysis.flatNodes) ? figmaAnalysis.flatNodes.filter((node) => node?.effectivelyVisible) : []
   if (flatNodes.length === 0) {
     return figmaTextCandidates
-      .filter((item) => item.text && (/(button|btn|cta|tab|nav|menu|link|action)/i.test(`${item.context} ${item.parentContext}`) || item.role === 'cta' || item.role === 'navigation' || item.role === 'tab'))
+      .filter((item) => item.text && item.text.length <= 24 && !/[.!?]|\s{2,}/.test(item.text) && /(button|btn|cta|tab|nav|menu|link|action)/i.test(`${item.context} ${item.parentContext}`))
       .map((item) => ({
         ...item,
         type: 'interactive',
+        sourceKind: 'figma-text',
         layerPath: item.layerPath,
         interactionEvidence: uniqueStrings(item.reasons || []),
         widthRatio: normalizeNumber(item.widthRatio),
@@ -358,16 +411,21 @@ function createFigmaInteractionCandidates(figmaAnalysis, figmaTextCandidates) {
   })
 
   return flatNodes
-    .filter((node) => isSemanticFigmaInteractiveNode(node, childMap))
-    .map((node) => createFigmaInteractionCandidate(node, flatNodes, childMap))
+    .filter((node) => isSemanticFigmaInteractiveNode(node, childMap, flatNodes, quality))
+    .map((node) => createFigmaInteractionCandidate(node, flatNodes, childMap, quality))
     .filter(Boolean)
 }
 
-function createFigmaInteractionCandidate(node, flatNodes, childMap) {
+function createFigmaInteractionCandidate(node, flatNodes, childMap, quality) {
   const text = deriveFigmaInteractionText(node, flatNodes)
   const layerPath = normalizeString(node?.layerPath)
   const context = truncateText(layerPath || node?.name || '', 180)
   const interactionEvidence = buildFigmaInteractionEvidence(node, childMap)
+  const descendantTexts = getFigmaDescendantTexts(node, flatNodes)
+  if (shouldRejectFigmaActionNode(node, descendantTexts, childMap)) {
+    quality.oversizedFigmaActionRejectedCount += 1
+    return null
+  }
   const reasons = []
   if (node?.isInteractiveCandidate) reasons.push('interactive prototype signal')
   if (interactionEvidence.some((item) => item.includes('button'))) reasons.push('button-like structure')
@@ -378,6 +436,7 @@ function createFigmaInteractionCandidate(node, flatNodes, childMap) {
   const candidate = {
     type: 'interactive',
     source: 'figma',
+    sourceKind: 'figma-node',
     sourceId: normalizeString(node?.nodeId || node?.id),
     text,
     displayText: normalizeTextForExactDisplayComparison(text),
@@ -413,10 +472,10 @@ function createFigmaInteractionCandidate(node, flatNodes, childMap) {
 
 function createWebInteractionCandidates(webTextCandidates, webAnalysis) {
   const hintCandidates = (Array.isArray(webAnalysis.ctaCandidates) ? webAnalysis.ctaCandidates : [])
-    .map((item) => normalizeWebHintCandidate(item, 'interactive'))
+    .map((item) => normalizeWebHintCandidate({ ...item, sourceKind: 'web-cta-hint' }, 'interactive'))
   const textCandidates = webTextCandidates
     .filter(isSemanticWebInteractiveTextCandidate)
-    .map((item) => ({ ...item, type: 'interactive' }))
+    .map((item) => ({ ...item, type: 'interactive', sourceKind: 'web-text' }))
 
   return [...hintCandidates, ...textCandidates]
 }
@@ -484,6 +543,7 @@ function createMergedImageHints(figmaAnalysis, webAnalysis, quality) {
     .map((node) => ({
       type: 'image',
       source: 'figma',
+      sourceKind: 'figma-node',
       sourceId: normalizeString(node?.nodeId || node?.id),
       text: truncateText(node?.name || '', 120),
       confidence: classifyConfidence(node?.yRatio <= 0.35 ? 'high' : 'medium'),
@@ -512,6 +572,7 @@ function createMergedVideoHints(figmaAnalysis, webAnalysis, quality) {
     .map((node) => ({
       type: 'video',
       source: 'figma',
+      sourceKind: 'figma-node',
       sourceId: normalizeString(node?.nodeId || node?.id),
       text: truncateText(node?.name || '', 120),
       confidence: classifyConfidence(node?.yRatio <= 0.35 ? 'high' : 'medium'),
@@ -535,11 +596,17 @@ function createMergedVideoHints(figmaAnalysis, webAnalysis, quality) {
   return [...figmaVideos, ...webVideos]
 }
 
-function createNumericHints({ figmaTextCandidates, webTextCandidates }, quality) {
+function createRawNumericCandidates({ figmaTextCandidates, webTextCandidates, webAnalysis }, quality) {
   const rawCandidates = [...figmaTextCandidates, ...webTextCandidates]
+    .filter((candidate) => !hasWebVisualExclusionSignals(candidate, webAnalysis) || !isVisualOnlyExcludedWebCandidate(candidate, webAnalysis, quality))
     .map((candidate) => createNumericCandidate(candidate, quality))
     .filter(Boolean)
-  const numericEntities = dedupeCandidates(rawCandidates, quality).slice(0, MAX_NUMERIC_CANDIDATES)
+  quality.rawNumericCount = rawCandidates.length
+  return rawCandidates
+}
+
+function createNumericHints({ rawNumericCandidates, sections, heroSections }, quality) {
+  const numericEntities = createCanonicalNumericEntities(rawNumericCandidates, sections, heroSections, quality).slice(0, MAX_NUMERIC_CANDIDATES)
   const prices = []
   const dates = []
 
@@ -587,6 +654,7 @@ function createNumericCandidate(candidate, quality) {
 
   return {
     type: PRICE_TYPE_SET.has(numericType) ? 'price' : 'numeric',
+    sourceKind: candidate.sourceKind || `${candidate.source}-text`,
     numericType,
     source: candidate.source,
     sourceId: candidate.sourceId,
@@ -596,16 +664,26 @@ function createNumericCandidate(candidate, quality) {
     numericTokens,
     unitTokens,
     context: truncateText(candidate.context || candidate.layerPath || '', 180),
+    selector: candidate.selector || '',
+    parentContext: candidate.parentContext || '',
     section: candidate.section,
     confidence: classifyConfidence(reasons.length >= 3 ? 'high' : reasons.length >= 2 ? 'medium' : 'low'),
     reasons,
+    xRatio: candidate.xRatio,
     yRatio: candidate.yRatio,
   }
 }
 
-function createHeroMediaGroup({ images, videos }, quality) {
-  const heroFigmaMedia = [...images.filter((item) => item.source === 'figma' && isHeroMediaCandidate(item)), ...videos.filter((item) => item.source === 'figma' && isHeroMediaCandidate(item))]
-  const heroWebMedia = [...images.filter((item) => item.source === 'web' && isHeroMediaCandidate(item)), ...videos.filter((item) => item.source === 'web' && isHeroMediaCandidate(item))]
+function createCanonicalMediaHints({ images, videos, sections, heroSections }) {
+  const canonicalMedia = createCanonicalMediaEntities([...images, ...videos], sections, heroSections)
+  return {
+    media: canonicalMedia,
+  }
+}
+
+function createHeroMediaGroup({ media, heroSections }, quality) {
+  const heroFigmaMedia = media.filter((item) => item.source === 'figma' && item.sectionId === heroSections.figmaSectionId)
+  const heroWebMedia = media.filter((item) => item.source === 'web' && item.sectionId === heroSections.webSectionId)
   const figmaPrimaryCandidates = selectHeroPrimaryMediaCandidates(heroFigmaMedia)
   const webPrimaryCandidates = selectHeroPrimaryMediaCandidates(heroWebMedia)
   const figmaMediaTypes = uniqueStrings(figmaPrimaryCandidates.map((item) => item.type).length > 0 ? figmaPrimaryCandidates.map((item) => item.type) : heroFigmaMedia.map((item) => item.type))
@@ -639,8 +717,8 @@ function createHeroMediaGroup({ images, videos }, quality) {
   }
 }
 
-function createHeroCtaGroup(ctaButtons) {
-  const heroActions = ctaButtons.filter((item) => item.section === 'hero' || item.section === 'top')
+function createHeroCtaGroup(actions, heroSections, quality) {
+  const heroActions = actions.filter((item) => isCtaRole(item.role) && (item.sectionId === heroSections.figmaSectionId || item.sectionId === heroSections.webSectionId))
   const figmaActions = heroActions.filter((item) => item.source === 'figma')
   const webActions = heroActions.filter((item) => item.source === 'web')
   const figmaTexts = new Set(figmaActions.map((item) => normalizeComparableText(item.text)))
@@ -659,15 +737,19 @@ function createHeroCtaGroup(ctaButtons) {
   if (webActions.length > 0) reasons.push('web hero action candidates present')
   if (textDifferences.length === 0 && figmaActions.length === webActions.length && figmaActions.length > 0) reasons.push('hero action count aligned')
 
+  quality.heroSectionDetected = Boolean(heroSections.figmaSectionId || heroSections.webSectionId)
+  quality.figmaHeroCanonicalActionCount = figmaActions.length
+  quality.webHeroCanonicalActionCount = webActions.length
+
   return {
     type: 'hero-cta-group',
     figma: {
       count: figmaActions.length,
-      actions: figmaActions.slice(0, 6),
+      actions: figmaActions.slice(0, MAX_HERO_ACTIONS),
     },
     web: {
       count: webActions.length,
-      actions: webActions.slice(0, 6),
+      actions: webActions.slice(0, MAX_HERO_ACTIONS),
     },
     countDifference: Math.abs(figmaActions.length - webActions.length),
     textDifferences,
@@ -676,11 +758,11 @@ function createHeroCtaGroup(ctaButtons) {
   }
 }
 
-function createEvidenceSummary({ heroSection, heroMediaGroup, heroCtaGroup, navigation, images, videos, interactions, prices, dates, filteredDifferences, figmaNavigationItems, webNavigationItems }) {
+function createEvidenceSummary({ heroSection, heroMediaGroup, heroCtaGroup, navigation, sections, media, interactions, prices, dates, filteredDifferences, canonicalEvidence }) {
   return {
     hero: {
-      figmaTextCount: heroSection.figmaTexts.length,
-      webTextCount: heroSection.webTexts.length,
+      figmaTextCount: heroSection.figmaTextCount,
+      webTextCount: heroSection.webTextCount,
       figmaMediaTypes: uniqueStrings(heroSection.mediaTypes?.figma || []),
       webMediaTypes: uniqueStrings(heroSection.mediaTypes?.web || []),
       figmaCtaCount: heroCtaGroup.figma.count,
@@ -689,9 +771,9 @@ function createEvidenceSummary({ heroSection, heroMediaGroup, heroCtaGroup, navi
       webPrimaryMediaCount: normalizeCount(heroMediaGroup.web.primaryCount, 0),
     },
     navigation: {
-      figmaItemCount: figmaNavigationItems.length,
-      webItemCount: webNavigationItems.length,
-      totalItemCount: navigation.figmaItems.length + navigation.webItems.length + interactions.navigationItems.length,
+      figmaItemCount: navigation.figmaItems.length,
+      webItemCount: navigation.webItems.length,
+      totalItemCount: navigation.figmaItems.length + navigation.webItems.length,
     },
     interactions: {
       primaryActionCount: interactions.primaryActions.length,
@@ -704,20 +786,510 @@ function createEvidenceSummary({ heroSection, heroMediaGroup, heroCtaGroup, navi
       unknownInteractiveCount: interactions.unknownInteractive.length,
     },
     content: {
-      figmaImageCount: images.filter((item) => item.source === 'figma').length,
-      webImageCount: images.filter((item) => item.source === 'web').length,
-      webVideoCount: videos.filter((item) => item.source === 'web').length,
+      figmaImageCount: media.filter((item) => item.source === 'figma' && item.mediaType === 'image').length,
+      webImageCount: media.filter((item) => item.source === 'web' && item.mediaType === 'image').length,
+      webVideoCount: media.filter((item) => item.source === 'web' && item.mediaType === 'video').length,
       heroPrimaryMediaCount: normalizeCount(heroMediaGroup.figma.primaryCount, 0) + normalizeCount(heroMediaGroup.web.primaryCount, 0),
     },
     numeric: {
       priceCount: prices.length,
       dateCount: dates.length,
     },
+    sections: {
+      totalCount: sections.length,
+      heroCount: sections.filter((item) => item.role === 'hero').length,
+    },
+    canonical: {
+      actionCount: canonicalEvidence.actions.length,
+      numericCount: canonicalEvidence.numericValues.length,
+      mediaCount: canonicalEvidence.media.length,
+    },
     text: {
       differenceCount: filteredDifferences.length,
       highConfidenceDifferenceCount: filteredDifferences.filter((item) => item.confidence === 'high').length,
     },
   }
+}
+
+function upsertSectionEntity(sectionMap, seed) {
+  if (!seed) return
+  const existing = sectionMap.get(seed.sectionId)
+  if (!existing) {
+    sectionMap.set(seed.sectionId, seed)
+    return
+  }
+
+  existing.xRatio = minDefined(existing.xRatio, seed.xRatio)
+  existing.yRatio = minDefined(existing.yRatio, seed.yRatio)
+  existing.widthRatio = maxDefined(existing.widthRatio, seed.widthRatio)
+  existing.heightRatio = maxDefined(existing.heightRatio, seed.heightRatio)
+  existing.textCount += normalizeCount(seed.textCount, 0)
+  existing.actionCount += normalizeCount(seed.actionCount, 0)
+  existing.imageCount += normalizeCount(seed.imageCount, 0)
+  existing.videoCount += normalizeCount(seed.videoCount, 0)
+  existing.headingCount += normalizeCount(seed.headingCount, 0)
+  existing.numericCount += normalizeCount(seed.numericCount, 0)
+}
+
+function createSectionSeedFromCandidate(candidate, source) {
+  if (!candidate) return null
+  const sectionPath = source === 'figma'
+    ? getFigmaSectionPath(candidate.layerPath || candidate.context || candidate.parentContext)
+    : getWebSectionPath(candidate.parentContext || candidate.context || candidate.selector || candidate.layerPath, candidate.section)
+  const searchable = `${candidate?.layerPath || ''} ${candidate?.context || ''} ${candidate?.parentContext || ''} ${candidate?.selector || ''}`.toLowerCase()
+  const role = inferSectionRole({ source, searchable, explicitSection: candidate.section, text: candidate.text })
+  return {
+    sectionId: `${source}:${sectionPath || role || 'unknown'}`,
+    source,
+    role,
+    path: sectionPath || role || 'unknown',
+    xRatio: normalizeNumber(candidate.xRatio),
+    yRatio: normalizeNumber(candidate.yRatio),
+    widthRatio: normalizeNumber(candidate.widthRatio),
+    heightRatio: normalizeNumber(candidate.heightRatio),
+    textCount: candidate.type === 'text' || candidate.nodeType === 'TEXT' ? 1 : 0,
+    actionCount: candidate.type === 'interactive' ? 1 : 0,
+    imageCount: candidate.type === 'image' ? 1 : 0,
+    videoCount: candidate.type === 'video' ? 1 : 0,
+    headingCount: candidate.role === 'heading' || Array.isArray(candidate.reasons) && (candidate.reasons.includes('large font size') || candidate.reasons.includes('heading element')) ? 1 : 0,
+    numericCount: candidate.type === 'numeric' || candidate.type === 'price' ? 1 : 0,
+    childEntityIds: [],
+  }
+}
+
+function compareSectionEntities(first, second) {
+  const scoreDiff = getSectionEntityScore(second) - getSectionEntityScore(first)
+  if (scoreDiff !== 0) return scoreDiff
+  return (first.yRatio ?? 1) - (second.yRatio ?? 1)
+}
+
+function getSectionEntityScore(section) {
+  let score = 0
+  if (section.role === 'hero') score += 200
+  if (section.role === 'navigation') score += 120
+  if (section.role === 'footer') score += 40
+  score += normalizeCount(section.headingCount, 0) * 18
+  score += normalizeCount(section.actionCount, 0) * 14
+  score += normalizeCount(section.imageCount, 0) * 12
+  score += normalizeCount(section.videoCount, 0) * 14
+  score += normalizeCount(section.textCount, 0) * 3
+  score += Math.max(0, 50 - Math.round((section.yRatio ?? 1) * 100))
+  return score
+}
+
+function selectHeroSectionForSource(sections, source) {
+  const candidates = sections.filter((item) => item.source === source && item.role !== 'navigation' && item.role !== 'footer')
+  if (candidates.length === 0) return null
+  return candidates
+    .map((section) => ({ section, score: getHeroSectionScore(section) }))
+    .filter((entry) => entry.score > 0)
+    .sort((first, second) => second.score - first.score)
+    .map((entry) => entry.section)[0] || null
+}
+
+function getHeroSectionScore(section) {
+  let score = 0
+  if (section.role === 'hero') score += 220
+  if (/hero|kv|banner|main.?visual/.test(section.path.toLowerCase())) score += 180
+  if ((section.imageCount + section.videoCount) > 0) score += 60
+  if (section.headingCount > 0) score += 50
+  if (section.actionCount > 0) score += 45
+  if ((section.yRatio ?? 1) <= 0.3) score += 40
+  if ((section.widthRatio ?? 0) >= 0.4) score += 20
+  if ((section.heightRatio ?? 0) >= 0.12) score += 20
+  return score
+}
+
+function inferSectionRole({ source, searchable, explicitSection, text }) {
+  const explicit = normalizeString(explicitSection).toLowerCase()
+  if (explicit === 'navigation') return 'navigation'
+  if (explicit === 'footer') return 'footer'
+  if (explicit === 'hero') return 'hero'
+  if (/nav|navigation|gnb|menu|header/.test(searchable)) return 'navigation'
+  if (/footer|legal|copyright|terms|privacy|cookie/.test(searchable)) return 'footer'
+  if (/hero|kv|banner|main.?visual/.test(searchable)) return 'hero'
+  if (/card|swiper|carousel|slider/.test(searchable)) return 'cards'
+  if (source === 'web' && /main/.test(searchable)) return 'content'
+  if (text) return 'content'
+  return 'unknown'
+}
+
+function getFigmaSectionPath(value) {
+  const parts = normalizeString(value).split('/').map((item) => item.trim()).filter(Boolean)
+  return parts[0] || 'unknown'
+}
+
+function getWebSectionPath(value, explicitSection) {
+  const explicit = normalizeString(explicitSection)
+  if (explicit === 'hero' || explicit === 'navigation' || explicit === 'footer') return explicit
+  const normalized = normalizeString(value)
+  if (!normalized) return explicit || 'unknown'
+  const parts = normalized.split('>').map((item) => item.trim()).filter(Boolean)
+  const root = (parts[0] || explicit || 'unknown').split(/\s+/)[0]
+  return root || explicit || 'unknown'
+}
+
+function finalizeSectionEntities(sections, canonicalEvidence, heroSections) {
+  const finalized = sections.map((section) => ({
+    ...section,
+    role: section.sectionId === heroSections.figmaSectionId || section.sectionId === heroSections.webSectionId ? 'hero' : section.role,
+    textCount: normalizeCount(section.textCount, 0),
+    actionCount: 0,
+    imageCount: 0,
+    videoCount: 0,
+    childEntityIds: [],
+  }))
+
+  const sectionMap = new Map(finalized.map((section) => [section.sectionId, section]))
+  canonicalEvidence.actions.forEach((entity) => {
+    const section = sectionMap.get(entity.sectionId)
+    if (!section) return
+    section.actionCount += 1
+    section.childEntityIds.push(entity.entityId)
+  })
+  canonicalEvidence.numericValues.forEach((entity) => {
+    const section = sectionMap.get(entity.sectionId)
+    if (!section) return
+    section.childEntityIds.push(entity.entityId)
+  })
+  canonicalEvidence.media.forEach((entity) => {
+    const section = sectionMap.get(entity.sectionId)
+    if (!section) return
+    if (entity.mediaType === 'video') section.videoCount += 1
+    if (entity.mediaType === 'image') section.imageCount += 1
+    section.childEntityIds.push(entity.entityId)
+  })
+
+  return finalized.sort(compareSectionEntities)
+}
+
+function limitCanonicalActions(actions) {
+  const hero = actions.filter((item) => isCtaRole(item.role) && item.isHeroAction).slice(0, MAX_HERO_ACTIONS)
+  const content = actions.filter((item) => isCtaRole(item.role) && !item.isHeroAction).slice(0, MAX_CONTENT_ACTIONS)
+  const navigation = actions.filter((item) => item.role === 'navigation').slice(0, MAX_NAVIGATION_ITEMS)
+  const tabs = actions.filter((item) => item.role === 'tab').slice(0, MAX_NAVIGATION_ITEMS)
+  const mediaControls = actions.filter((item) => item.role === 'media-control').slice(0, MAX_NAVIGATION_ITEMS)
+  const others = actions.filter((item) => !isCtaRole(item.role) && !['navigation', 'tab', 'media-control'].includes(item.role)).slice(0, MAX_NAVIGATION_ITEMS)
+  return dedupeCanonicalEntities([...hero, ...content, ...navigation, ...tabs, ...mediaControls, ...others])
+}
+
+function createCanonicalCtaButtons(actions, heroSections) {
+  const hero = actions.filter((item) => isCtaRole(item.role) && (item.sectionId === heroSections.figmaSectionId || item.sectionId === heroSections.webSectionId)).slice(0, MAX_HERO_ACTIONS)
+  const content = actions.filter((item) => isCtaRole(item.role) && !hero.includes(item)).slice(0, MAX_CONTENT_ACTIONS)
+  return [...hero, ...content]
+}
+
+function createCanonicalActionEntities(rawCandidates, sections, heroSections, quality) {
+  const canonical = []
+
+  rawCandidates.forEach((candidate) => {
+    const section = resolveSectionForCandidate(candidate, sections)
+    const normalized = {
+      ...candidate,
+      sectionId: section?.sectionId || '',
+      sectionRootId: section?.sectionId || '',
+      sectionPath: section?.path || '',
+    }
+    const existing = canonical.find((entity) => isSameCanonicalAction(entity, normalized))
+    if (!existing) {
+      canonical.push(createCanonicalActionEntity(normalized, heroSections))
+      return
+    }
+
+    mergeCanonicalActionEntity(existing, normalized, quality)
+  })
+
+  canonical.forEach((entity) => {
+    entity.isHeroAction = isCtaRole(entity.role) && (entity.sectionId === heroSections.figmaSectionId || entity.sectionId === heroSections.webSectionId)
+  })
+
+  return canonical.sort(compareActionCandidates)
+}
+
+function createCanonicalActionEntity(candidate, heroSections) {
+  return {
+    entityId: `action:${candidate.source}:${candidate.sourceId || candidate.selector || normalizeComparableText(candidate.text)}`,
+    type: 'action',
+    source: candidate.source,
+    role: candidate.role,
+    text: candidate.text,
+    displayText: candidate.displayText,
+    href: candidate.href || '',
+    selector: candidate.selector || '',
+    sectionId: candidate.sectionId || '',
+    sectionRootId: candidate.sectionRootId || '',
+    sectionPath: candidate.sectionPath || '',
+    confidence: candidate.confidence,
+    reasons: uniqueStrings(candidate.reasons || []),
+    xRatio: normalizeNumber(candidate.xRatio),
+    yRatio: normalizeNumber(candidate.yRatio),
+    widthRatio: normalizeNumber(candidate.widthRatio),
+    heightRatio: normalizeNumber(candidate.heightRatio),
+    interactionEvidence: Array.isArray(candidate.interactionEvidence) ? candidate.interactionEvidence : [],
+    sources: [buildSourceEvidence(candidate)],
+    isHeroAction: candidate.sectionId === heroSections.figmaSectionId || candidate.sectionId === heroSections.webSectionId,
+  }
+}
+
+function mergeCanonicalActionEntity(entity, candidate, quality) {
+  entity.sources.push(buildSourceEvidence(candidate))
+  entity.sources = dedupeSourceEvidence(entity.sources)
+  entity.reasons = uniqueStrings([...entity.reasons, ...(candidate.reasons || [])])
+  entity.interactionEvidence = uniqueStrings([...(entity.interactionEvidence || []), ...(candidate.interactionEvidence || [])])
+  if (getActionRepresentativeScore(candidate) > getActionRepresentativeScore(entity)) {
+    entity.text = candidate.text || entity.text
+    entity.displayText = candidate.displayText || entity.displayText
+    entity.href = candidate.href || entity.href
+    entity.selector = candidate.selector || entity.selector
+    entity.confidence = candidate.confidence || entity.confidence
+    entity.xRatio = normalizeNumber(candidate.xRatio)
+    entity.yRatio = normalizeNumber(candidate.yRatio)
+    entity.widthRatio = normalizeNumber(candidate.widthRatio)
+    entity.heightRatio = normalizeNumber(candidate.heightRatio)
+  }
+  if (candidate.source === 'web') quality.webActionSourcesMergedCount += 1
+  if (candidate.source === 'figma') quality.figmaNestedActionMergedCount += 1
+}
+
+function isSameCanonicalAction(entity, candidate) {
+  if (!entity || !candidate) return false
+  if (entity.source !== candidate.source) return false
+  if (entity.source === 'web') {
+    const sameSelector = normalizeSelector(entity.selector) && normalizeSelector(entity.selector) === normalizeSelector(candidate.selector)
+    const sameHref = normalizeString(entity.href) === normalizeString(candidate.href)
+    const sameText = normalizeComparableText(entity.text) === normalizeComparableText(candidate.text)
+    const sameParent = normalizeString(entity.sectionPath) === normalizeString(candidate.sectionPath)
+    return sameText && hasSimilarPosition(entity.yRatio, candidate.yRatio) && (sameSelector || (sameHref && sameParent))
+  }
+  const sameText = normalizeComparableText(entity.text) === normalizeComparableText(candidate.text)
+  const sameSection = normalizeString(entity.sectionPath) === normalizeString(candidate.sectionPath)
+  const sameFamily = normalizeString(entity.selector || entity.sectionId) === normalizeString(candidate.parentId || candidate.sectionId)
+  return sameText && (sameFamily || (sameSection && hasSimilarPosition(entity.yRatio, candidate.yRatio) && hasSimilarXAxis(entity.xRatio, candidate.xRatio)))
+}
+
+function buildSourceEvidence(candidate) {
+  return {
+    source: candidate.sourceKind || `${candidate.source}-${candidate.type}`,
+    sourceId: candidate.sourceId || '',
+    selector: candidate.selector || '',
+    href: candidate.href || '',
+    text: candidate.text || '',
+  }
+}
+
+function dedupeSourceEvidence(sources) {
+  const seen = new Set()
+  return (Array.isArray(sources) ? sources : []).filter((item) => {
+    const key = `${item.source}:${item.sourceId}:${item.selector}:${item.href}:${normalizeComparableText(item.text)}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function getActionRepresentativeScore(candidate) {
+  let score = getCandidateScore(candidate)
+  const type = normalizeString(candidate.nodeType || candidate.tagName).toUpperCase()
+  if (candidate.source === 'figma' && ['INSTANCE', 'COMPONENT'].includes(type) && Array.isArray(candidate.interactionEvidence) && candidate.interactionEvidence.includes('isInteractiveCandidate')) score += 80
+  if (candidate.source === 'figma' && type === 'FRAME') score += 40
+  if (candidate.sourceKind === 'figma-text') score -= 40
+  if (candidate.sourceKind === 'web-cta-hint') score += 10
+  return score
+}
+
+function createCanonicalNumericEntities(rawCandidates, sections, heroSections, quality) {
+  const canonical = []
+
+  rawCandidates.forEach((candidate) => {
+    const section = resolveSectionForCandidate(candidate, sections)
+    const normalized = {
+      ...candidate,
+      sectionId: section?.sectionId || '',
+      sectionRootId: section?.sectionId || '',
+      sectionPath: section?.path || '',
+      isHeroNumeric: section?.sectionId === heroSections.figmaSectionId || section?.sectionId === heroSections.webSectionId,
+    }
+    const existing = canonical.find((entity) => isSameCanonicalNumeric(entity, normalized))
+    if (!existing) {
+      canonical.push(createCanonicalNumericEntity(normalized))
+      return
+    }
+    existing.sources.push(buildSourceEvidence(normalized))
+    existing.sources = dedupeSourceEvidence(existing.sources)
+    existing.reasons = uniqueStrings([...existing.reasons, ...(normalized.reasons || [])])
+    if (getNumericRepresentativeScore(normalized) > getNumericRepresentativeScore(existing)) {
+      existing.text = normalized.text
+      existing.displayText = normalized.displayText
+      existing.fullContextText = normalized.fullContextText
+      existing.numericTokens = normalized.numericTokens
+      existing.unitTokens = normalized.unitTokens
+      existing.context = normalized.context
+      existing.yRatio = normalized.yRatio
+    }
+    quality.duplicateNumericMergedCount += 1
+  })
+
+  quality.canonicalNumericCount = canonical.length
+  return canonical
+}
+
+function createCanonicalNumericEntity(candidate) {
+  return {
+    entityId: `numeric:${candidate.source}:${candidate.sourceId || normalizeComparableText(candidate.text)}`,
+    type: candidate.type,
+    numericType: candidate.numericType,
+    source: candidate.source,
+    text: candidate.text,
+    displayText: candidate.displayText,
+    fullContextText: candidate.fullContextText,
+    numericTokens: candidate.numericTokens,
+    unitTokens: candidate.unitTokens,
+    context: candidate.context,
+    sectionId: candidate.sectionId || '',
+    sectionRootId: candidate.sectionRootId || '',
+    sectionPath: candidate.sectionPath || '',
+    confidence: candidate.confidence,
+    reasons: uniqueStrings(candidate.reasons || []),
+    yRatio: candidate.yRatio,
+    sources: [buildSourceEvidence(candidate)],
+  }
+}
+
+function isSameCanonicalNumeric(entity, candidate) {
+  return entity.source === candidate.source
+    && entity.numericType === candidate.numericType
+    && normalizeComparableText(entity.displayText) === normalizeComparableText(candidate.displayText)
+    && normalizeComparableSectionPath(entity.sectionPath) === normalizeComparableSectionPath(candidate.sectionPath)
+    && JSON.stringify(entity.numericTokens) === JSON.stringify(candidate.numericTokens)
+    && JSON.stringify(entity.unitTokens) === JSON.stringify(candidate.unitTokens)
+    && hasSimilarPosition(entity.yRatio, candidate.yRatio)
+}
+
+function getNumericRepresentativeScore(candidate) {
+  let score = getCandidateScore(candidate)
+  const searchable = `${candidate.selector || ''} ${candidate.context || ''}`.toLowerCase()
+  if (/active|current/.test(searchable)) score += 20
+  if (/duplicate/.test(searchable)) score -= 40
+  if ((candidate.fullContextText || '').length < 60) score += 10
+  return score
+}
+
+function createCanonicalMediaEntities(rawMedia, sections, heroSections) {
+  const canonical = []
+  rawMedia.forEach((candidate) => {
+    const section = resolveSectionForCandidate(candidate, sections)
+    const normalized = {
+      ...candidate,
+      sectionId: section?.sectionId || '',
+      sectionRootId: section?.sectionId || '',
+      sectionPath: section?.path || '',
+    }
+    const existing = canonical.find((entity) => isSameCanonicalMedia(entity, normalized))
+    if (!existing) {
+      canonical.push({
+        entityId: `media:${normalized.source}:${normalized.sourceId || normalized.selector || normalized.layerPath}`,
+        entityType: 'media',
+        type: normalized.type,
+        mediaType: normalized.type,
+        source: normalized.source,
+        text: normalized.text,
+        sectionId: normalized.sectionId,
+        sectionRootId: normalized.sectionRootId,
+        sectionPath: normalized.sectionPath,
+        confidence: normalized.confidence,
+        reasons: uniqueStrings(normalized.reasons || []),
+        xRatio: normalized.xRatio,
+        yRatio: normalized.yRatio,
+        widthRatio: normalized.widthRatio,
+        heightRatio: normalized.heightRatio,
+        width: normalized.width,
+        height: normalized.height,
+        role: classifyHeroMediaRole(normalized),
+        sources: [buildSourceEvidence(normalized)],
+        isHeroPrimary: normalized.sectionId === heroSections.figmaSectionId || normalized.sectionId === heroSections.webSectionId,
+      })
+      return
+    }
+    existing.sources.push(buildSourceEvidence(normalized))
+    existing.sources = dedupeSourceEvidence(existing.sources)
+  })
+  return canonical
+}
+
+function isSameCanonicalMedia(entity, candidate) {
+  return entity.source === candidate.source
+    && entity.mediaType === candidate.type
+    && (normalizeString(entity.sectionPath) === normalizeString(candidate.sectionPath))
+    && (normalizeString(entity.text) === normalizeString(candidate.text) || normalizeString(entity.entityId).endsWith(normalizeString(candidate.sourceId)))
+}
+
+function resolveSectionForCandidate(candidate, sections) {
+  const source = candidate?.source
+  const path = source === 'figma'
+    ? getFigmaSectionPath(candidate.layerPath || candidate.context || candidate.parentContext)
+    : getWebSectionPath(candidate.parentContext || candidate.context || candidate.selector || candidate.layerPath, candidate.section)
+  return sections.find((section) => section.source === source && section.path === path)
+    || sections.find((section) => section.source === source && normalizeComparableSectionPath(section.path) === normalizeComparableSectionPath(path))
+    || sections.find((section) => section.source === source && section.role === candidate.section)
+    || null
+}
+
+function normalizeSelector(value) {
+  return normalizeString(value).replace(/:nth-of-type\(\d+\)/g, '')
+}
+
+function normalizeComparableSectionPath(value) {
+  const normalized = normalizeString(value).toLowerCase().split(/\s+/)[0].replace(/[#.]/g, '')
+  return normalized.endsWith('s') ? normalized.slice(0, -1) : normalized
+}
+
+function isCtaRole(role) {
+  return role === 'primary-action' || role === 'secondary-action'
+}
+
+function dedupeCanonicalEntities(items) {
+  const seen = new Set()
+  return items.filter((item) => {
+    if (seen.has(item.entityId)) return false
+    seen.add(item.entityId)
+    return true
+  })
+}
+
+function dedupeRawInteractionCandidates(candidates, quality) {
+  const selected = []
+  ;(Array.isArray(candidates) ? candidates : []).forEach((candidate) => {
+    const index = selected.findIndex((existing) => isSameRawInteractionCandidate(existing, candidate))
+    if (index === -1) {
+      selected.push(candidate)
+      return
+    }
+    quality.candidateDeduplicatedCount += 1
+    selected[index] = choosePreferredCandidate(selected[index], candidate)
+  })
+  return selected
+}
+
+function isSameRawInteractionCandidate(first, second) {
+  if (!first || !second) return false
+  if (first.source !== second.source) return false
+  if (first.sourceKind !== second.sourceKind) return false
+  if (first.sourceId && second.sourceId && first.sourceId === second.sourceId) return true
+  return normalizeSelector(first.selector) === normalizeSelector(second.selector)
+    && normalizeComparableText(first.text) === normalizeComparableText(second.text)
+    && normalizeString(first.href) === normalizeString(second.href)
+}
+
+function minDefined(first, second) {
+  if (!Number.isFinite(first)) return Number.isFinite(second) ? second : null
+  if (!Number.isFinite(second)) return first
+  return Math.min(first, second)
+}
+
+function maxDefined(first, second) {
+  if (!Number.isFinite(first)) return Number.isFinite(second) ? second : null
+  if (!Number.isFinite(second)) return first
+  return Math.max(first, second)
 }
 
 function normalizeFigmaTextCandidates(textNodes) {
@@ -735,6 +1307,7 @@ function normalizeFigmaTextCandidates(textNodes) {
       return {
         type: looksLikePriceText(text) ? 'price' : 'text',
         source: 'figma',
+        sourceKind: 'figma-text',
         sourceId: normalizeString(node?.nodeId || node?.id),
         text,
         displayText: normalizeTextForExactDisplayComparison(text),
@@ -775,6 +1348,7 @@ function normalizeWebTextCandidates(textNodes) {
       return {
         type: looksLikePriceText(text) ? 'price' : 'text',
         source: 'web',
+        sourceKind: 'web-text',
         sourceId: normalizeString(node?.id || node?.selector),
         text,
         displayText: normalizeTextForExactDisplayComparison(text),
@@ -806,6 +1380,7 @@ function normalizeWebHintCandidate(item, fallbackType) {
   return {
     type: normalizeString(item?.type) || fallbackType,
     source: normalizeString(item?.source) || 'web',
+    sourceKind: normalizeString(item?.sourceKind) || (fallbackType === 'interactive' ? 'web-cta-hint' : `web-${fallbackType}-hint`),
     sourceId: normalizeString(item?.sourceId || item?.id || item?.selector || item?.text),
     text,
     displayText: normalizeTextForExactDisplayComparison(text),
@@ -971,22 +1546,6 @@ function classifyHeroMediaRole(candidate) {
   return 'unknown'
 }
 
-function isHeroTextCandidate(item) {
-  if (!item || !item.text) return false
-  return item.section === 'hero'
-    || item.section === 'top'
-    || item.role === 'heading'
-    || item.reasons.includes('large font size')
-    || item.reasons.includes('heading element')
-}
-
-function isNavigationCandidate(item) {
-  if (!item || !item.text) return false
-  return item.section === 'navigation'
-    || item.role === 'navigation'
-    || /nav|navigation|gnb|menu|header/.test(`${item.context || ''} ${item.parentContext || ''} ${item.selector || ''}`.toLowerCase())
-}
-
 function isNavigationLikeCandidate(candidate) {
   return candidate.section === 'navigation'
     || candidate.role === 'navigation'
@@ -1001,20 +1560,22 @@ function isSemanticWebInteractiveTextCandidate(item) {
     || /(button|btn|cta|tab|swiper|carousel|slider|video|control|form)/i.test(`${item.context} ${item.parentContext}`)
 }
 
-function isSemanticFigmaInteractiveNode(node, childMap) {
+function isSemanticFigmaInteractiveNode(node, childMap, flatNodes, quality) {
   if (!node?.effectivelyVisible) return false
+  const type = normalizeString(node?.type)
+  if (!['FRAME', 'INSTANCE', 'COMPONENT'].includes(type)) return false
   const searchable = `${node?.name || ''} ${node?.layerPath || ''}`.toLowerCase()
-  if (node?.isInteractiveCandidate) return true
-  if (/button|btn|cta|action|link|tab|nav|menu/.test(searchable)) return true
-  if (['INSTANCE', 'COMPONENT', 'FRAME'].includes(normalizeString(node?.type)) && Number(node?.widthRatio) >= 0.05 && Number(node?.heightRatio) >= 0.02) {
-    const children = childMap.get(normalizeString(node?.id)) || []
-    return children.some((child) => child?.type === 'TEXT' && normalizeString(child?.characters))
+  const descendantTexts = getFigmaDescendantTexts(node, flatNodes)
+  const compactActionLabel = descendantTexts.length > 0 && descendantTexts.every(isCompactActionLabel)
+  const hasInteraction = node?.isInteractiveCandidate === true
+  const looksButtonLike = /button|btn|cta|action|link/.test(searchable)
+  const hasButtonStructure = looksButtonLike && compactActionLabel && (node?.hasSolidFill || Number(node?.cornerRadius) > 0 || Array.isArray(node?.strokes) && node.strokes.length > 0)
+  if (!hasInteraction && !hasButtonStructure) return false
+  if (shouldRejectFigmaActionNode(node, descendantTexts, childMap)) {
+    if (quality) quality.oversizedFigmaActionRejectedCount += 1
+    return false
   }
-  return false
-}
-
-function isHeroMediaCandidate(item) {
-  return item.visible !== false && (item.section === 'hero' || item.section === 'top')
+  return compactActionLabel || hasInteraction
 }
 
 function compareHeroMediaCandidates(first, second) {
@@ -1153,14 +1714,49 @@ function deriveFigmaInteractionText(node, flatNodes) {
   const directText = normalizeString(node?.characters)
   if (directText) return truncateText(directText, 160)
 
+  const descendantTexts = getFigmaDescendantTexts(node, flatNodes)
+
+  return truncateText(uniqueStrings(descendantTexts).join(' ').trim(), 160)
+}
+
+function getFigmaDescendantTexts(node, flatNodes) {
   const layerPath = normalizeString(node?.layerPath)
-  const descendantTexts = flatNodes
+  return (Array.isArray(flatNodes) ? flatNodes : [])
     .filter((child) => child?.effectivelyVisible && child?.type === 'TEXT')
     .filter((child) => normalizeString(child?.parentId) === normalizeString(node?.id) || normalizeString(child?.layerPath).startsWith(`${layerPath} /`))
     .map((child) => normalizeString(child?.characters))
     .filter(Boolean)
+}
 
-  return truncateText(uniqueStrings(descendantTexts).join(' ').trim(), 160)
+function shouldRejectFigmaActionNode(node, descendantTexts, childMap) {
+  const widthRatio = Number(node?.widthRatio) || 0
+  const heightRatio = Number(node?.heightRatio) || 0
+  const width = Number(node?.absoluteBoundingBox?.width) || 0
+  const height = Number(node?.absoluteBoundingBox?.height) || 0
+  const children = childMap.get(normalizeString(node?.id)) || []
+  const searchable = `${node?.name || ''} ${node?.layerPath || ''} ${node?.parentName || ''}`.toLowerCase()
+  const longTextCount = descendantTexts.filter((text) => !isCompactActionLabel(text)).length
+  const sentenceLikeCount = descendantTexts.filter((text) => /[.!?]|\s{2,}|[,;:]|다$|요$/.test(text) || text.length > 28).length
+  const hasMixedContent = children.some((child) => child?.hasImageFill || child?.hasVideoLikeContent) && descendantTexts.length > 0
+  const isLarge = widthRatio > 0.35 || heightRatio > 0.05 || width >= 640 || height >= 120
+  const isRootLargeSection = !normalizeString(node?.parentId) && (widthRatio > 0.35 || heightRatio > 0.12 || children.length >= 3)
+  const isSectionLike = children.length >= 4 || descendantTexts.length >= 3 || hasMixedContent
+  const isFooterOrNavigation = /footer|nav|navigation|header|menu|legal/.test(searchable)
+  const isHeadingGroup = /title|heading|hero\s*title/.test(searchable) && descendantTexts.length > 0
+  if (isFooterOrNavigation) return true
+  if (isRootLargeSection) return true
+  if (isLarge && isSectionLike) return true
+  if (longTextCount > 0 || sentenceLikeCount > 0) return true
+  if (isHeadingGroup) return true
+  return false
+}
+
+function isCompactActionLabel(value) {
+  const text = normalizeTextForExactDisplayComparison(value)
+  if (!text || text.length > 24) return false
+  if (/[.!?]/.test(text)) return false
+  if (/\b(and|및)\b/.test(text) && text.length > 14) return false
+  return true
 }
 
 function classifyNumericType(text, candidate) {

@@ -107,6 +107,7 @@ export async function buildVisualPayloadResponse(input, dependencies) {
     },
     webAnalysis,
     textComparison,
+    collectDebugArtifacts: debug,
   })
   timings.payloadBuildMs = now() - payloadStartedAt
   timings.totalMs = now() - totalStartedAt

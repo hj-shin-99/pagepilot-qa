@@ -16,14 +16,15 @@ const SIMILAR_X_RATIO_THRESHOLD = 0.08
 const PRICE_TYPE_SET = new Set(['amount', 'percentage', 'interest-rate', 'monthly-payment', 'duration'])
 
 export function createVisualQaPayload(input) {
-  return buildVisualQaPayloadArtifacts(input).payload
+  return buildVisualQaPayloadArtifacts({ ...(input || {}), collectDebugArtifacts: false }).payload
 }
 
-export function buildVisualQaPayloadArtifacts({ figmaAnalysis, webAnalysis, textComparison }) {
+export function buildVisualQaPayloadArtifacts({ figmaAnalysis, webAnalysis, textComparison, collectDebugArtifacts = true }) {
   const safeFigmaAnalysis = figmaAnalysis && typeof figmaAnalysis === 'object' ? figmaAnalysis : {}
   const safeWebAnalysis = webAnalysis && typeof webAnalysis === 'object' ? webAnalysis : {}
   const safeTextComparison = textComparison && typeof textComparison === 'object' ? textComparison : {}
-  const quality = createPayloadQuality()
+  const includeDebugArtifacts = collectDebugArtifacts === true
+  const quality = createPayloadQuality({ includeDebugArtifacts })
 
   const figmaTextCandidates = normalizeFigmaTextCandidates(safeFigmaAnalysis.textNodes)
   const webTextCandidates = normalizeWebTextCandidates(safeWebAnalysis.textNodes)
@@ -94,16 +95,16 @@ export function buildVisualQaPayloadArtifacts({ figmaAnalysis, webAnalysis, text
     heroSelection,
   })
   const canonicalEvidence = createCanonicalEvidence({
-    actions: dedupeFinalCanonicalActions(resolvedCanonicalEvidence.actions),
+    actions: dedupeFinalCanonicalActions(resolvedCanonicalEvidence.actions, safeWebAnalysis.url),
     numericValues: dedupeFinalCanonicalNumericValues(resolvedCanonicalEvidence.numericValues),
     media: resolvedCanonicalEvidence.media,
     texts: resolvedCanonicalEvidence.texts,
-    sections: finalizeSectionEntities(draftSections, {
+    sections: pruneFinalSectionEntities(finalizeSectionEntities(draftSections, {
       actions: resolvedCanonicalEvidence.actions,
       numericValues: resolvedCanonicalEvidence.numericValues,
       media: resolvedCanonicalEvidence.media,
       texts: resolvedCanonicalEvidence.texts,
-    }, heroSections),
+    }, heroSections)),
   })
   const ctaButtons = createCanonicalCtaButtons(canonicalEvidence.actions)
   const comparisonNumericValues = createComparisonNumericValues(canonicalEvidence.numericValues)
@@ -134,43 +135,43 @@ export function buildVisualQaPayloadArtifacts({ figmaAnalysis, webAnalysis, text
     filteredDifferences,
     canonicalEvidence,
   })
-  const sectionTrace = createSectionTrace({ sections: canonicalEvidence.sections, heroSections, canonicalEvidence })
-  const figmaActionInputTrace = createFigmaActionInputTrace({
+  const sectionTrace = includeDebugArtifacts ? createSectionTrace({ sections: canonicalEvidence.sections, heroSections, canonicalEvidence }) : null
+  const figmaActionInputTrace = includeDebugArtifacts ? createFigmaActionInputTrace({
     figmaAnalysis: safeFigmaAnalysis,
     heroSelection,
     rawFigmaActions: rawInteractions.allCandidates.filter((candidate) => candidate?.source === 'figma'),
-  })
-  const webVideoPipelineTrace = createWebVideoPipelineTrace({
+  }) : null
+  const webVideoPipelineTrace = includeDebugArtifacts ? createWebVideoPipelineTrace({
     webAnalysis: safeWebAnalysis,
     rawVideos,
     annotatedRawVideos,
     canonicalEvidence: resolvedCanonicalEvidence,
-  })
-  const entitySectionTrace = createEntitySectionTrace({
+  }) : null
+  const entitySectionTrace = includeDebugArtifacts ? createEntitySectionTrace({
     rawActions: rawInteractions.allCandidates,
     annotatedRawActions,
     annotatedRawVideos,
     heroSelection,
     sectionContexts,
     canonicalEvidence,
-  })
-  const heroActionResolution = createHeroActionResolutionTrace({
+  }) : null
+  const heroActionResolution = includeDebugArtifacts ? createHeroActionResolutionTrace({
     heroSections,
     rawActions: rawInteractions.allCandidates,
     canonicalActions: canonicalEvidence.actions,
     heroCtaGroup,
-  })
-  const heroMediaResolution = createHeroMediaResolutionTrace({
+  }) : null
+  const heroMediaResolution = includeDebugArtifacts ? createHeroMediaResolutionTrace({
     heroSections,
     rawVideos,
     canonicalMedia: canonicalEvidence.media,
     heroMediaGroup,
-  })
-  const canonicalMergeTrace = createCanonicalMergeTrace(quality)
-  const actionPipelineTrace = createActionPipelineTrace(heroActionResolution)
-  const figmaActionTrace = createFigmaActionTrace(figmaActionInputTrace)
-  const ctaMergeTrace = createCtaMergeTrace(canonicalMergeTrace)
-  const numericMergeTrace = createNumericMergeTrace(canonicalMergeTrace)
+  }) : null
+  const canonicalMergeTrace = includeDebugArtifacts ? createCanonicalMergeTrace(quality) : null
+  const actionPipelineTrace = includeDebugArtifacts ? createActionPipelineTrace(heroActionResolution) : null
+  const figmaActionTrace = includeDebugArtifacts ? createFigmaActionTrace(figmaActionInputTrace) : null
+  const ctaMergeTrace = includeDebugArtifacts ? createCtaMergeTrace(canonicalMergeTrace) : null
+  const numericMergeTrace = includeDebugArtifacts ? createNumericMergeTrace(canonicalMergeTrace) : null
   applyCanonicalQualityMetrics(quality, {
     heroCtaGroup,
     heroMediaGroup,
@@ -236,32 +237,32 @@ export function buildVisualQaPayloadArtifacts({ figmaAnalysis, webAnalysis, text
       ctaButtons,
       prices: comparisonPrices,
       dates: comparisonDates,
-      numericEntities: numericHints.numericEntities,
+      numericEntities: canonicalEvidence.numericValues,
       videos: comparisonMedia.filter((item) => item.mediaType === 'video').slice(0, MAX_VIDEO_CANDIDATES),
       images: comparisonMedia.filter((item) => item.mediaType === 'image').slice(0, MAX_IMAGE_CANDIDATES),
       evidenceSummary,
     },
   }
 
-  return {
-    payload,
-    payloadQuality: quality,
-    debugArtifacts: {
-      sectionTrace,
-      heroCandidateTrace: heroSelection.heroCandidateTrace,
-      figmaActionInputTrace,
-      webVideoPipelineTrace,
-      entitySectionTrace,
-      webVideoTrace: entitySectionTrace.webVideoTrace,
-      heroActionResolution,
-      heroMediaResolution,
-      canonicalMergeTrace,
-      actionPipelineTrace,
-      figmaActionTrace,
-      ctaMergeTrace,
-      numericMergeTrace,
-    },
-  }
+  const debugArtifacts = includeDebugArtifacts
+    ? {
+        sectionTrace,
+        heroCandidateTrace: heroSelection.heroCandidateTrace,
+        figmaActionInputTrace,
+        webVideoPipelineTrace,
+        entitySectionTrace,
+        webVideoTrace: entitySectionTrace.webVideoTrace,
+        heroActionResolution,
+        heroMediaResolution,
+        canonicalMergeTrace,
+        actionPipelineTrace,
+        figmaActionTrace,
+        ctaMergeTrace,
+        numericMergeTrace,
+      }
+    : null
+
+  return { payload, payloadQuality: quality, debugArtifacts }
 }
 
 export function createDebugPreview(textComparison) {
@@ -287,7 +288,7 @@ export function normalizeTextForExactDisplayComparison(value) {
     .trim()
 }
 
-function createPayloadQuality() {
+function createPayloadQuality({ includeDebugArtifacts = true } = {}) {
   const quality = {
     invisibleCharacterDiffRemovedCount: 0,
     navigationRemovedFromCtaCount: 0,
@@ -367,13 +368,15 @@ function createPayloadQuality() {
     enumerable: false,
   })
 
-  Object.defineProperty(quality, '__trace', {
-    value: {
-      actionMergePairs: [],
-      numericMergePairs: [],
-    },
-    enumerable: false,
-  })
+  if (includeDebugArtifacts) {
+    Object.defineProperty(quality, '__trace', {
+      value: {
+        actionMergePairs: [],
+        numericMergePairs: [],
+      },
+      enumerable: false,
+    })
+  }
 
   return quality
 }
@@ -1893,6 +1896,20 @@ function finalizeSectionEntities(sections, canonicalEvidence, heroSections) {
   return finalized.sort(compareSectionEntities)
 }
 
+function pruneFinalSectionEntities(sections) {
+  return (Array.isArray(sections) ? sections : []).filter((section) => {
+    const entityCount = Array.isArray(section?.entityIds) ? section.entityIds.length : 0
+    const actionCount = Array.isArray(section?.actionEntityIds) ? section.actionEntityIds.length : 0
+    const mediaCount = Array.isArray(section?.mediaEntityIds) ? section.mediaEntityIds.length : 0
+    const numericCount = Array.isArray(section?.numericEntityIds) ? section.numericEntityIds.length : 0
+    if (section?.role === 'hero') return true
+    if (entityCount === 0) return false
+    if (actionCount > 0 || mediaCount > 0 || numericCount > 0) return true
+    if (entityCount >= 2) return true
+    return false
+  })
+}
+
 function resolveFinalSectionRole(section, heroSections) {
   const isSelectedHero = section.sectionId === heroSections.figmaSectionId || section.sectionId === heroSections.webSectionId
   if (isSelectedHero) return 'hero'
@@ -2257,6 +2274,7 @@ function remapCanonicalEntitiesToHero(entities, heroSelection) {
   return (Array.isArray(entities) ? entities : []).map((entity) => {
     const heroDescriptor = resolveHeroDescriptorForEntity(entity, heroSelection)
     if (!heroDescriptor) return entity
+    const mediaRole = entity.entityType === 'media' ? classifyHeroMediaRole(entity) : entity.role
     return {
       ...entity,
       sectionId: heroDescriptor.sectionId,
@@ -2265,6 +2283,7 @@ function remapCanonicalEntitiesToHero(entities, heroSelection) {
       sectionRole: heroDescriptor.role,
       isHeroAction: entity.type === 'action' ? isCtaRole(entity.role) : entity.isHeroAction,
       isHeroPrimary: entity.entityType === 'media' ? true : entity.isHeroPrimary,
+      role: entity.entityType === 'media' ? mediaRole : entity.role,
       comparisonScope: entity.comparisonScope === 'reference-only' || entity.comparisonScope === 'excluded'
         ? entity.comparisonScope
         : 'primary',
@@ -2788,8 +2807,13 @@ function buildHeroSectionTrace(section) {
 }
 
 function applyCanonicalQualityMetrics(quality, { heroCtaGroup, heroMediaGroup, canonicalEvidence, comparisonActions, comparisonPrices, comparisonMedia, sectionTrace, sections, heroSelection, entitySectionTrace, figmaActionInputTrace }) {
+  const selectedFigmaHeroSectionId = sections.find((section) => section.source === 'figma' && section.role === 'hero')?.sectionId || ''
+  const selectedWebHeroSectionId = sections.find((section) => section.source === 'web' && section.role === 'hero')?.sectionId || ''
+  const finalFigmaHeroMediaCount = canonicalEvidence.media.filter((item) => item.source === 'figma' && item.sectionId === selectedFigmaHeroSectionId && item.comparisonScope === 'primary').length
+  const finalWebHeroMediaCount = canonicalEvidence.media.filter((item) => item.source === 'web' && item.mediaType === 'video' && item.sectionId === selectedWebHeroSectionId).length
   quality.canonicalActionCount = canonicalEvidence.actions.length
   quality.canonicalNumericCount = canonicalEvidence.numericValues.length
+  quality.webActionSourcesMergedCount = canonicalEvidence.actions.filter((item) => item.source === 'web' && Array.isArray(item.sources) && item.sources.length > 1).length
   quality.figmaHeroTextCount = normalizeCount(sectionTrace?.figmaHero?.textCount, 0)
   quality.webHeroTextCount = normalizeCount(sectionTrace?.webHero?.textCount, 0)
   quality.figmaHeroActionCount = heroCtaGroup.figma.count
@@ -2802,21 +2826,26 @@ function applyCanonicalQualityMetrics(quality, { heroCtaGroup, heroMediaGroup, c
   quality.webHeroRootPromotedCount = normalizeCount(heroSelection?.quality?.webHeroRootPromotedCount, 0)
   quality.figmaHeroContainsText = heroSelection?.quality?.figmaHeroContainsText === true
   quality.figmaHeroContainsAction = heroSelection?.quality?.figmaHeroContainsAction === true
-  quality.figmaHeroContainsMedia = heroSelection?.quality?.figmaHeroContainsMedia === true
+  quality.figmaHeroContainsMedia = finalFigmaHeroMediaCount >= 1
   quality.webHeroContainsText = heroSelection?.quality?.webHeroContainsText === true
   quality.webHeroContainsAction = heroSelection?.quality?.webHeroContainsAction === true
-  quality.webHeroContainsMedia = heroSelection?.quality?.webHeroContainsMedia === true
+  quality.webHeroContainsMedia = finalWebHeroMediaCount >= 1
   quality.figmaHeroDescendantNodeCount = normalizeCount(figmaActionInputTrace?.heroDescendantNodeCount, 0)
   quality.figmaButtonLikeNodeCount = normalizeCount(figmaActionInputTrace?.buttonLikeNodeCount, 0)
   quality.figmaInteractiveNodeCount = normalizeCount(figmaActionInputTrace?.interactiveCandidateCount, 0)
   quality.canonicalFigmaActionCount = canonicalEvidence.actions.filter((item) => item.source === 'figma').length
   quality.resolvedFigmaHeroActionCount = heroCtaGroup.figma.count
   quality.rejectedFigmaHeroActionCount = Math.max(0, quality.rawFigmaHeroActionCandidateCount - quality.resolvedFigmaHeroActionCount)
-  quality.resolvedWebHeroMediaCount = heroMediaGroup.web.candidateCount
+  quality.resolvedWebHeroMediaCount = finalWebHeroMediaCount
   quality.duplicateHeroActionMergedCount = Math.max(0,
     quality.rawFigmaHeroActionCandidateCount + (Array.isArray(entitySectionTrace?.webHeroActions) ? entitySectionTrace.webHeroActions.length : 0)
       - (heroCtaGroup.figma.count + heroCtaGroup.web.count))
-  quality.duplicateHeroNumericMergedCount = canonicalEvidence.numericValues.filter((item) => item.comparisonScope === 'primary' && Array.isArray(item.sources) && item.sources.length > 1).length
+  quality.duplicateNumericMergedCount = Math.max(0,
+    canonicalEvidence.numericValues.reduce((count, item) => count + Math.max(0, (Array.isArray(item.sources) ? item.sources.length : 1) - 1), 0))
+  quality.duplicateHeroNumericMergedCount = Math.max(0,
+    canonicalEvidence.numericValues
+      .filter((item) => item.comparisonScope === 'primary')
+      .reduce((count, item) => count + Math.max(0, (Array.isArray(item.sources) ? item.sources.length : 1) - 1), 0))
   quality.unassignedCanonicalEntityCount = normalizeCount(sectionTrace?.unassignedEntityCount, 0)
   quality.multiAssignedCanonicalEntityCount = normalizeCount(sectionTrace?.multiAssignedEntityCount, 0)
   quality.comparisonActionCount = Array.isArray(comparisonActions) ? comparisonActions.length : 0
@@ -2827,7 +2856,7 @@ function applyCanonicalQualityMetrics(quality, { heroCtaGroup, heroMediaGroup, c
   quality.sourceHeroCountConsistencyPassed = sections.filter((item) => item.source === 'figma' && item.role === 'hero').length === 1
     && sections.filter((item) => item.source === 'web' && item.role === 'hero').length === 1
   quality.heroActionResolutionPassed = heroCtaGroup.figma.count >= 1 && heroCtaGroup.web.count >= 1
-  quality.heroMediaResolutionPassed = heroMediaGroup.figma.candidateCount >= 1 && heroMediaGroup.web.candidateCount >= 1
+  quality.heroMediaResolutionPassed = finalFigmaHeroMediaCount >= 1 && finalWebHeroMediaCount >= 1
   quality.figmaActionPipelineConsistencyPassed = quality.canonicalFigmaActionCount <= quality.rawFigmaActionCandidateCount
     && quality.resolvedFigmaHeroActionCount <= quality.rawFigmaHeroActionCandidateCount
   quality.webVideoPipelineConsistencyPassed = quality.resolvedWebHeroMediaCount <= normalizeCount(comparisonMedia.filter((item) => item.source === 'web' && item.mediaType === 'video').length, 0)
@@ -2836,8 +2865,8 @@ function applyCanonicalQualityMetrics(quality, { heroCtaGroup, heroMediaGroup, c
   quality.canonicalAiHintsOnlyPassed = comparisonActions.every((item) => canonicalEvidence.actions.some((entity) => entity.entityId === item.entityId))
     && comparisonPrices.every((item) => canonicalEvidence.numericValues.some((entity) => entity.entityId === item.entityId))
     && comparisonMedia.every((item) => canonicalEvidence.media.some((entity) => entity.entityId === item.entityId))
-  quality.duplicateActionEliminationPassed = new Set(canonicalEvidence.actions.map((item) => buildCanonicalActionKey(item))).size === canonicalEvidence.actions.length
-  quality.duplicateNumericEliminationPassed = new Set(canonicalEvidence.numericValues.map((item) => buildCanonicalNumericKey(item))).size === canonicalEvidence.numericValues.length
+  quality.duplicateActionEliminationPassed = new Set((Array.isArray(comparisonActions) ? comparisonActions : []).map((item) => buildCanonicalActionKey(item))).size === (Array.isArray(comparisonActions) ? comparisonActions.length : 0)
+  quality.duplicateNumericEliminationPassed = new Set((Array.isArray(comparisonPrices) ? comparisonPrices : []).map((item) => buildCanonicalNumericKey(item))).size === (Array.isArray(comparisonPrices) ? comparisonPrices.length : 0)
 }
 
 function normalizeSelector(value) {
@@ -2860,8 +2889,15 @@ function createSelectorSignature(selector) {
     .join(' > ')
 }
 
-function normalizeSelectorSegment(segment) {
-  const normalized = normalizeString(segment).replace(/:nth-of-type\((\d+)\)/g, ':nth($1)')
+function normalizeSelectorSegment(segment, preserveNth = false) {
+  const normalized = preserveNth
+    ? normalizeString(segment)
+      .replace(/:nth-of-type\((\d+)\)/g, ':nth($1)')
+      .replace(/:nth-child\((\d+)\)/g, ':nth($1)')
+    : normalizeString(segment)
+      .replace(/:nth-of-type\(\d+\)/g, '')
+      .replace(/:nth-child\(\d+\)/g, '')
+      .replace(/:nth\(\d+\)/g, '')
   if (!normalized) return ''
   const tagMatch = normalized.match(/^[a-z0-9_-]+/i)
   const tag = tagMatch ? tagMatch[0].toLowerCase() : ''
@@ -2892,7 +2928,7 @@ function createCanonicalSelectorAncestry(value) {
   const segments = normalized.includes('>')
     ? normalized.split('>').map((item) => item.trim()).filter(Boolean)
     : normalized.split(/\s+/).map((item) => item.trim()).filter(Boolean)
-  const canonicalSegments = segments.map((segment) => normalizeSelectorSegment(segment)).filter(Boolean)
+  const canonicalSegments = segments.map((segment) => normalizeSelectorSegment(segment, false)).filter(Boolean)
   return trimShellSelectorSegments(canonicalSegments)
 }
 
@@ -3804,9 +3840,9 @@ function buildCanonicalActionKey(action) {
   return [
     normalizeString(action?.source),
     normalizeComparableText(action?.text),
-    normalizeString(action?.href),
+    normalizeString(action?.canonicalHref || action?.href),
     normalizeString(action?.sectionId),
-    normalizeString(action?.selectorSignature),
+    normalizeString(action?.role),
   ].join('|')
 }
 
@@ -3817,48 +3853,96 @@ function buildCanonicalNumericKey(numeric) {
     normalizeComparableText(numeric?.displayText),
     JSON.stringify(numeric?.numericTokens || []),
     JSON.stringify(numeric?.unitTokens || []),
-    normalizeString(numeric?.sectionId),
+    createSemanticCardRootSignature(numeric),
   ].join('|')
 }
 
-function dedupeFinalCanonicalActions(actions) {
+function canonicalizeActionHref(href, baseUrl = '') {
+  const normalizedHref = normalizeString(href)
+  if (!normalizedHref) return ''
+  if (/^(javascript:|mailto:|tel:)/i.test(normalizedHref)) return normalizedHref.toLowerCase()
+  try {
+    const resolved = baseUrl ? new URL(normalizedHref, baseUrl) : new URL(normalizedHref)
+    const base = baseUrl ? new URL(baseUrl) : null
+    const pathname = resolved.pathname.replace(/\/$/, '') || '/'
+    const canonicalPath = `${pathname}${resolved.search}${resolved.hash}`
+    if (base && resolved.origin.toLowerCase() === base.origin.toLowerCase()) return canonicalPath
+    return `${resolved.protocol.toLowerCase()}//${resolved.host.toLowerCase()}${canonicalPath}`
+  } catch {
+    return normalizedHref
+  }
+}
+
+function dedupeFinalCanonicalActions(actions, webUrl = '') {
   const finalActions = []
   ;(Array.isArray(actions) ? actions : []).forEach((action) => {
-    const existing = finalActions.find((item) => isSameFinalCanonicalAction(item, action))
+    const normalizedAction = {
+      ...action,
+      canonicalHref: action.source === 'web' ? canonicalizeActionHref(action.href, webUrl) : action.href,
+    }
+    const existing = finalActions.find((item) => isSameFinalCanonicalAction(item, normalizedAction))
     if (!existing) {
-      finalActions.push({ ...action, sources: Array.isArray(action.sources) ? action.sources.slice() : [] })
+      finalActions.push({ ...normalizedAction, sources: Array.isArray(normalizedAction.sources) ? normalizedAction.sources.slice() : [] })
       return
     }
-    existing.sources = dedupeSourceEvidence([...(existing.sources || []), ...(action.sources || [])])
-    existing.reasons = uniqueStrings([...(existing.reasons || []), ...(action.reasons || [])])
-    existing.interactionEvidence = uniqueStrings([...(existing.interactionEvidence || []), ...(action.interactionEvidence || [])])
-    if (getActionRepresentativeScore(action) > getActionRepresentativeScore(existing)) {
-      existing.text = action.text || existing.text
-      existing.displayText = action.displayText || existing.displayText
-      existing.href = action.href || existing.href
-      existing.selector = action.selector || existing.selector
-      existing.selectorSignature = action.selectorSignature || existing.selectorSignature
-      existing.contextPath = action.contextPath || existing.contextPath
-      existing.parentSelector = action.parentSelector || existing.parentSelector
-      existing.layerPath = action.layerPath || existing.layerPath
-      existing.parentId = action.parentId || existing.parentId
-      existing.xRatio = normalizeNumber(action.xRatio)
-      existing.yRatio = normalizeNumber(action.yRatio)
-      existing.widthRatio = normalizeNumber(action.widthRatio)
-      existing.heightRatio = normalizeNumber(action.heightRatio)
+    existing.sources = dedupeSourceEvidence([...(existing.sources || []), ...(normalizedAction.sources || [])])
+    existing.reasons = uniqueStrings([...(existing.reasons || []), ...(normalizedAction.reasons || [])])
+    existing.interactionEvidence = uniqueStrings([...(existing.interactionEvidence || []), ...(normalizedAction.interactionEvidence || [])])
+    if (shouldPreferFinalActionRepresentative(normalizedAction, existing)) {
+      existing.text = normalizedAction.text || existing.text
+      existing.displayText = normalizedAction.displayText || existing.displayText
+      existing.href = normalizedAction.href || existing.href
+      existing.canonicalHref = normalizedAction.canonicalHref || existing.canonicalHref
+      existing.selector = normalizedAction.selector || existing.selector
+      existing.selectorSignature = normalizedAction.selectorSignature || existing.selectorSignature
+      existing.contextPath = normalizedAction.contextPath || existing.contextPath
+      existing.parentSelector = normalizedAction.parentSelector || existing.parentSelector
+      existing.layerPath = normalizedAction.layerPath || existing.layerPath
+      existing.parentId = normalizedAction.parentId || existing.parentId
+      existing.xRatio = normalizeNumber(normalizedAction.xRatio)
+      existing.yRatio = normalizeNumber(normalizedAction.yRatio)
+      existing.widthRatio = normalizeNumber(normalizedAction.widthRatio)
+      existing.heightRatio = normalizeNumber(normalizedAction.heightRatio)
     }
   })
   return finalActions
 }
 
 function isSameFinalCanonicalAction(first, second) {
+  const hasCompletePosition = Number.isFinite(normalizeNumber(first?.xRatio))
+    && Number.isFinite(normalizeNumber(first?.yRatio))
+    && Number.isFinite(normalizeNumber(second?.xRatio))
+    && Number.isFinite(normalizeNumber(second?.yRatio))
+  const sameSection = normalizeString(first?.sectionId) === normalizeString(second?.sectionId)
+    || normalizeString(first?.sectionRootId) === normalizeString(second?.sectionRootId)
+    || hasEquivalentSelectorSignature(first?.parentSelector, second?.parentSelector)
+    || hasEquivalentSelectorSignature(first?.sectionPath, second?.sectionPath)
   return first?.source === second?.source
     && normalizeComparableText(first?.text) === normalizeComparableText(second?.text)
-    && normalizeString(first?.href) === normalizeString(second?.href)
-    && normalizeString(first?.role) === normalizeString(second?.role)
-    && normalizeString(first?.sectionId) === normalizeString(second?.sectionId)
-    && hasSimilarPosition(first?.yRatio, second?.yRatio)
-    && hasSimilarXAxis(first?.xRatio, second?.xRatio)
+    && normalizeString(first?.canonicalHref || first?.href) === normalizeString(second?.canonicalHref || second?.href)
+    && areCompatibleActionRoles(first?.role, second?.role)
+    && sameSection
+    && (!hasCompletePosition || (hasSimilarPosition(first?.yRatio, second?.yRatio) && hasSimilarXAxis(first?.xRatio, second?.xRatio)))
+}
+
+function shouldPreferFinalActionRepresentative(candidate, existing) {
+  const candidateHasGeometry = Number.isFinite(normalizeNumber(candidate?.xRatio))
+    && Number.isFinite(normalizeNumber(candidate?.yRatio))
+    && Boolean(normalizeString(candidate?.selector))
+  const existingHasGeometry = Number.isFinite(normalizeNumber(existing?.xRatio))
+    && Number.isFinite(normalizeNumber(existing?.yRatio))
+    && Boolean(normalizeString(existing?.selector))
+  if (candidateHasGeometry !== existingHasGeometry) return candidateHasGeometry
+  const candidateHasHref = Boolean(normalizeString(candidate?.canonicalHref || candidate?.href))
+  const existingHasHref = Boolean(normalizeString(existing?.canonicalHref || existing?.href))
+  if (candidateHasHref !== existingHasHref) return candidateHasHref
+  return (Array.isArray(candidate?.sources) ? candidate.sources.length : 0) > (Array.isArray(existing?.sources) ? existing.sources.length : 0)
+}
+
+function areCompatibleActionRoles(firstRole, secondRole) {
+  if (normalizeString(firstRole) === normalizeString(secondRole)) return true
+  return ['primary-action', 'secondary-action'].includes(normalizeString(firstRole))
+    && ['primary-action', 'secondary-action'].includes(normalizeString(secondRole))
 }
 
 function dedupeFinalCanonicalNumericValues(numericValues) {
@@ -3888,13 +3972,15 @@ function dedupeFinalCanonicalNumericValues(numericValues) {
 }
 
 function isSameFinalCanonicalNumeric(first, second) {
+  const firstRoot = createSemanticCardRootSignature(first)
+  const secondRoot = createSemanticCardRootSignature(second)
   return first?.source === second?.source
     && normalizeString(first?.numericType) === normalizeString(second?.numericType)
     && normalizeComparableText(first?.displayText) === normalizeComparableText(second?.displayText)
     && JSON.stringify(first?.numericTokens || []) === JSON.stringify(second?.numericTokens || [])
     && JSON.stringify(first?.unitTokens || []) === JSON.stringify(second?.unitTokens || [])
-    && normalizeString(first?.sectionId) === normalizeString(second?.sectionId)
-    && hasSimilarPosition(first?.yRatio, second?.yRatio)
+    && (normalizeString(first?.sectionId) === normalizeString(second?.sectionId) || (firstRoot && secondRoot && firstRoot === secondRoot))
+    && (hasSimilarPosition(first?.yRatio, second?.yRatio) || hasSameNumericParentChain(first, second))
 }
 
 function shouldPreferNumericRepresentative(candidate, existing) {
@@ -3905,6 +3991,29 @@ function shouldPreferNumericRepresentative(candidate, existing) {
   const existingSelectorLength = normalizeString(existing?.selector).length
   if (candidateSelectorLength !== existingSelectorLength) return candidateSelectorLength > existingSelectorLength
   return getNumericRepresentativeScore(candidate) > getNumericRepresentativeScore(existing)
+}
+
+function createSemanticCardRootSignature(candidate) {
+  const contextSegments = extractMeaningfulCardSegments(candidate?.contextPath || '')
+  const parentSegments = extractMeaningfulCardSegments(candidate?.parentSelector || '')
+  const selectorSegments = extractMeaningfulCardSegments(candidate?.selector || '')
+  const preferredSegments = contextSegments.length > 0 ? contextSegments : parentSegments.length > 0 ? parentSegments : selectorSegments
+  const slideRootIndex = preferredSegments.findIndex((segment) => /(swiperslide|slideactive|slidecurrent|slide:nth\(|slide)/.test(segment))
+  if (slideRootIndex !== -1) return preferredSegments.slice(slideRootIndex, Math.min(slideRootIndex + 2, preferredSegments.length)).join(' > ')
+  const cardRootIndex = preferredSegments.findIndex((segment) => /(productcard|promotioncard|card|series|item)/.test(segment))
+  if (cardRootIndex !== -1) return preferredSegments.slice(cardRootIndex, Math.min(cardRootIndex + 2, preferredSegments.length)).join(' > ')
+  return preferredSegments.slice(0, 2).join(' > ')
+}
+
+function extractMeaningfulCardSegments(value) {
+  const normalized = normalizeString(value)
+  if (!normalized) return []
+  const segments = normalized.includes('>')
+    ? normalized.split('>').map((item) => item.trim()).filter(Boolean)
+    : normalized.split(/\s+/).map((item) => item.trim()).filter(Boolean)
+  return trimShellSelectorSegments(segments.map((segment) => normalizeSelectorSegment(segment, true)).filter(Boolean))
+    .filter((segment) => /(swiperslide|slide|active|current|card|promotion|series|item|txtarea)/.test(segment))
+    .filter((segment) => !/(txtarea|text|wrapper|p$|divp|label)/.test(segment))
 }
 
 function recordActionMergeTrace(candidate, canonical, quality) {

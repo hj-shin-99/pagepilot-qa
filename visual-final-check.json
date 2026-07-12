@@ -1,0 +1,18 @@
+﻿{
+    "DifferenceCount":  3,
+    "FigmaHeroCtaCount":  2,
+    "WebHeroCtaCount":  2,
+    "WebHeroMediaCount":  1,
+    "HeroMediaHint":  "figma-image-vs-web-video",
+    "PriceCount":  3,
+    "DuplicateNumericMergedCount":  1,
+    "DuplicateNumericEliminationPassed":  true,
+    "ActualMergedWebActionCount":  3,
+    "MetricMergedWebActionCount":  3,
+    "WebActionMetricPassed":  true,
+    "SectionsTotalCount":  85,
+    "HeroActionResolutionPassed":  true,
+    "HeroMediaResolutionPassed":  true,
+    "PlaywrightRunCount":  1,
+    "OpenAiCalled":  false
+}

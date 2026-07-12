@@ -728,5 +728,139 @@ test('hero numeric duplicates merge and active slide remains preferred', () => {
 
   assert.equal(payload.aiHints.prices.length, 1)
   assert.equal(payload.aiHints.prices[0].sources.length, 2)
-  assert.equal(payloadQuality.duplicateNumericMergedCount >= 1, true)
+  assert.equal(payloadQuality.duplicateNumericMergedCount, 1)
+  assert.equal(payloadQuality.duplicateNumericEliminationPassed, true)
+})
+
+test('same-origin absolute and relative href hero CTAs merge into one canonical action', () => {
+  const { payload } = buildVisualQaPayloadArtifacts(createBaseInput({
+    figmaAnalysis: { textNodes: [] },
+    webAnalysis: {
+      url: 'https://example.com/page',
+      textNodes: [createWebTextNode({ text: 'Hero Title', selector: '.hero h2', parentSelector: '.hero', role: 'heading', tagName: 'h2', sectionHint: 'hero' })],
+      ctaCandidates: [
+        createWebCtaCandidate({ sourceId: 'hero-abs', text: '프로모션 바로가기', selector: 'section.hero > a.btn', parentContext: 'section.hero', parentSelector: 'section.hero', href: 'https://example.com/kr/promotion/detail?idx=2258', section: 'hero', yRatio: 0.12, xRatio: 0.1 }),
+        createWebCtaCandidate({ sourceId: 'hero-rel', text: '프로모션 바로가기', selector: 'body > main > section.hero > a.btn', parentContext: 'body > main > section.hero', parentSelector: 'section.hero', href: '/kr/promotion/detail?idx=2258', section: 'hero', yRatio: 0.12, xRatio: null }),
+      ],
+      imageCandidates: [{ type: 'image', source: 'web', sourceId: 'hero-img', selector: '.hero img', parentContext: '.hero', parentSelector: '.hero', section: 'hero', alt: 'Hero', loaded: true, naturalWidth: 1200, naturalHeight: 700 }],
+    },
+  }))
+
+  const heroActions = payload.aiHints.canonicalEvidence.actions.filter((item) => item.source === 'web' && item.text === '프로모션 바로가기')
+  assert.equal(heroActions.length, 1)
+  assert.equal(heroActions[0].sources.length, 2)
+})
+
+test('webActionSourcesMergedCount uses final canonical web entities with merged sources', () => {
+  const { payloadQuality } = buildVisualQaPayloadArtifacts(createBaseInput({
+    figmaAnalysis: { textNodes: [] },
+    webAnalysis: {
+      textNodes: [
+        createWebTextNode({ id: 'hero-title', text: 'Hero Title', selector: '.hero h2', parentSelector: '.hero', role: 'heading', tagName: 'h2', sectionHint: 'hero' }),
+        createWebTextNode({ id: 'promo-text', text: '프로모션 바로가기', selector: '.hero a.promo', parentSelector: '.hero .actions', role: 'cta', tagName: 'a', href: '/promo', sectionHint: 'hero', yRatio: 0.12, xRatio: 0.1 }),
+        createWebTextNode({ id: 'consult-text', text: '온라인 구매 상담', selector: '.hero a.consult', parentSelector: '.hero .actions', role: 'cta', tagName: 'a', href: '/consult', sectionHint: 'hero', yRatio: 0.16, xRatio: 0.1 }),
+        createWebTextNode({ id: 'stop-text', text: '비디오 정지', selector: '.hero button.stop', parentSelector: '.hero .controls', role: 'body', tagName: 'button', sectionHint: 'hero', yRatio: 0.2, xRatio: 0.9 }),
+      ],
+      ctaCandidates: [
+        createWebCtaCandidate({ sourceId: 'promo-hint', text: '프로모션 바로가기', selector: '.hero a.promo', parentContext: '.hero .actions', parentSelector: '.hero .actions', href: '/promo', section: 'hero', yRatio: 0.12, xRatio: 0.1 }),
+        createWebCtaCandidate({ sourceId: 'consult-hint', text: '온라인 구매 상담', selector: '.hero a.consult', parentContext: '.hero .actions', parentSelector: '.hero .actions', href: '/consult', section: 'hero', yRatio: 0.16, xRatio: 0.1 }),
+        createWebCtaCandidate({ sourceId: 'stop-hint', text: '비디오 정지', selector: '.hero button.stop', parentContext: '.hero .controls', parentSelector: '.hero .controls', href: '', section: 'hero', yRatio: 0.2, xRatio: 0.9, tagName: 'button' }),
+      ],
+      imageCandidates: [{ type: 'image', source: 'web', sourceId: 'hero-img', selector: '.hero img', parentContext: '.hero', parentSelector: '.hero', section: 'hero', alt: 'Hero', loaded: true, naturalWidth: 1200, naturalHeight: 700 }],
+    },
+  }))
+
+  assert.equal(payloadQuality.webActionSourcesMergedCount, 2)
+})
+
+test('different origin href CTAs are not merged', () => {
+  const { payload } = buildVisualQaPayloadArtifacts(createBaseInput({
+    figmaAnalysis: { textNodes: [] },
+    webAnalysis: {
+      url: 'https://example.com/page',
+      textNodes: [createWebTextNode({ text: 'Hero Title', selector: '.hero h2', parentSelector: '.hero', role: 'heading', tagName: 'h2', sectionHint: 'hero' })],
+      ctaCandidates: [
+        createWebCtaCandidate({ sourceId: 'hero-local', text: '프로모션 바로가기', selector: 'section.hero > a.btn', parentContext: 'section.hero', parentSelector: 'section.hero', href: '/kr/promotion/detail?idx=2258', section: 'hero', yRatio: 0.12, xRatio: 0.1 }),
+        createWebCtaCandidate({ sourceId: 'hero-external', text: '프로모션 바로가기', selector: 'section.hero > a.btn.external', parentContext: 'section.hero', parentSelector: 'section.hero', href: 'https://outside.example.com/kr/promotion/detail?idx=2258', section: 'hero', yRatio: 0.12, xRatio: 0.3 }),
+      ],
+      imageCandidates: [{ type: 'image', source: 'web', sourceId: 'hero-img', selector: '.hero img', parentContext: '.hero', parentSelector: '.hero', section: 'hero', alt: 'Hero', loaded: true, naturalWidth: 1200, naturalHeight: 700 }],
+    },
+  }))
+
+  assert.equal(payload.aiHints.canonicalEvidence.actions.filter((item) => item.source === 'web' && item.text === '프로모션 바로가기').length, 2)
+})
+
+test('nth and class-order differences still resolve hero video descendant', () => {
+  const { payload, payloadQuality } = buildVisualQaPayloadArtifacts(createBaseInput({
+    figmaAnalysis: {
+      textNodes: [createFigmaTextNode({ characters: 'Hero Title', layerPath: 'Page / Hero / Title', parentFrameName: 'Hero' })],
+      flatNodes: [createFigmaFlatNode({ id: 'hero-root', nodeId: 'hero-root', name: 'Hero', type: 'FRAME', layerPath: 'Page / Hero', widthRatio: 0.92, heightRatio: 0.34, hasImageFill: true })],
+    },
+    webAnalysis: {
+      textNodes: [createWebTextNode({ text: 'Hero Title', selector: 'div.container:nth(1) > div.section:nth(1) > div.main_visual.active > div.txt > h2', parentSelector: 'div.main_visual.active > div.txt', domPath: 'body > main > div.container:nth(1) > div.section:nth(1) > div.main_visual.active > div.txt > h2', role: 'heading', tagName: 'h2', sectionHint: 'hero' })],
+      ctaCandidates: [createWebCtaCandidate({ text: 'Hero Action', selector: 'div.active.main_visual > div.btn_wrap > a.primary', parentContext: 'div.active.main_visual > div.btn_wrap', parentSelector: 'div.active.main_visual > div.btn_wrap', href: '/hero', section: 'hero', yRatio: 0.12, xRatio: 0.1 })],
+      videoCandidates: [{ type: 'video', source: 'web', sourceId: 'hero-video', text: 'Hero Video', selector: 'div.section > div.active.main_visual > div.bg > video.video', parentContext: 'div.section > div.active.main_visual > div.bg', parentSelector: 'div.section > div.active.main_visual > div.bg', contextPath: 'body > main > div.section > div.active.main_visual > div.bg > video.video', section: 'hero', confidence: 'high', reasons: ['video element'], width: 1600, height: 900, xRatio: 0.02, yRatio: 0.05, widthRatio: 0.83, heightRatio: 0.22 }],
+    },
+  }))
+
+  assert.equal(payload.aiHints.heroMediaGroup.web.primaryCount >= 1, true)
+  assert.equal(payload.aiHints.heroMediaGroup.comparisonHint, 'figma-image-vs-web-video')
+  assert.equal(payloadQuality.webHeroContainsMedia, true)
+})
+
+test('same card root numeric candidates merge while different slide candidates remain separate', () => {
+  const { payload } = buildVisualQaPayloadArtifacts(createBaseInput({
+    figmaAnalysis: { textNodes: [] },
+    webAnalysis: {
+      textNodes: [
+        createWebTextNode({ id: 'card-price-parent', text: 'BMW 뉴 iX, 월 50만원.', rawText: 'BMW 뉴 iX, 월 50만원.', selector: '.swiper-slide-active .product-card', parentSelector: '.swiper-slide-active', role: 'body', tagName: 'div', sectionHint: 'content', yRatio: 0.41, xRatio: 0.2 }),
+        createWebTextNode({ id: 'card-price-child', text: 'BMW 뉴 iX, 월 50만원.', rawText: 'BMW 뉴 iX, 월 50만원.', selector: '.swiper-slide-active .product-card p.price', parentSelector: '.swiper-slide-active .product-card', role: 'body', tagName: 'p', sectionHint: 'content', yRatio: 0.415, xRatio: 0.45 }),
+        createWebTextNode({ id: 'other-slide-price', text: 'BMW 뉴 iX, 월 50만원.', rawText: 'BMW 뉴 iX, 월 50만원.', selector: '.swiper-slide:nth-child(3) .product-card p.price', parentSelector: '.swiper-slide:nth-child(3) .product-card', role: 'body', tagName: 'p', sectionHint: 'content', yRatio: 0.61, xRatio: 0.22 }),
+      ],
+    },
+  }))
+
+  assert.equal(payload.aiHints.prices.length, 2)
+  assert.equal(payload.aiHints.prices.some((item) => Array.isArray(item.sources) && item.sources.length === 2), true)
+})
+
+test('non-swiper card parent and child numeric merge into one canonical price', () => {
+  const { payload, payloadQuality } = buildVisualQaPayloadArtifacts(createBaseInput({
+    figmaAnalysis: { textNodes: [] },
+    webAnalysis: {
+      textNodes: [
+        createWebTextNode({ id: 'card-parent', text: 'BMW 뉴 iX, 월 50만원.', rawText: 'BMW 뉴 iX, 월 50만원.', selector: '.product-card', parentSelector: '.cards', domPath: 'body > main > section.cards > div.product-card', role: 'body', tagName: 'div', sectionHint: 'content', yRatio: 0.41, xRatio: 0.2 }),
+        createWebTextNode({ id: 'card-child', text: 'BMW 뉴 iX, 월 50만원.', rawText: 'BMW 뉴 iX, 월 50만원.', selector: '.product-card p.price', parentSelector: '.product-card', domPath: 'body > main > section.cards > div.product-card > p.price', role: 'body', tagName: 'p', sectionHint: 'content', yRatio: 0.415, xRatio: 0.52 }),
+      ],
+    },
+  }))
+
+  assert.equal(payload.aiHints.prices.length, 1)
+  assert.equal(payload.aiHints.prices[0].sources.length, 2)
+  assert.equal(payloadQuality.duplicateNumericMergedCount, 1)
+})
+
+test('duplicate numeric flag follows final aiHints prices array', () => {
+  const duplicate = {
+    source: 'web',
+    numericType: 'monthly-payment',
+    displayText: '월 50만원',
+    numericTokens: ['50'],
+    unitTokens: ['만원'],
+    selector: '.swiper-slide-active .card',
+    parentSelector: '.swiper-slide-active',
+    contextPath: 'body > main > .swiper-slide-active > .card',
+    sectionId: 'section:web:content',
+  }
+  const deduped = {
+    ...duplicate,
+    sources: [{ sourceId: 'a' }, { sourceId: 'b' }],
+  }
+
+  const duplicateKeyA = `${duplicate.source}|${duplicate.numericType}|${duplicate.displayText}|${JSON.stringify(duplicate.numericTokens)}|${JSON.stringify(duplicate.unitTokens)}|swiper-slide-active > product-card`
+  const duplicateKeyB = `${duplicate.source}|${duplicate.numericType}|${duplicate.displayText}|${JSON.stringify(duplicate.numericTokens)}|${JSON.stringify(duplicate.unitTokens)}|swiper-slide-active > product-card`
+  const dedupedKey = `${deduped.source}|${deduped.numericType}|${deduped.displayText}|${JSON.stringify(deduped.numericTokens)}|${JSON.stringify(deduped.unitTokens)}|swiper-slide-active > product-card`
+
+  assert.equal(new Set([duplicateKeyA, duplicateKeyB]).size === 2, false)
+  assert.equal(new Set([dedupedKey]).size === 1, true)
 })

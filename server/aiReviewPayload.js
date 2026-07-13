@@ -75,6 +75,60 @@ export function createAiReviewPayloadHandler(dependencies) {
   }
 }
 
+export function createAiReviewHandler(dependencies) {
+  return async function aiReviewHandler(req, res) {
+    const webUrl = typeof req.body?.webUrl === 'string' ? req.body.webUrl.trim() : ''
+    const figmaUrl = typeof req.body?.figmaUrl === 'string' ? req.body.figmaUrl.trim() : ''
+
+    if (!dependencies.isHttpUrl(webUrl)) {
+      res.status(400).json({ success: false, message: 'http:// 또는 https://로 시작하는 Web URL만 사용할 수 있습니다.' })
+      return
+    }
+
+    let qaResult
+    let payload
+    try {
+      qaResult = await dependencies.buildQaRunResponse({ webUrl, figmaUrl }, dependencies.qaRunDependencies)
+      payload = buildAiReviewPayloadFromQaResult(qaResult)
+    } catch (error) {
+      res.status(200).json({
+        success: false,
+        meta: { openAiCalled: false },
+        error: {
+          code: 'qa_run_failed',
+          message: error instanceof Error ? error.message : 'QA 결과 생성 중 오류가 발생했습니다.',
+        },
+      })
+      return
+    }
+
+    try {
+      const result = await dependencies.aiReviewService.review(payload)
+      res.json({
+        success: true,
+        meta: {
+          ...(qaResult?.meta || {}),
+          ...(result.meta || {}),
+          openAiCalled: true,
+        },
+        ...result.review,
+      })
+    } catch (error) {
+      res.status(200).json({
+        success: false,
+        meta: {
+          ...(qaResult?.meta || {}),
+          openAiCalled: error?.openAiCalled === true,
+        },
+        error: {
+          code: typeof error?.code === 'string' ? error.code : 'openai_review_failed',
+          message: error instanceof Error ? error.message : 'AI Review 호출에 실패했습니다.',
+        },
+      })
+    }
+  }
+}
+
 function createVisualIssues(visual = {}) {
   const differences = Array.isArray(visual.comparison?.differences) ? visual.comparison.differences : []
   const issues = differences.slice(0, MAX_VISUAL_ITEMS).map((difference) => ({

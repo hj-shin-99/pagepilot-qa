@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildAiReviewPayloadFromQaResult, createAiReviewPayloadHandler } from './aiReviewPayload.js'
+import { buildAiReviewPayloadFromQaResult, createAiReviewHandler, createAiReviewPayloadHandler } from './aiReviewPayload.js'
 
 test('AI Review payload is compact and excludes raw artifacts', () => {
   const payload = buildAiReviewPayloadFromQaResult(createQaResult())
@@ -53,6 +53,85 @@ test('AI Review payload handler reuses qa builder once and never calls OpenAI', 
   assert.equal(response.body.payload.meta.openAiCalled, false)
   assert.equal(calls.qa, 1)
   assert.equal(calls.openAi, 0)
+})
+
+test('AI Review handler runs QA once and returns structured review with openAiCalled true', async () => {
+  const calls = { qa: 0, review: 0 }
+  const handler = createAiReviewHandler({
+    isHttpUrl(value) {
+      return /^https?:\/\//.test(String(value || ''))
+    },
+    async buildQaRunResponse(input) {
+      calls.qa += 1
+      assert.equal(input.webUrl, 'https://example.com')
+      return createQaResult()
+    },
+    qaRunDependencies: {},
+    aiReviewService: {
+      async review(payload) {
+        calls.review += 1
+        assert.equal(payload.meta.openAiCalled, false)
+        return {
+          meta: { openAiCalled: true, model: 'test-model' },
+          review: {
+            releaseDecision: 'caution',
+            summary: 'Review summary',
+            mustFix: ['Fix critical mismatch'],
+            verify: ['Run regression'],
+            developerNotes: ['No extra scan'],
+            clientReplyDraft: 'We recommend a focused fix pass before release.',
+          },
+        }
+      },
+    },
+  })
+  const response = createMockResponse()
+
+  await handler({ body: { webUrl: 'https://example.com', figmaUrl: 'https://figma.example/file' } }, response)
+
+  assert.equal(response.statusCode, 200)
+  assert.equal(response.body.success, true)
+  assert.equal(response.body.meta.openAiCalled, true)
+  assert.equal(response.body.meta.webScanInvocationCount, 1)
+  assert.equal(response.body.meta.browserLaunchCount, 1)
+  assert.equal(response.body.meta.desktopPageCount, 1)
+  assert.equal(response.body.meta.mobilePageCount, 1)
+  assert.equal(response.body.releaseDecision, 'caution')
+  assert.equal(typeof response.body.summary, 'string')
+  assert.equal(Array.isArray(response.body.mustFix), true)
+  assert.equal(Array.isArray(response.body.verify), true)
+  assert.equal(Array.isArray(response.body.developerNotes), true)
+  assert.equal(typeof response.body.clientReplyDraft, 'string')
+  assert.equal(calls.qa, 1)
+  assert.equal(calls.review, 1)
+})
+
+test('AI Review handler returns success false when OpenAI fails', async () => {
+  const handler = createAiReviewHandler({
+    isHttpUrl(value) {
+      return /^https?:\/\//.test(String(value || ''))
+    },
+    async buildQaRunResponse() {
+      return createQaResult()
+    },
+    qaRunDependencies: {},
+    aiReviewService: {
+      async review() {
+        const error = new Error('OpenAI unavailable')
+        error.code = 'openai_review_failed'
+        error.openAiCalled = true
+        throw error
+      },
+    },
+  })
+  const response = createMockResponse()
+
+  await handler({ body: { webUrl: 'https://example.com', figmaUrl: '' } }, response)
+
+  assert.equal(response.statusCode, 200)
+  assert.equal(response.body.success, false)
+  assert.equal(response.body.meta.openAiCalled, true)
+  assert.equal(response.body.error.code, 'openai_review_failed')
 })
 
 function createQaResult() {

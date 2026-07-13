@@ -4,7 +4,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import OpenAI from 'openai'
 import { chromium, request as playwrightRequest } from 'playwright'
-import { createAiReviewPayloadHandler } from './aiReviewPayload.js'
+import { createAiReviewHandler, createAiReviewPayloadHandler } from './aiReviewPayload.js'
+import { createAiReviewService } from './aiReviewService.js'
 import { createFigmaApiClient, FigmaApiError, FigmaRateLimitError } from './figmaApiClient.js'
 import { createFigmaRenderClient } from './figmaRenderClient.js'
 import { applyImageAltClassifications } from './imageAltClassifier.js'
@@ -114,6 +115,19 @@ const aiReviewPayloadHandler = createAiReviewPayloadHandler({
   isHttpUrl,
   buildQaRunResponse,
   qaRunDependencies,
+})
+
+const aiReviewService = createAiReviewService({
+  apiKey: process.env.OPENAI_API_KEY?.trim() || '',
+  model: process.env.OPENAI_REVIEW_MODEL || AI_QA_MODEL,
+  timeoutMs: AI_QA_TIMEOUT_MS,
+})
+
+const aiReviewHandler = createAiReviewHandler({
+  isHttpUrl,
+  buildQaRunResponse,
+  qaRunDependencies,
+  aiReviewService,
 })
 
 app.use(express.json({ limit: '80mb' }))
@@ -316,6 +330,8 @@ app.post('/api/visual/payload', visualPayloadHandler)
 app.post('/api/qa/run', qaRunHandler)
 
 app.post('/api/ai-review/payload', aiReviewPayloadHandler)
+
+app.post('/api/ai-review', aiReviewHandler)
 
 app.get('/api/visual/screenshot/:fileName', imageAssetHandlers.visualScreenshotHandler)
 

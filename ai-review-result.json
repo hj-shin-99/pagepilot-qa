@@ -1,0 +1,32 @@
+﻿{
+    "success":  true,
+    "meta":  {
+                 "webScanInvocationCount":  1,
+                 "openAiCalled":  true,
+                 "startedAt":  "2026-07-13T04:09:42.782Z",
+                 "completedAt":  "2026-07-13T04:10:04.934Z",
+                 "browserLaunchCount":  1,
+                 "desktopPageCount":  1,
+                 "mobilePageCount":  1,
+                 "model":  "gpt-4.1-mini"
+             },
+    "releaseDecision":  "blocked",
+    "summary":  "The QA review identified 2 critical text discrepancies and 5 warnings affecting content accuracy and presentation. Critical issues include numeric inconsistencies in key marketing text, such as payment amounts and model naming, which are vital for customer trust. Several meta tag and image alt attribute warnings could impact SEO and accessibility. While there are no technical errors or broken links, the content discrepancies must be resolved before release.",
+    "mustFix":  [
+                    "Correct numeric text discrepancies between design and web, especially monthly payment amounts.",
+                    "Align model name text precisely with Figma specification.",
+                    "Update meta tags for canonical URL, og:title, og:description, and og:image to avoid SEO issues.",
+                    "Add or correct alt attributes for key images to improve accessibility."
+                ],
+    "verify":  [
+                   "Verify that all numeric texts match those approved in Figma designs.",
+                   "Confirm the meta tags are correctly implemented and visible in page source.",
+                   "Check alt texts for images to ensure meaningful descriptions are present."
+               ],
+    "developerNotes":  [
+                           "Critical text differences indicate content data mismatch — review CMS or hardcoded texts.",
+                           "Warnings suggest missing or incomplete meta and alt tag implementations; prioritize SEO and accessibility compliance.",
+                           "Test content updates on staging to prevent regression in dynamic pricing or localized copy."
+                       ],
+    "clientReplyDraft":  "Our QA review has found critical discrepancies in the displayed monthly payment amounts and vehicle naming compared to the approved designs. Additionally, some meta tags and image descriptions are missing or incomplete, which can affect search engine visibility and accessibility. We recommend addressing these issues promptly to ensure accuracy and compliance before publishing the site."
+}

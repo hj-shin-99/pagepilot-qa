@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import './App.css'
 import { buildReportText, createResultSummary, getStatusCounts } from './utils/report'
 import { loadHistoryItems, saveHistoryItem } from './utils/history'
+import { buildAiReviewPayloadFromSession, sanitizeAiReviewResponse } from './utils/aiReview'
 import { isValidHttpUrl } from './utils/scanSession'
 import { countIssueCards, createCompactVisualResult, createVisualIssueCards, createVisualSummary } from './utils/visualQa'
 import AuditHeader from './components/AuditHeader'
@@ -28,13 +29,15 @@ function App() {
   const [techCopyStatus, setTechCopyStatus] = useState('')
   const [visualScanError, setVisualScanError] = useState('')
   const [techScanError, setTechScanError] = useState('')
+  const [aiReview, setAiReview] = useState(null)
+  const [aiReviewState, setAiReviewState] = useState('idle')
   const [historyItems, setHistoryItems] = useState(() => loadHistoryItems())
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
 
   const visualSummary = useMemo(() => (visualResult ? createVisualSummary(visualResult) : ''), [visualResult])
   const techSummary = useMemo(() => (techResult ? createResultSummary(techResult) : ''), [techResult])
   const techStatusCounts = useMemo(() => (techResult ? getStatusCounts(techResult.checks || []) : null), [techResult])
-  const isScanning = visualScanState === 'loading' || techScanState === 'loading'
+  const isScanning = visualScanState === 'loading' || techScanState === 'loading' || aiReviewState === 'loading'
 
   const handleStartScan = async () => {
     const webUrl = url.trim()
@@ -48,6 +51,8 @@ function App() {
     setFigmaError('')
     setVisualResult(null)
     setTechResult(null)
+    setAiReview(null)
+    setAiReviewState('idle')
 
     if (!isValidHttpUrl(webUrl)) {
       setInputError('http:// 또는 https://로 시작하는 Web URL을 입력해 주세요.')
@@ -84,6 +89,21 @@ function App() {
     applyTechSessionState(session.tech, setTechResult, setTechScanState, setTechScanError)
     applyVisualSessionState(session.visual, setVisualResult, setVisualScanState, setVisualScanError)
 
+    if (frameUrl && session.tech.status === 'success' && session.visual.status === 'success') {
+      setAiReviewState('loading')
+      try {
+        const review = await requestAiReviewFromPayload(buildAiReviewPayloadFromSession(session))
+        session.aiReview = review
+        setAiReview(review)
+        setAiReviewState(review.meta.fallbackUsed ? 'fallback' : 'success')
+      } catch (error) {
+        const review = createLocalAiReviewFallback(error)
+        session.aiReview = review
+        setAiReview(review)
+        setAiReviewState('fallback')
+      }
+    }
+
     if (session.shouldSaveCombined) {
       setHistoryItems(saveHistoryItem(createCombinedHistoryItem(session)))
     } else if (session.tech.status === 'success') {
@@ -100,6 +120,8 @@ function App() {
     setTechScanError('')
     setVisualCopyStatus('')
     setTechCopyStatus('')
+    setAiReview(null)
+    setAiReviewState('idle')
 
     if (item.type === 'combined') {
       setVisualResult(item.visual?.compactResult || null)
@@ -108,6 +130,8 @@ function App() {
       setTechScanState(item.tech?.status || 'idle')
       setVisualScanError(item.visual?.error || '')
       setTechScanError(item.tech?.error || '')
+      setAiReview(item.aiReview || null)
+      setAiReviewState(item.aiReview ? item.aiReview.meta?.fallbackUsed ? 'fallback' : 'success' : 'idle')
       setActiveTab('visual')
       return
     }
@@ -178,6 +202,8 @@ function App() {
           <VisualQaPanel
             copyStatus={visualCopyStatus}
             result={visualResult}
+            aiReview={aiReview}
+            aiReviewState={aiReviewState}
             summary={visualSummary}
             onCopyResult={handleCopyVisualResult}
           />
@@ -187,6 +213,34 @@ function App() {
       </section>
     </main>
   )
+}
+
+async function requestAiReviewFromPayload(payload) {
+  const response = await fetch('/api/ai-review/from-payload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ payload }),
+  })
+  const data = await readJsonResponse(response)
+  if (!response.ok) throw new Error(data?.message || `AI Review 요청에 실패했습니다. (${response.status})`)
+  return sanitizeAiReviewResponse(data)
+}
+
+function createLocalAiReviewFallback(error) {
+  const message = error instanceof Error ? error.message : 'AI Review 요청에 실패했습니다.'
+  return sanitizeAiReviewResponse({
+    success: true,
+    meta: { openAiCalled: false, fallbackUsed: true },
+    review: {
+      releaseDecision: 'caution',
+      summary: 'AI 종합 검토를 완료하지 못해 규칙 기반 결과를 우선 표시합니다. Visual QA와 Tech QA 결과는 정상적으로 유지됩니다.',
+      mustFix: [],
+      verify: [{ category: 'tech', title: 'AI Review 재시도 필요', description: message, evidence: [], severity: 'warning' }],
+      developerNotes: [{ category: 'tech', title: 'AI Review fallback', description: message, evidence: [], severity: 'check' }],
+      clientReplyDraft: '자동 QA 결과는 확인되었으나 AI 종합 검토는 일시적으로 완료하지 못했습니다. 규칙 기반 결과를 기준으로 우선 확인하겠습니다.',
+    },
+    error: { code: 'ai_review_request_failed', message },
+  })
 }
 
 async function readJsonResponse(response) {
@@ -306,6 +360,7 @@ function createCombinedHistoryItem(session) {
       techWarn: techCounts.warn,
     },
     topIssueSummaries: createCombinedTopIssueSummaries(visualCards, techResult, session),
+    aiReview: sanitizeHistoryAiReview(session.aiReview),
     visual: {
       status: session.visual.status,
       summary: visualSummary,
@@ -318,6 +373,19 @@ function createCombinedHistoryItem(session) {
       compactResult: techResult ? createCompactTechResult(techResult) : null,
       error: session.tech.error || '',
     },
+  }
+}
+
+function sanitizeHistoryAiReview(aiReview) {
+  if (!aiReview || typeof aiReview !== 'object') return null
+  const safe = sanitizeAiReviewResponse(aiReview)
+  return {
+    meta: {
+      openAiCalled: safe.meta.openAiCalled,
+      model: safe.meta.model,
+      fallbackUsed: safe.meta.fallbackUsed,
+    },
+    review: safe.review,
   }
 }
 

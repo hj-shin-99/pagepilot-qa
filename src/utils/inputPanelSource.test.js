@@ -14,6 +14,14 @@ test('input panel exposes one scan start button only', () => {
 test('app default scan flow calls integrated qa endpoint only', () => {
   const source = fs.readFileSync('src/App.jsx', 'utf8')
   assert.equal(source.includes("fetch('/api/qa/run'"), true)
+  assert.equal(source.includes("fetch('/api/ai-review/from-payload'"), true)
   assert.equal(source.includes("fetch('/api/scan'"), false)
   assert.equal(source.includes("fetch('/api/visual/payload'"), false)
+})
+
+test('visual panel renders AI Review from review object', () => {
+  const source = fs.readFileSync('src/components/VisualQaPanel.jsx', 'utf8')
+  assert.equal(source.includes('AI 종합 검토'), true)
+  assert.equal(source.includes('aiReview?.review'), true)
+  assert.equal(source.includes('회신 초안 보기'), true)
 })

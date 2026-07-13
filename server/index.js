@@ -4,7 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import OpenAI from 'openai'
 import { chromium, request as playwrightRequest } from 'playwright'
-import { createAiReviewHandler, createAiReviewPayloadHandler } from './aiReviewPayload.js'
+import { createAiReviewFromPayloadHandler, createAiReviewHandler, createAiReviewPayloadHandler } from './aiReviewPayload.js'
 import { createAiReviewService } from './aiReviewService.js'
 import { createFigmaApiClient, FigmaApiError, FigmaRateLimitError } from './figmaApiClient.js'
 import { createFigmaRenderClient } from './figmaRenderClient.js'
@@ -127,6 +127,10 @@ const aiReviewHandler = createAiReviewHandler({
   isHttpUrl,
   buildQaRunResponse,
   qaRunDependencies,
+  aiReviewService,
+})
+
+const aiReviewFromPayloadHandler = createAiReviewFromPayloadHandler({
   aiReviewService,
 })
 
@@ -332,6 +336,8 @@ app.post('/api/qa/run', qaRunHandler)
 app.post('/api/ai-review/payload', aiReviewPayloadHandler)
 
 app.post('/api/ai-review', aiReviewHandler)
+
+app.post('/api/ai-review/from-payload', aiReviewFromPayloadHandler)
 
 app.get('/api/visual/screenshot/:fileName', imageAssetHandlers.visualScreenshotHandler)
 

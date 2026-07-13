@@ -12,7 +12,7 @@ import {
   createWebDisplayImageUrl,
 } from '../utils/visualQa'
 
-function VisualQaPanel({ result, summary, copyStatus, onCopyResult }) {
+function VisualQaPanel({ result, summary, copyStatus, onCopyResult, aiReview, aiReviewState = 'idle' }) {
   const cards = createVisualIssueCards(result)
   const counts = countIssueCards(cards)
   const meta = result.meta || {}
@@ -40,6 +40,8 @@ function VisualQaPanel({ result, summary, copyStatus, onCopyResult }) {
         <div className="summary-box">{summary}</div>
         {copyStatus ? <p className="copy-status">{copyStatus}</p> : null}
       </header>
+
+      <AiReviewPanel aiReview={aiReview} state={aiReviewState} />
 
       <section className="visual-severity-grid" aria-label="Visual QA 상태 카드">
         <SeverityCard label="Critical" value={counts.critical} tone="critical" description="핵심 숫자, Hero 문구, CTA 누락" />
@@ -129,6 +131,81 @@ function VisualQaPanel({ result, summary, copyStatus, onCopyResult }) {
       </section>
     </section>
   )
+}
+
+function AiReviewPanel({ aiReview, state }) {
+  const review = aiReview?.review || null
+  const meta = aiReview?.meta || {}
+
+  if (state === 'loading') {
+    return (
+      <article className="detail-card ai-review-card">
+        <div className="section-title-row">
+          <h3>AI 종합 검토</h3>
+          <span>OpenAI 검토 중</span>
+        </div>
+        <p className="panel-note relaxed-note">규칙 기반 결과를 바탕으로 배포 판단을 생성하고 있습니다.</p>
+      </article>
+    )
+  }
+
+  if (!review) return null
+
+  return (
+    <article className={`detail-card ai-review-card ${review.releaseDecision}`}>
+      <div className="section-title-row">
+        <div>
+          <h3>AI 종합 검토</h3>
+          <p className="panel-note relaxed-note">규칙 기반 검사 결과와 별도로 OpenAI가 배포 판단을 요약합니다.</p>
+        </div>
+        <span>{formatDecision(review.releaseDecision)}</span>
+      </div>
+      <div className="visual-key-value">
+        <span>배포 판단</span>
+        <strong>{formatDecision(review.releaseDecision)}</strong>
+      </div>
+      <p className="summary-box">{review.summary}</p>
+      <div className="visual-two-column ai-review-columns">
+        <AiReviewIssueList title="반드시 수정" items={review.mustFix} emptyText="배포 차단 수정 항목이 없습니다." />
+        <AiReviewIssueList title="확인 필요" items={review.verify} emptyText="추가 확인 항목이 없습니다." />
+      </div>
+      <AiReviewIssueList title="개발 참고" items={review.developerNotes} emptyText="개발 참고 항목이 없습니다." />
+      <details className="visual-folded-detail">
+        <summary>회신 초안 보기</summary>
+        <p className="panel-note relaxed-note">{review.clientReplyDraft || '회신 초안이 없습니다.'}</p>
+      </details>
+      <div className="visual-key-value">
+        <span>OpenAI</span>
+        <strong>{meta.openAiCalled ? `사용${meta.model ? ` · ${meta.model}` : ''}` : '미사용'}</strong>
+      </div>
+      {meta.fallbackUsed ? <p className="panel-note relaxed-note">AI fallback 결과입니다.</p> : null}
+    </article>
+  )
+}
+
+function AiReviewIssueList({ title, items = [], emptyText }) {
+  return (
+    <section className="visual-section-body">
+      <h4>{title}</h4>
+      {items.length > 0 ? (
+        <ul className="visual-entity-list">
+          {items.map((item, index) => (
+            <li key={`${title}-${index}-${item.title}`}>
+              <strong>{item.title || item.category}</strong>
+              <span>{item.description}</span>
+              {item.evidence?.length ? <small>{item.evidence.join(' · ')}</small> : null}
+            </li>
+          ))}
+        </ul>
+      ) : <p className="empty-row">{emptyText}</p>}
+    </section>
+  )
+}
+
+function formatDecision(value) {
+  if (value === 'ready') return 'Ready'
+  if (value === 'blocked') return 'Blocked'
+  return 'Caution'
 }
 
 function SeverityCard({ label, value, tone, description }) {

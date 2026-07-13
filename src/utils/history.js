@@ -53,6 +53,7 @@ function sanitizeHistoryItem(item, index = 0) {
   const result = item.result && typeof item.result === 'object' ? item.result : null
   const visual = sanitizeSessionBranch(item.visual)
   const tech = sanitizeSessionBranch(item.tech)
+  const aiReview = sanitizeAiReview(item.aiReview)
   const type = sanitizeHistoryType(item.type, result, figmaUrl, visual, tech)
 
   return {
@@ -71,7 +72,47 @@ function sanitizeHistoryItem(item, index = 0) {
     result,
     visual,
     tech,
+    aiReview,
   }
+}
+
+function sanitizeAiReview(aiReview) {
+  if (!aiReview || typeof aiReview !== 'object') return null
+  const review = aiReview.review && typeof aiReview.review === 'object' ? aiReview.review : {}
+  return {
+    meta: {
+      openAiCalled: aiReview.meta?.openAiCalled === true,
+      model: getString(aiReview.meta?.model),
+      fallbackUsed: aiReview.meta?.fallbackUsed === true,
+    },
+    review: {
+      releaseDecision: sanitizeReleaseDecision(review.releaseDecision),
+      summary: getString(review.summary),
+      mustFix: sanitizeAiIssueList(review.mustFix),
+      verify: sanitizeAiIssueList(review.verify),
+      developerNotes: sanitizeAiIssueList(review.developerNotes),
+      clientReplyDraft: getString(review.clientReplyDraft),
+    },
+  }
+}
+
+function sanitizeReleaseDecision(value) {
+  return ['ready', 'caution', 'blocked'].includes(value) ? value : 'caution'
+}
+
+function sanitizeAiIssueList(value) {
+  if (!Array.isArray(value)) return []
+  return value.map((item) => {
+    if (typeof item === 'string') return { category: 'tech', title: item, description: item, evidence: [], severity: 'warning' }
+    if (!item || typeof item !== 'object') return null
+    return {
+      category: getString(item.category) || 'tech',
+      title: getString(item.title),
+      description: getString(item.description),
+      evidence: Array.isArray(item.evidence) ? item.evidence.map(getString).filter(Boolean).slice(0, 4) : [],
+      severity: getString(item.severity) || 'warning',
+    }
+  }).filter(Boolean).slice(0, 10)
 }
 
 function sanitizeHistoryType(type, result, figmaUrl, visual, tech) {

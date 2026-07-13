@@ -52,6 +52,17 @@ test('history stores and restores combined sessions', () => {
     createdAt: '2026-01-03T00:00:00.000Z',
     counts: { total: 3, high: 1 },
     topIssueSummaries: ['Combined'],
+    aiReview: {
+      meta: { openAiCalled: true, model: 'gpt-4.1-mini', fallbackUsed: false },
+      review: {
+        releaseDecision: 'caution',
+        summary: '확인 필요 항목이 있습니다.',
+        mustFix: [],
+        verify: [{ category: 'media', title: '미디어 확인', description: '의도 확인', evidence: ['video'], severity: 'warning' }],
+        developerNotes: [{ category: 'tech', title: '개발 확인', description: '확인', evidence: [], severity: 'check' }],
+        clientReplyDraft: '확인 후 진행하겠습니다.',
+      },
+    },
     visual: { status: 'success', summary: 'Visual ok', compactResult: { meta: { webUrl: 'https://example.com' } } },
     tech: { status: 'error', summary: 'Tech failed', compactResult: null, error: 'failed' },
   })
@@ -62,4 +73,8 @@ test('history stores and restores combined sessions', () => {
   assert.equal(item.visual.status, 'success')
   assert.equal(item.tech.status, 'error')
   assert.equal(item.tech.error, 'failed')
+  assert.equal(item.aiReview.meta.openAiCalled, true)
+  assert.equal(item.aiReview.meta.model, 'gpt-4.1-mini')
+  assert.equal(item.aiReview.review.releaseDecision, 'caution')
+  assert.equal(item.aiReview.review.verify[0].title, '미디어 확인')
 })

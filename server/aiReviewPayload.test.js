@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildAiReviewPayloadFromQaResult, createAiReviewHandler, createAiReviewPayloadHandler } from './aiReviewPayload.js'
+import { buildAiReviewPayloadFromQaResult, createAiReviewFromPayloadHandler, createAiReviewHandler, createAiReviewPayloadHandler } from './aiReviewPayload.js'
 
 test('AI Review payload is compact and excludes raw artifacts', () => {
   const payload = buildAiReviewPayloadFromQaResult(createQaResult())
@@ -96,17 +96,18 @@ test('AI Review handler runs QA once and returns structured review with openAiCa
   assert.equal(response.body.meta.browserLaunchCount, 1)
   assert.equal(response.body.meta.desktopPageCount, 1)
   assert.equal(response.body.meta.mobilePageCount, 1)
-  assert.equal(response.body.releaseDecision, 'caution')
-  assert.equal(typeof response.body.summary, 'string')
-  assert.equal(Array.isArray(response.body.mustFix), true)
-  assert.equal(Array.isArray(response.body.verify), true)
-  assert.equal(Array.isArray(response.body.developerNotes), true)
-  assert.equal(typeof response.body.clientReplyDraft, 'string')
+  assert.equal(response.body.review.releaseDecision, 'caution')
+  assert.equal(response.body.releaseDecision, undefined)
+  assert.equal(typeof response.body.review.summary, 'string')
+  assert.equal(Array.isArray(response.body.review.mustFix), true)
+  assert.equal(Array.isArray(response.body.review.verify), true)
+  assert.equal(Array.isArray(response.body.review.developerNotes), true)
+  assert.equal(typeof response.body.review.clientReplyDraft, 'string')
   assert.equal(calls.qa, 1)
   assert.equal(calls.review, 1)
 })
 
-test('AI Review handler returns success false when OpenAI fails', async () => {
+test('AI Review handler returns fallback review when OpenAI fails', async () => {
   const handler = createAiReviewHandler({
     isHttpUrl(value) {
       return /^https?:\/\//.test(String(value || ''))
@@ -129,9 +130,43 @@ test('AI Review handler returns success false when OpenAI fails', async () => {
   await handler({ body: { webUrl: 'https://example.com', figmaUrl: '' } }, response)
 
   assert.equal(response.statusCode, 200)
-  assert.equal(response.body.success, false)
+  assert.equal(response.body.success, true)
   assert.equal(response.body.meta.openAiCalled, true)
+  assert.equal(response.body.meta.fallbackUsed, true)
+  assert.equal(response.body.review.releaseDecision, 'blocked')
   assert.equal(response.body.error.code, 'openai_review_failed')
+})
+
+test('AI Review from-payload calls OpenAI once without QA scan', async () => {
+  const calls = { review: 0 }
+  const handler = createAiReviewFromPayloadHandler({
+    aiReviewService: {
+      async review(payload) {
+        calls.review += 1
+        assert.equal(payload.meta.webUrl, 'https://example.com')
+        return {
+          meta: { openAiCalled: true, model: 'test-model' },
+          review: {
+            releaseDecision: 'ready',
+            summary: '배포 차단 이슈가 없습니다.',
+            mustFix: [],
+            verify: [],
+            developerNotes: [],
+            clientReplyDraft: '확인된 주요 차단 이슈는 없습니다.',
+          },
+        }
+      },
+    },
+  })
+  const response = createMockResponse()
+
+  await handler({ body: { payload: buildAiReviewPayloadFromQaResult(createQaResult()) } }, response)
+
+  assert.equal(response.body.success, true)
+  assert.equal(response.body.meta.openAiCalled, true)
+  assert.equal(response.body.meta.fallbackUsed, false)
+  assert.equal(response.body.review.releaseDecision, 'ready')
+  assert.equal(calls.review, 1)
 })
 
 function createQaResult() {

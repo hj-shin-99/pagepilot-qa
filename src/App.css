@@ -3626,6 +3626,22 @@
   font-size: 12px;
 }
 
+.ai-review-card.blocked {
+  border-color: rgba(180, 35, 24, 0.24);
+}
+
+.ai-review-card.caution {
+  border-color: rgba(181, 71, 8, 0.24);
+}
+
+.ai-review-card.ready {
+  border-color: rgba(2, 122, 72, 0.24);
+}
+
+.ai-review-columns {
+  align-items: start;
+}
+
 @keyframes loading-bar-sweep {
   0% {
     background-position: -40% 0, 0 0;

@@ -1,3 +1,5 @@
+import { createFallbackAiReview } from './aiReviewService.js'
+
 const MAX_VISUAL_ITEMS = 8
 const MAX_TECH_ITEMS = 8
 
@@ -111,15 +113,53 @@ export function createAiReviewHandler(dependencies) {
           ...(result.meta || {}),
           openAiCalled: true,
         },
-        ...result.review,
+        review: result.review,
       })
     } catch (error) {
       res.status(200).json({
-        success: false,
+        success: true,
         meta: {
           ...(qaResult?.meta || {}),
           openAiCalled: error?.openAiCalled === true,
+          fallbackUsed: true,
         },
+        review: createFallbackAiReview(payload, error instanceof Error ? error.message : ''),
+        error: {
+          code: typeof error?.code === 'string' ? error.code : 'openai_review_failed',
+          message: error instanceof Error ? error.message : 'AI Review 호출에 실패했습니다.',
+        },
+      })
+    }
+  }
+}
+
+export function createAiReviewFromPayloadHandler(dependencies) {
+  return async function aiReviewFromPayloadHandler(req, res) {
+    const payload = req.body?.payload && typeof req.body.payload === 'object' ? req.body.payload : null
+    if (!payload) {
+      res.status(400).json({ success: false, message: 'AI Review payload가 필요합니다.' })
+      return
+    }
+
+    try {
+      const result = await dependencies.aiReviewService.review(payload)
+      res.json({
+        success: true,
+        meta: {
+          ...(result.meta || {}),
+          openAiCalled: true,
+          fallbackUsed: false,
+        },
+        review: result.review,
+      })
+    } catch (error) {
+      res.status(200).json({
+        success: true,
+        meta: {
+          openAiCalled: error?.openAiCalled === true,
+          fallbackUsed: true,
+        },
+        review: createFallbackAiReview(payload, error instanceof Error ? error.message : ''),
         error: {
           code: typeof error?.code === 'string' ? error.code : 'openai_review_failed',
           message: error instanceof Error ? error.message : 'AI Review 호출에 실패했습니다.',
@@ -161,8 +201,8 @@ function createVisualIssues(visual = {}) {
 
 function classifyVisualDifferenceSeverity(item = {}) {
   const text = `${item.figmaText || ''} ${item.webText || ''} ${item.text || ''}`
+  if (isTrivialTextDifference(item.figmaText || item.text, item.webText)) return 'check'
   if (/[0-9][0-9,._%원$€£年月日-]*/.test(text)) return 'critical'
-  if (/hero|heading|title|headline/i.test(`${item.role || ''} ${item.sectionRole || ''}`)) return 'critical'
   if (String(item.confidence || item.matchConfidence || '').toLowerCase() === 'low') return 'check'
   return 'warning'
 }
@@ -172,6 +212,25 @@ function classifyVisualDifferenceCategory(item = {}) {
   if (/[0-9][0-9,._%원$€£年月日-]*/.test(text)) return 'numeric'
   if (/cta|button|action/i.test(`${item.role || ''} ${item.sectionRole || ''}`)) return 'cta-text'
   return 'copy'
+}
+
+function isTrivialTextDifference(first, second) {
+  const firstText = safeText(first, 400)
+  const secondText = safeText(second, 400)
+  if (!firstText || !secondText) return false
+  if (normalizeLooseText(firstText) === normalizeLooseText(secondText)) return true
+
+  const firstNoJosa = normalizeKoreanParticles(firstText)
+  const secondNoJosa = normalizeKoreanParticles(secondText)
+  return firstNoJosa === secondNoJosa
+}
+
+function normalizeLooseText(value) {
+  return safeText(value, 400).toLowerCase().replace(/(?:\s|\u00a0|\u200b|\u200c|\u200d|[.,:;!?"'“”‘’()[\]{}<>_/\\-])/g, '')
+}
+
+function normalizeKoreanParticles(value) {
+  return normalizeLooseText(value).replace(/(은|는|이|가|을|를|의|에|에서|으로|로|와|과|도|만|까지|부터|입니다|합니다|하세요|해요)$/g, '')
 }
 
 function createHeroEvidence(visual = {}) {

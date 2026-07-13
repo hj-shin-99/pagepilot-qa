@@ -21,6 +21,12 @@ test('display image URLs are preferred over local paths', () => {
   assert.equal(createWebDisplayImageUrl({ displayImageUrl: '/api/visual/screenshot/7ab5b706fd88d75e7418254e.png', localImagePath: '.cache/visual/screenshots/aaaaaaaaaaaaaaaaaaaaaaaa.png' }), '/api/visual/screenshot/7ab5b706fd88d75e7418254e.png')
 })
 
+test('local image paths are converted to API URLs before image display', () => {
+  const url = createWebDisplayImageUrl({ localImagePath: '.cache/visual/screenshots/7ab5b706fd88d75e7418254e.png' })
+  assert.equal(url, '/api/visual/screenshot/7ab5b706fd88d75e7418254e.png')
+  assert.equal(url.includes('.cache/'), false)
+})
+
 test('web screenshot URL supports Windows and Unix cache paths', () => {
   assert.equal(createWebScreenshotUrl('.cache/visual/screenshots/7ab5b706fd88d75e7418254e.png'), '/api/visual/screenshot/7ab5b706fd88d75e7418254e.png')
   assert.equal(createWebScreenshotUrl('.cache\\visual\\screenshots\\7ab5b706fd88d75e7418254e.png'), '/api/visual/screenshot/7ab5b706fd88d75e7418254e.png')

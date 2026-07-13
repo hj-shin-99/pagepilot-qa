@@ -3615,6 +3615,17 @@
   box-shadow: 0 1px 2px rgba(17, 24, 39, 0.04);
 }
 
+.mockup-ai-image-stage a {
+  display: block;
+}
+
+.comparison-image-loading {
+  display: block;
+  margin: 0 0 8px;
+  color: #667085;
+  font-size: 12px;
+}
+
 @keyframes loading-bar-sweep {
   0% {
     background-position: -40% 0, 0 0;

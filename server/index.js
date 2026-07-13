@@ -4,15 +4,17 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import OpenAI from 'openai'
 import { chromium, request as playwrightRequest } from 'playwright'
+import { createAiReviewPayloadHandler } from './aiReviewPayload.js'
 import { createFigmaApiClient, FigmaApiError, FigmaRateLimitError } from './figmaApiClient.js'
 import { createFigmaRenderClient } from './figmaRenderClient.js'
+import { applyImageAltClassifications } from './imageAltClassifier.js'
 import { createImageAssetHandlers } from './imageAssetRoutes.js'
 import { extractFigmaStructure } from './figmaStructure.js'
 import { createFigmaTextPreview, extractVisibleFigmaTextNodes } from './figmaText.js'
 import { createTextDifferenceCandidates } from './textDiff.js'
 import { matchTextNodes } from './textMatcher.js'
 import { buildVisualQaPayloadArtifacts } from './visualQaPayload.js'
-import { createQaRunHandler, isWebScanNavigationFailure } from './qaRunRoute.js'
+import { buildQaRunResponse, createQaRunHandler, isWebScanNavigationFailure } from './qaRunRoute.js'
 import { buildVisualPayloadFromScanResult, createVisualPayloadHandler } from './visualPayloadRoute.js'
 import { createWebVisualAnalysis } from './webVisualAnalysis.js'
 import { extractVisibleWebTextElements } from './webText.js'
@@ -88,7 +90,7 @@ const visualPayloadHandler = createVisualPayloadHandler({
   mapFigmaLoaderError,
 })
 
-const qaRunHandler = createQaRunHandler({
+const qaRunDependencies = {
   now: () => Date.now(),
   isHttpUrl,
   parseFigmaUrl,
@@ -104,6 +106,14 @@ const qaRunHandler = createQaRunHandler({
   buildVisualQaPayloadArtifacts,
   buildVisualPayloadFromScanResult,
   isWebScanNavigationFailure,
+}
+
+const qaRunHandler = createQaRunHandler(qaRunDependencies)
+
+const aiReviewPayloadHandler = createAiReviewPayloadHandler({
+  isHttpUrl,
+  buildQaRunResponse,
+  qaRunDependencies,
 })
 
 app.use(express.json({ limit: '80mb' }))
@@ -304,6 +314,8 @@ app.post('/api/figma/render', async (req, res) => {
 app.post('/api/visual/payload', visualPayloadHandler)
 
 app.post('/api/qa/run', qaRunHandler)
+
+app.post('/api/ai-review/payload', aiReviewPayloadHandler)
 
 app.get('/api/visual/screenshot/:fileName', imageAssetHandlers.visualScreenshotHandler)
 
@@ -2326,7 +2338,7 @@ async function safeTitle(page) {
 
 async function safeDomSnapshot(page, targetUrl) {
   try {
-    return await page.evaluate(({ baseUrl, maxDesignElements }) => {
+    const snapshot = await page.evaluate(({ baseUrl, maxDesignElements }) => {
       const documentHeight = getDocumentHeight()
       const links = Array.from(document.querySelectorAll('a')).map((anchor, index) => {
         const href = anchor.getAttribute('href')?.trim() || ''
@@ -2371,12 +2383,22 @@ async function safeDomSnapshot(page, targetUrl) {
       const images = Array.from(document.images).map((image, index) => {
         const rect = getPageRect(image)
         const altClassification = classifyImageForAlt(image, rect)
+        const interactiveAncestor = image.closest('a, button, [role="button"]')
         return {
           index: index + 1,
           src: image.currentSrc || image.src || '',
           alt: image.alt || '',
           altCategory: altClassification.category,
           altReason: altClassification.reason,
+          role: image.getAttribute('role') || '',
+          ariaHidden: image.getAttribute('aria-hidden') === 'true',
+          hasAriaHiddenAncestor: Boolean(image.closest('[aria-hidden="true"]')),
+          className: typeof image.className === 'string' ? image.className : '',
+          ancestorClassText: getAncestorClassText(image),
+          interactiveAncestorLabel: interactiveAncestor ? getAccessibleLabel(interactiveAncestor) : '',
+          figureCaption: normalizeText(image.closest('figure')?.querySelector('figcaption')?.innerText || ''),
+          viewport: { width: window.innerWidth || document.documentElement.clientWidth || 0, height: window.innerHeight || document.documentElement.clientHeight || 0 },
+          visible: isVisibleElement(image),
           loaded: image.complete && image.naturalWidth > 0,
           naturalWidth: image.naturalWidth,
           naturalHeight: image.naturalHeight,
@@ -2577,6 +2599,23 @@ async function safeDomSnapshot(page, targetUrl) {
           || normalizeText(element.getAttribute('aria-labelledby') || '')
           || normalizeText(element.getAttribute('title') || '')
           || normalizeText(element.querySelector('img')?.getAttribute('alt') || '')
+      }
+
+      function getAncestorClassText(element) {
+        const parts = []
+        let current = element
+        let depth = 0
+        while (current && current !== document.body && depth < 6) {
+          const className = typeof current.className === 'string' ? current.className : ''
+          const role = current.getAttribute?.('role') || ''
+          const ariaCurrent = current.getAttribute?.('aria-current') || ''
+          const ariaSelected = current.getAttribute?.('aria-selected') || ''
+          const ariaHidden = current.getAttribute?.('aria-hidden') || ''
+          parts.push(`${className} ${role} ${ariaCurrent} ${ariaSelected} ${ariaHidden}`)
+          current = current.parentElement
+          depth += 1
+        }
+        return normalizeText(parts.join(' '))
       }
 
       function classifyImageForAlt(image, rect) {
@@ -2918,6 +2957,7 @@ async function safeDomSnapshot(page, targetUrl) {
         return String(value || '').replace(/[^a-zA-Z0-9_-]/g, '\\$&')
       }
     }, { baseUrl: targetUrl, maxDesignElements: MAX_DESIGN_ELEMENTS })
+    return applyImageAltClassifications(snapshot)
   } catch {
     return createEmptyDomSnapshot()
   }

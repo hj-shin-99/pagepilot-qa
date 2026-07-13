@@ -1,0 +1,292 @@
+﻿{
+    "success":  true,
+    "openAiCalled":  false,
+    "payload":  {
+                    "meta":  {
+                                 "payloadVersion":  "0.3-ai-review-input",
+                                 "webUrl":  "https://www.bmwfs.co.kr/",
+                                 "figmaNodeId":  "2547:3664",
+                                 "openAiCalled":  false
+                             },
+                    "releaseDecisionInput":  {
+                                                 "criticalCount":  2,
+                                                 "warningCount":  5,
+                                                 "checkCount":  0,
+                                                 "techErrorCount":  0,
+                                                 "techWarningCount":  3
+                                             },
+                    "visualEvidence":  {
+                                           "textDifferences":  [
+                                                                   {
+                                                                       "kind":  "text-difference",
+                                                                       "severity":  "critical",
+                                                                       "category":  "numeric",
+                                                                       "figmaText":  "THE NEW BMW iX3를​",
+                                                                       "webText":  "THE NEW BMW iX3",
+                                                                       "confidence":  "high"
+                                                                   },
+                                                                   {
+                                                                       "kind":  "text-difference",
+                                                                       "severity":  "warning",
+                                                                       "category":  "copy",
+                                                                       "figmaText":  "온라인견적",
+                                                                       "webText":  "온라인 견적",
+                                                                       "confidence":  "medium"
+                                                                   },
+                                                                   {
+                                                                       "kind":  "text-difference",
+                                                                       "severity":  "critical",
+                                                                       "category":  "numeric",
+                                                                       "figmaText":  "BMW 뉴 iX, 월 47만원.",
+                                                                       "webText":  "BMW 뉴 iX, 월 50만원.",
+                                                                       "confidence":  "medium"
+                                                                   }
+                                                               ],
+                                           "hero":  {
+                                                        "figmaTextCount":  9,
+                                                        "webTextCount":  5,
+                                                        "figmaCtaCount":  2,
+                                                        "webCtaCount":  2,
+                                                        "webPrimaryMediaCount":  1
+                                                    },
+                                           "cta":  {
+                                                       "figmaCount":  2,
+                                                       "webCount":  2,
+                                                       "countDifference":  0,
+                                                       "figmaActions":  [
+                                                                            {
+                                                                                "text":  "사전예약하기",
+                                                                                "role":  "primary-action",
+                                                                                "href":  ""
+                                                                            },
+                                                                            {
+                                                                                "text":  "프로모션 바로가기",
+                                                                                "role":  "secondary-action",
+                                                                                "href":  ""
+                                                                            }
+                                                                        ],
+                                                       "webActions":  [
+                                                                          {
+                                                                              "text":  "프로모션 바로가기",
+                                                                              "role":  "primary-action",
+                                                                              "href":  "https://www.bmwfs.co.kr/kr/promotion/detail?idx=2258"
+                                                                          },
+                                                                          {
+                                                                              "text":  "온라인 구매 상담",
+                                                                              "role":  "secondary-action",
+                                                                              "href":  "https://www.bmwfs.co.kr/kr/purchase/counseling"
+                                                                          }
+                                                                      ]
+                                                   },
+                                           "prices":  [
+                                                          {
+                                                              "source":  "figma",
+                                                              "type":  "monthly-payment",
+                                                              "text":  "BMW 뉴 iX, 월 47만원.",
+                                                              "role":  ""
+                                                          },
+                                                          {
+                                                              "source":  "web",
+                                                              "type":  "monthly-payment",
+                                                              "text":  "BMW 뉴 iX, 월 50만원.",
+                                                              "role":  ""
+                                                          },
+                                                          {
+                                                              "source":  "web",
+                                                              "type":  "monthly-payment",
+                                                              "text":  "BMW 1시리즈, 월 41만원 \u0026 BMW 2시리즈 그란 쿠페, 월 44만원.",
+                                                              "role":  ""
+                                                          }
+                                                      ],
+                                           "media":  {
+                                                         "comparisonHint":  "figma-image-vs-web-video",
+                                                         "figmaMediaTypes":  [
+                                                                                 "..."
+                                                                             ],
+                                                         "webMediaTypes":  [
+                                                                               "..."
+                                                                           ],
+                                                         "figmaImageCount":  12,
+                                                         "webImageCount":  2,
+                                                         "webVideoCount":  1
+                                                     }
+                                       },
+                    "techEvidence":  {
+                                         "access":  {
+                                                        "status":  "ok",
+                                                        "value":  "접속 가능",
+                                                        "detail":  "Playwright가 입력 URL에 정상 접속했습니다."
+                                                    },
+                                         "httpStatus":  {
+                                                            "status":  "ok",
+                                                            "value":  "200",
+                                                            "detail":  "메인 문서 응답 코드 200"
+                                                        },
+                                         "consoleErrors":  [
+
+                                                           ],
+                                         "brokenLinks":  [
+
+                                                         ],
+                                         "metaIssues":  [
+                                                            {
+                                                                "severity":  "warning",
+                                                                "label":  "canonical URL",
+                                                                "status":  "",
+                                                                "type":  "",
+                                                                "message":  "메타 정보 누락 가능성 확인 필요",
+                                                                "url":  ""
+                                                            },
+                                                            {
+                                                                "severity":  "warning",
+                                                                "label":  "og:title",
+                                                                "status":  "",
+                                                                "type":  "",
+                                                                "message":  "메타 정보 누락 가능성 확인 필요",
+                                                                "url":  ""
+                                                            },
+                                                            {
+                                                                "severity":  "warning",
+                                                                "label":  "og:description",
+                                                                "status":  "",
+                                                                "type":  "",
+                                                                "message":  "메타 정보 누락 가능성 확인 필요",
+                                                                "url":  ""
+                                                            },
+                                                            {
+                                                                "severity":  "warning",
+                                                                "label":  "og:image",
+                                                                "status":  "",
+                                                                "type":  "",
+                                                                "message":  "메타 정보 누락 가능성 확인 필요",
+                                                                "url":  ""
+                                                            }
+                                                        ],
+                                         "altIssues":  [
+                                                           {
+                                                               "severity":  "warning",
+                                                               "label":  "",
+                                                               "status":  "",
+                                                               "type":  "",
+                                                               "message":  "",
+                                                               "url":  "https://www.bmwfs.co.kr/resource/images/main/series_wrap_img01.png"
+                                                           },
+                                                           {
+                                                               "severity":  "warning",
+                                                               "label":  "",
+                                                               "status":  "",
+                                                               "type":  "",
+                                                               "message":  "",
+                                                               "url":  "https://www.bmwfs.co.kr/resource/images/main/series_wrap_img_coupe.png"
+                                                           },
+                                                           {
+                                                               "severity":  "warning",
+                                                               "label":  "",
+                                                               "status":  "",
+                                                               "type":  "",
+                                                               "message":  "",
+                                                               "url":  "https://www.bmwfs.co.kr/resource/images/main/help_wrap_img01.jpg"
+                                                           },
+                                                           {
+                                                               "severity":  "warning",
+                                                               "label":  "",
+                                                               "status":  "",
+                                                               "type":  "",
+                                                               "message":  "",
+                                                               "url":  "https://www.bmwfs.co.kr/resource/images/main/help_wrap_img02.jpg"
+                                                           },
+                                                           {
+                                                               "severity":  "warning",
+                                                               "label":  "",
+                                                               "status":  "",
+                                                               "type":  "",
+                                                               "message":  "",
+                                                               "url":  "https://www.bmwfs.co.kr/resource/images/main/help_wrap_img03.jpg"
+                                                           }
+                                                       ],
+                                         "externalLinkIssues":  [
+                                                                    {
+                                                                        "severity":  "warning",
+                                                                        "label":  "MINI 코리아",
+                                                                        "status":  "",
+                                                                        "type":  "",
+                                                                        "message":  "",
+                                                                        "url":  "https://www.mini.co.kr/ko_KR/home.html"
+                                                                    },
+                                                                    {
+                                                                        "severity":  "warning",
+                                                                        "label":  "BMW 모토라드 코리아",
+                                                                        "status":  "",
+                                                                        "type":  "",
+                                                                        "message":  "",
+                                                                        "url":  "https://www.bmw-motorrad.co.kr/ko/home.html"
+                                                                    },
+                                                                    {
+                                                                        "severity":  "warning",
+                                                                        "label":  "BMW 프리미엄 셀렉션",
+                                                                        "status":  "",
+                                                                        "type":  "",
+                                                                        "message":  "",
+                                                                        "url":  "https://www.bmw.co.kr/ko/usedcar.html"
+                                                                    },
+                                                                    {
+                                                                        "severity":  "warning",
+                                                                        "label":  "BMW 인슈어런스 서비스 코리아",
+                                                                        "status":  "",
+                                                                        "type":  "",
+                                                                        "message":  "",
+                                                                        "url":  "http://www.bmwisk.co.kr/"
+                                                                    },
+                                                                    {
+                                                                        "severity":  "warning",
+                                                                        "label":  "BMW 드라이빙 센터",
+                                                                        "status":  "",
+                                                                        "type":  "",
+                                                                        "message":  "",
+                                                                        "url":  "https://driving-center.bmw.co.kr/"
+                                                                    },
+                                                                    {
+                                                                        "severity":  "warning",
+                                                                        "label":  "BMW 밴티지",
+                                                                        "status":  "",
+                                                                        "type":  "",
+                                                                        "message":  "",
+                                                                        "url":  "https://www.bmw.co.kr/ko/services/my-bmw-apps/bmwvantage/bmwvantage.html"
+                                                                    },
+                                                                    {
+                                                                        "severity":  "warning",
+                                                                        "label":  "바로가기",
+                                                                        "status":  "",
+                                                                        "type":  "",
+                                                                        "message":  "",
+                                                                        "url":  "https://www.bmw.co.kr/ko/fastlane/tda-experience.html"
+                                                                    },
+                                                                    {
+                                                                        "severity":  "warning",
+                                                                        "label":  "바로가기",
+                                                                        "status":  "",
+                                                                        "type":  "",
+                                                                        "message":  "",
+                                                                        "url":  "https://www.bmw.co.kr/ko/configurator.html"
+                                                                    }
+                                                                ],
+                                         "networkIssues":  [
+
+                                                           ]
+                                     },
+                    "requestedOutputSchema":  {
+                                                  "releaseDecision":  "ready | caution | blocked",
+                                                  "summary":  "",
+                                                  "mustFix":  [
+
+                                                              ],
+                                                  "verify":  [
+
+                                                             ],
+                                                  "developerNotes":  [
+
+                                                                     ],
+                                                  "clientReplyDraft":  ""
+                                              }
+                }
+}

@@ -199,6 +199,7 @@ function OtherInteractions({ items }) {
 
 function ImagePane({ imageAlt, imageSrc, label, placeholder }) {
   const [failed, setFailed] = useState(false)
+  const [loaded, setLoaded] = useState(false)
   const showImage = imageSrc && !failed
 
   return (
@@ -209,12 +210,20 @@ function ImagePane({ imageAlt, imageSrc, label, placeholder }) {
       <div className={`comparison-image-frame mockup-ai-image-frame ${showImage ? '' : 'is-empty'}`}>
         {showImage ? (
           <div className="comparison-image-stage mockup-ai-image-stage">
-            <img src={imageSrc} alt={imageAlt} onError={() => setFailed(true)} />
+            {!loaded ? <span className="comparison-image-loading">이미지 로딩 중...</span> : null}
+            <a href={imageSrc} target="_blank" rel="noreferrer" aria-label={`${label} 이미지 새 탭에서 열기`}>
+              <img src={imageSrc} alt={imageAlt} onLoad={() => setLoaded(true)} onError={() => setFailed(true)} />
+            </a>
           </div>
         ) : (
           <div className="comparison-placeholder mockup-ai-image-placeholder">
             <span>{failed ? '이미지를 불러오지 못했습니다.' : placeholder}</span>
-            {imageSrc ? <small>{imageSrc}</small> : null}
+            {imageSrc ? (
+              <details className="visual-technical-detail">
+                <summary>HTTP 확인용 URL</summary>
+                <small>{imageSrc}</small>
+              </details>
+            ) : null}
           </div>
         )}
       </div>

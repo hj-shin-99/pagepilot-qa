@@ -24,6 +24,8 @@ const checkDescriptions = {
 }
 
 function CheckList({ checks }) {
+  const sortedChecks = checks.slice().sort(compareChecks)
+
   return (
     <section className="detail-card" aria-label="상세 검사 테이블">
       <div className="section-title-row">
@@ -37,7 +39,7 @@ function CheckList({ checks }) {
           <span>결과</span>
           <span>세부 내용</span>
         </div>
-        {checks.map((check) => (
+        {sortedChecks.map((check) => (
           <div className="qa-table-row" key={check.id}>
             <strong>{check.title}</strong>
             <StatusChip status={check.status} />
@@ -45,25 +47,65 @@ function CheckList({ checks }) {
             <span className="check-detail-inline">
               {checkDescriptions[check.id] ? <em>{checkDescriptions[check.id]}</em> : null}
               {check.detail}
-              {Array.isArray(check.items) && check.items.length > 0 ? (
-                <details className="check-detail-expander">
-                  <summary>{getDetailSummaryLabel(check)} {check.items.length}개</summary>
-                  <ul>
-                    {check.items.map((item, index) => (
-                      <li key={`${index}-${item.selector || item.domPath || item.source || item.src || item.url || item.message}`}>
-                        <strong>{formatItemTitle(item, index)}</strong>
-                        <span>{formatItemLocation(item)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              ) : null}
+              <CheckItems check={check} />
             </span>
           </div>
         ))}
       </div>
     </section>
   )
+}
+
+function CheckItems({ check }) {
+  if (!Array.isArray(check.items) || check.items.length === 0) return null
+
+  const visibleItems = check.items.slice(0, 10)
+  const hiddenItems = check.items.slice(10)
+
+  return (
+    <details className="check-detail-expander">
+      <summary>{getDetailSummaryLabel(check)} {check.items.length}개</summary>
+      <ul>
+        {visibleItems.map((item, index) => <CheckItem item={item} index={index} key={getItemKey(item, index)} />)}
+      </ul>
+      {hiddenItems.length > 0 ? (
+        <details className="check-detail-expander">
+          <summary>{hiddenItems.length}개 더 보기</summary>
+          <ul>
+            {hiddenItems.map((item, index) => <CheckItem item={item} index={index + 10} key={getItemKey(item, index + 10)} />)}
+          </ul>
+        </details>
+      ) : null}
+    </details>
+  )
+}
+
+function CheckItem({ item, index }) {
+  return (
+    <li>
+      <strong>{formatItemTitle(item, index)}</strong>
+      <span>{formatItemSummary(item)}</span>
+      {hasTechnicalDetail(item) ? (
+        <details className="check-detail-expander">
+          <summary>기술 정보</summary>
+          <span>{formatItemTechnicalDetail(item)}</span>
+        </details>
+      ) : null}
+    </li>
+  )
+}
+
+function compareChecks(first, second) {
+  const rankDiff = getStatusRank(first.status) - getStatusRank(second.status)
+  if (rankDiff !== 0) return rankDiff
+  return 0
+}
+
+function getStatusRank(status) {
+  if (status === 'error') return 0
+  if (status === 'warn') return 1
+  if (status === 'check') return 2
+  return 3
 }
 
 function getDetailSummaryLabel(check) {
@@ -94,6 +136,29 @@ function formatItemLocation(item) {
   if (item.lineNumber !== null && item.lineNumber !== undefined) parts.push(`line: ${item.lineNumber}`)
   if (item.message) parts.push(item.message)
   return parts.join(' · ') || '위치 정보 없음'
+}
+
+function formatItemSummary(item) {
+  const parts = []
+  if (item.statusCode !== null && item.statusCode !== undefined) parts.push(`status: ${item.statusCode}`)
+  if (item.category) parts.push(item.category)
+  if (item.confidence) parts.push(`confidence: ${item.confidence}`)
+  if (item.message) parts.push(item.message)
+  if (item.url) parts.push(item.url)
+  if (item.src) parts.push(item.src)
+  return parts.join(' · ') || formatItemLocation(item)
+}
+
+function hasTechnicalDetail(item) {
+  return Boolean(item.selector || item.domPath || item.section || item.boundingBox || Number.isFinite(Number(item.y)) || item.lineNumber !== null && item.lineNumber !== undefined)
+}
+
+function formatItemTechnicalDetail(item) {
+  return formatItemLocation(item)
+}
+
+function getItemKey(item, index) {
+  return `${index}-${item.selector || item.domPath || item.source || item.src || item.url || item.message}`
 }
 
 function formatBox(box) {

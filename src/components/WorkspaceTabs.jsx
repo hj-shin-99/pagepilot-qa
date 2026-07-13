@@ -1,6 +1,6 @@
 function WorkspaceTabs({ activeTab, onTabChange }) {
   const tabs = [
-    { id: 'mockup', label: '시안 비교 QA' },
+    { id: 'visual', label: 'Visual QA' },
     { id: 'tech', label: 'Tech QA' },
     { id: 'history', label: 'History' },
   ]

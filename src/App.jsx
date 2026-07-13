@@ -2,328 +2,162 @@ import { useMemo, useState } from 'react'
 import './App.css'
 import { buildReportText, createResultSummary, getStatusCounts } from './utils/report'
 import { loadHistoryItems, saveHistoryItem } from './utils/history'
+import { isValidHttpUrl } from './utils/scanSession'
+import { countIssueCards, createCompactVisualResult, createVisualIssueCards, createVisualSummary } from './utils/visualQa'
 import AuditHeader from './components/AuditHeader'
 import CheckList from './components/CheckList'
 import DetailPanel from './components/DetailPanel'
 import EmptyState from './components/EmptyState'
 import HistoryPanel from './components/HistoryPanel'
 import InputPanel from './components/InputPanel'
-import MockupQaPanel from './components/MockupQaPanel'
 import SummaryCards from './components/SummaryCards'
+import VisualQaPanel from './components/VisualQaPanel'
 import WorkspaceTabs from './components/WorkspaceTabs'
-
-const AI_IMAGE_DATA_URL_MAX_LENGTH = 50_000_000
-const AI_TEXT_HINT_LIMIT = 100
-const AI_TEXT_HINT_MAX_LENGTH = 160
-const AI_MOCKUP_QA_TIMEOUT_MS = 180000
-
-function isValidHttpUrl(value) {
-  try {
-    const url = new URL(value)
-    return url.protocol === 'http:' || url.protocol === 'https:'
-  } catch {
-    return false
-  }
-}
 
 function App() {
   const [url, setUrl] = useState('')
   const [figmaUrl, setFigmaUrl] = useState('')
-  const [figmaJson, setFigmaJson] = useState('')
-  const [figmaElements, setFigmaElements] = useState([])
-  const [figmaCtaHints, setFigmaCtaHints] = useState([])
-  const [designImages, setDesignImages] = useState([])
-  const [result, setResult] = useState(null)
-  const [scanState, setScanState] = useState('idle')
-  const [activeTab, setActiveTab] = useState('tech')
+  const [visualResult, setVisualResult] = useState(null)
+  const [techResult, setTechResult] = useState(null)
+  const [visualScanState, setVisualScanState] = useState('idle')
+  const [techScanState, setTechScanState] = useState('idle')
+  const [activeTab, setActiveTab] = useState('visual')
   const [inputError, setInputError] = useState('')
   const [figmaError, setFigmaError] = useState('')
-  const [copyStatus, setCopyStatus] = useState('')
-  const [scanError, setScanError] = useState('')
+  const [visualCopyStatus, setVisualCopyStatus] = useState('')
+  const [techCopyStatus, setTechCopyStatus] = useState('')
+  const [visualScanError, setVisualScanError] = useState('')
+  const [techScanError, setTechScanError] = useState('')
   const [historyItems, setHistoryItems] = useState(() => loadHistoryItems())
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
-  const [aiQa, setAiQa] = useState({ state: 'idle', result: null, error: '', rawText: '' })
-  const [figmaInspectState, setFigmaInspectState] = useState('idle')
-  const [figmaInspectError, setFigmaInspectError] = useState('')
-  const [figmaInspectResult, setFigmaInspectResult] = useState(null)
 
-  const summary = useMemo(() => (result ? createResultSummary(result) : ''), [result])
-  const statusCounts = useMemo(() => (result ? getStatusCounts(result.checks) : null), [result])
-  const isScanning = scanState === 'scanning'
-
-  const handleFigmaTextChange = (value) => {
-    setFigmaJson(value)
-    updateFigmaElements(value)
-  }
-
-  const handleFigmaFileSelect = async (event) => {
-    const file = event.target.files?.[0]
-    if (!file) return
-
-    try {
-      const text = await readFileAsText(file)
-      setFigmaJson(text)
-      updateFigmaElements(text)
-    } catch {
-      setFigmaError('Figma JSON 파일을 읽지 못했습니다.')
-    }
-  }
-
-  const handleDesignImagesSelect = async (event) => {
-    const file = event.target.files?.[0]
-    if (!file) return
-
-    const image = {
-      id: `${file.name}-${file.size}-${file.lastModified}`,
-      name: file.name,
-      size: file.size,
-      previewUrl: await readFileAsDataUrl(file),
-    }
-    setDesignImages([image])
-    event.target.value = ''
-  }
-
-  const handleDesignImageDelete = () => {
-    setDesignImages([])
-  }
-
-  const handleFigmaUrlChange = (value) => {
-    setFigmaUrl(value)
-    if (figmaInspectError) setFigmaInspectError('')
-  }
-
-  const handleFigmaInspect = async () => {
-    const trimmedUrl = figmaUrl.trim()
-
-    if (!trimmedUrl) {
-      setFigmaInspectError('Figma Frame URL을 입력해 주세요.')
-      setFigmaInspectResult(null)
-      setFigmaInspectState('failed')
-      return
-    }
-
-    setFigmaInspectState('loading')
-    setFigmaInspectError('')
-    setFigmaInspectResult(null)
-
-    try {
-      const response = await fetch('/api/figma/inspect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ figmaUrl: trimmedUrl }),
-      })
-
-      let payload = null
-      try {
-        payload = await response.json()
-      } catch {
-        payload = null
-      }
-
-      if (!response.ok) {
-        throw new Error(payload?.message || `Figma 연결 확인에 실패했습니다. (${response.status})`)
-      }
-
-      setFigmaInspectResult(payload)
-      setFigmaInspectState('success')
-    } catch (error) {
-      setFigmaInspectError(error instanceof Error ? error.message : 'Figma 연결 확인 중 오류가 발생했습니다.')
-      setFigmaInspectState('failed')
-    }
-  }
+  const visualSummary = useMemo(() => (visualResult ? createVisualSummary(visualResult) : ''), [visualResult])
+  const techSummary = useMemo(() => (techResult ? createResultSummary(techResult) : ''), [techResult])
+  const techStatusCounts = useMemo(() => (techResult ? getStatusCounts(techResult.checks || []) : null), [techResult])
+  const isScanning = visualScanState === 'loading' || techScanState === 'loading'
 
   const handleStartScan = async () => {
-    setCopyStatus('')
-    setScanError('')
-    setAiQa({ state: 'idle', result: null, error: '', rawText: '' })
+    const webUrl = url.trim()
+    const frameUrl = figmaUrl.trim()
 
-    if (!isValidHttpUrl(url)) {
-      setInputError('http:// 또는 https://로 시작하는 테스트 URL을 입력해 주세요.')
-      setResult(null)
-      setScanState('idle')
+    setVisualCopyStatus('')
+    setTechCopyStatus('')
+    setVisualScanError('')
+    setTechScanError('')
+    setInputError('')
+    setFigmaError('')
+    setVisualResult(null)
+    setTechResult(null)
+
+    if (!isValidHttpUrl(webUrl)) {
+      setInputError('http:// 또는 https://로 시작하는 Web URL을 입력해 주세요.')
+      setTechScanState('idle')
+      setVisualScanState(frameUrl ? 'error' : 'skipped')
+      setActiveTab('tech')
       return
     }
 
-    setInputError('')
-    setResult(null)
-    setScanState('scanning')
-    setActiveTab('mockup')
+    setTechScanState('loading')
+    setVisualScanState(frameUrl ? 'loading' : 'skipped')
+    setActiveTab(frameUrl ? 'visual' : 'tech')
 
+    let session
     try {
-      const response = await fetch('/api/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url }),
-      })
-
-      const payload = await response.json()
-
-      if (!response.ok) {
-        throw new Error(payload.message || '검사 요청에 실패했습니다.')
-      }
-
-      setResult(payload)
-      setScanState('complete')
-      setActiveTab('mockup')
-      setHistoryItems(saveHistoryItem(createHistoryItem(payload, designImages)))
-      await maybeRunAiQa({ scanResult: payload, force: false })
+      session = await requestQaRun(webUrl, frameUrl)
     } catch (error) {
-      setScanError(error instanceof Error ? error.message : '검사 중 오류가 발생했습니다.')
-      setScanState('failed')
+      const message = error instanceof Error ? error.message : '통합 검사 요청에 실패했습니다.'
+      session = {
+        webUrl,
+        figmaUrl: frameUrl,
+        shouldSaveCombined: Boolean(frameUrl),
+        tech: { status: 'error', result: null, error: message },
+        visual: frameUrl ? { status: 'error', result: null, error: message } : { status: 'skipped', result: null, error: null },
+      }
+    }
+
+    setActiveTab(frameUrl ? 'visual' : 'tech')
+    if (session.shouldSaveCombined && session.tech.status === 'error' && session.visual.status === 'error') {
+      const commonError = `Visual QA와 Tech QA 모두 실패했습니다. Visual: ${session.visual.error} / Tech: ${session.tech.error}`
+      session.visual.error = commonError
+      session.tech.error = commonError
+    }
+    applyTechSessionState(session.tech, setTechResult, setTechScanState, setTechScanError)
+    applyVisualSessionState(session.visual, setVisualResult, setVisualScanState, setVisualScanError)
+
+    if (session.shouldSaveCombined) {
+      setHistoryItems(saveHistoryItem(createCombinedHistoryItem(session)))
+    } else if (session.tech.status === 'success') {
+      setHistoryItems(saveHistoryItem(createTechHistoryItem(session.tech.result)))
     }
   }
 
   const handleRestoreHistory = (item) => {
     setUrl(item.url)
+    if (item.figmaUrl) setFigmaUrl(item.figmaUrl)
+    setInputError('')
+    setFigmaError('')
+    setVisualScanError('')
+    setTechScanError('')
+    setVisualCopyStatus('')
+    setTechCopyStatus('')
+
+    if (item.type === 'combined') {
+      setVisualResult(item.visual?.compactResult || null)
+      setTechResult(item.tech?.compactResult || null)
+      setVisualScanState(item.visual?.status || 'skipped')
+      setTechScanState(item.tech?.status || 'idle')
+      setVisualScanError(item.visual?.error || '')
+      setTechScanError(item.tech?.error || '')
+      setActiveTab('visual')
+      return
+    }
+
     if (!item.result) {
       setActiveTab('history')
       return
     }
 
-    setResult(item.result)
-    setFigmaJson('')
-    setFigmaElements([])
-    setFigmaCtaHints([])
-    setDesignImages([])
-    setScanState('complete')
-    setInputError('')
-    setFigmaError('')
-    setScanError('')
-    setCopyStatus('')
-    setAiQa({ state: 'idle', result: null, error: '', rawText: '' })
-    setActiveTab('mockup')
-  }
-
-  const handleCopyReport = async () => {
-    if (!result) return
-
-    const reportText = buildReportText(result, summary)
-
-    try {
-      if (navigator.clipboard) {
-        await navigator.clipboard.writeText(reportText)
-      } else {
-        const textarea = document.createElement('textarea')
-        textarea.value = reportText
-        textarea.setAttribute('readonly', '')
-        textarea.style.position = 'fixed'
-        textarea.style.opacity = '0'
-        document.body.appendChild(textarea)
-        textarea.select()
-        document.execCommand('copy')
-        document.body.removeChild(textarea)
-      }
-      setCopyStatus('리포트가 클립보드에 복사되었습니다.')
-    } catch {
-      setCopyStatus('복사에 실패했습니다. 브라우저 권한을 확인해 주세요.')
-    }
-  }
-
-  const handleRunAiQa = async () => {
-    await maybeRunAiQa({ scanResult: result, force: true })
-  }
-
-  const maybeRunAiQa = async ({ scanResult, force }) => {
-    if (!scanResult) {
-      setAiQa({ state: 'failed', result: null, error: '먼저 URL 검사를 실행한 뒤 AI QA를 사용할 수 있습니다.', rawText: '' })
+    if (item.type === 'tech' || item.result?.targetUrl) {
+      setTechResult(item.result)
+      setTechScanState('success')
+      setActiveTab('tech')
       return
     }
 
-    const resultKey = getAiResultKey(scanResult)
-    if (!force && aiQa.resultKey === resultKey && aiQa.state !== 'idle') return
-
-    setAiQa({ state: 'running', result: null, error: '', rawText: '', resultKey, startedAt: Date.now() })
-
-    const controller = new AbortController()
-    const timeoutId = window.setTimeout(() => controller.abort(), AI_MOCKUP_QA_TIMEOUT_MS)
-
-    try {
-      const response = await fetch('/api/ai-mockup-qa', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(createAiMockupQaRequestPayload({ result: scanResult, figmaElements, figmaCtaHints, webElements: scanResult.designElements || [], designImages })),
-        signal: controller.signal,
-      })
-      console.log('[Mockup AI QA Front] response received')
-
-      let payload
-      try {
-        payload = await response.json()
-      } catch {
-        if (!response.ok) {
-          throw new AiQaRequestError('http_error', `AI QA HTTP 오류가 발생했습니다. (${response.status})`)
-        }
-        throw new AiQaRequestError('json_parse_error', 'AI QA 응답 JSON을 해석하지 못했습니다. 서버 응답 형식을 확인해주세요.')
-      }
-      console.log('[Mockup AI QA Front] parsed result', payload?.result || payload)
-
-      if (!response.ok) {
-        throw new AiQaRequestError('http_error', payload?.message || `AI QA HTTP 오류가 발생했습니다. (${response.status})`)
-      }
-
-      if (payload.parseError) {
-        setAiQa({ state: 'failed', result: null, error: payload.message || 'AI 응답을 해석하지 못했습니다. 원문 응답을 확인해주세요.', rawText: payload.rawText || '', resultKey })
-        return
-      }
-
-      const aiResult = normalizeAiMockupQaFrontendResult(payload.result)
-      aiResult.model = payload.model || payload.result?.model || ''
-      setAiQa({ state: 'complete', result: aiResult, error: '', rawText: '', resultKey })
-    } catch (error) {
-      const message = error?.name === 'AbortError'
-        ? 'AI QA 요청 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.'
-        : error instanceof Error ? error.message : '네트워크 오류로 AI QA를 실행하지 못했습니다.'
-      setAiQa({ state: 'failed', result: null, error: message, rawText: '', resultKey })
-    } finally {
-      window.clearTimeout(timeoutId)
-    }
+    setVisualResult(item.result)
+    setVisualScanState('success')
+    setActiveTab('visual')
   }
 
-  function updateFigmaElements(value) {
-    if (!value.trim()) {
-      setFigmaElements([])
-      setFigmaCtaHints([])
-      setFigmaError('')
-      return
-    }
+  const handleCopyVisualResult = async () => {
+    if (!visualResult) return
+    await copyText(buildVisualReportText(visualResult, visualSummary), setVisualCopyStatus, 'Visual QA 요약이 클립보드에 복사되었습니다.')
+  }
 
-    try {
-      const parsed = parseFigmaJsonInput(value)
-      const texts = extractFigmaTextHints(parsed)
-      const ctaHints = extractFigmaCtaHints(parsed)
-      setFigmaElements(texts)
-      setFigmaCtaHints(ctaHints)
-      setFigmaError('')
-    } catch (error) {
-      setFigmaElements([])
-      setFigmaCtaHints([])
-      setFigmaError(createFigmaJsonParseErrorMessage(error, value))
-    }
+  const handleCopyTechResult = async () => {
+    if (!techResult) return
+    await copyText(buildReportText(techResult, techSummary), setTechCopyStatus, 'Tech QA 리포트가 클립보드에 복사되었습니다.')
   }
 
   return (
     <main className={`app-shell ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       <InputPanel
-        designImages={designImages}
         figmaError={figmaError}
-        figmaInspectError={figmaInspectError}
-        figmaInspectResult={figmaInspectResult}
-        figmaInspectState={figmaInspectState}
-        figmaJson={figmaJson}
         figmaUrl={figmaUrl}
         inputError={inputError}
         isCollapsed={isSidebarCollapsed}
         isScanning={isScanning}
         url={url}
-        onDesignImagesSelect={handleDesignImagesSelect}
-        onDesignImageDelete={handleDesignImageDelete}
-        onFigmaInspect={handleFigmaInspect}
-        onFigmaFileSelect={handleFigmaFileSelect}
-        onFigmaTextChange={handleFigmaTextChange}
-        onFigmaUrlChange={handleFigmaUrlChange}
-        onToggleCollapsed={() => setIsSidebarCollapsed((value) => !value)}
+        onFigmaUrlChange={(value) => {
+          setFigmaUrl(value)
+          if (figmaError) setFigmaError('')
+        }}
         onStartScan={handleStartScan}
-        onUrlChange={setUrl}
+        onToggleCollapsed={() => setIsSidebarCollapsed((value) => !value)}
+        onUrlChange={(value) => {
+          setUrl(value)
+          if (inputError) setInputError('')
+        }}
       />
 
       <section className="workspace" aria-live="polite">
@@ -331,299 +165,228 @@ function App() {
 
         {activeTab === 'history' ? (
           <HistoryPanel historyItems={historyItems} onRestoreHistory={handleRestoreHistory} />
-        ) : result ? (
-          <>
-            <AuditHeader
-              copyStatus={copyStatus}
-              result={result}
-              summary={summary}
-              onCopyReport={handleCopyReport}
-            />
-            {activeTab === 'tech' ? (
-              <>
-                <SummaryCards counts={statusCounts} result={result} />
-                <CheckList checks={result.checks} />
-                <DetailPanel result={result} />
-              </>
-            ) : null}
-            {activeTab === 'mockup' ? (
-              <MockupQaPanel
-                aiQa={aiQa}
-                designImages={designImages}
-                result={result}
-                onRunAiQa={handleRunAiQa}
-              />
-            ) : null}
-          </>
+        ) : activeTab === 'tech' ? (
+          techResult ? (
+            <section className="section-stack">
+              <AuditHeader copyStatus={techCopyStatus} result={techResult} summary={techSummary} onCopyReport={handleCopyTechResult} />
+              <SummaryCards counts={techStatusCounts} result={techResult} />
+              <CheckList checks={techResult.checks || []} />
+              <DetailPanel result={techResult} />
+            </section>
+          ) : <EmptyState scanState={techScanState} scanError={techScanError} mode="tech" combined={visualScanState === 'loading'} />
+        ) : visualResult ? (
+          <VisualQaPanel
+            copyStatus={visualCopyStatus}
+            result={visualResult}
+            summary={visualSummary}
+            onCopyResult={handleCopyVisualResult}
+          />
         ) : (
-          <EmptyState scanState={scanState} scanError={scanError} />
+          <EmptyState scanState={visualScanState} scanError={visualScanError} mode="visual" combined={techScanState === 'loading'} />
         )}
       </section>
     </main>
   )
 }
 
-function createHistoryItem(result, designImages) {
-  const techCounts = getStatusCounts(result.checks)
-  const techIssueCount = techCounts.error + techCounts.warn
-  const counts = {
-    total: techIssueCount,
-    high: techCounts.error,
-    text: 0,
-    style: 0,
-    layout: 0,
-    cta: 0,
-    footer: 0,
-    techError: techCounts.error,
-    techWarn: techCounts.warn,
-  }
-
-  return {
-    id: `${result.scannedAt}-${result.targetUrl}`,
-    url: result.targetUrl,
-    scannedAt: result.scannedAt,
-    totalIssueCount: counts.total,
-    counts,
-    topIssueSummaries: createTopIssueSummaries(result),
-    designImageFilenames: designImages.map((image) => image.name).filter(Boolean),
+async function readJsonResponse(response) {
+  try {
+    return await response.json()
+  } catch {
+    return null
   }
 }
 
-function createTopIssueSummaries(result) {
-  const techSummaries = result.checks
+async function requestQaRun(webUrl, figmaUrl) {
+  const response = await fetch('/api/qa/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ webUrl, figmaUrl }),
+  })
+  const payload = await readJsonResponse(response)
+  if (!response.ok) throw new Error(payload?.message || `통합 검사 요청에 실패했습니다. (${response.status})`)
+  return {
+    ...payload,
+    webUrl,
+    figmaUrl,
+    shouldSaveCombined: Boolean(figmaUrl),
+  }
+}
+
+function applyTechSessionState(tech, setResult, setState, setError) {
+  setResult(tech.result)
+  setState(tech.status)
+  setError(tech.error || '')
+}
+
+function applyVisualSessionState(visual, setResult, setState, setError) {
+  setResult(visual.result)
+  setState(visual.status)
+  setError(visual.error || '')
+}
+
+async function copyText(text, setStatus, successMessage) {
+  try {
+    if (navigator.clipboard) {
+      await navigator.clipboard.writeText(text)
+    } else {
+      const textarea = document.createElement('textarea')
+      textarea.value = text
+      textarea.setAttribute('readonly', '')
+      textarea.style.position = 'fixed'
+      textarea.style.opacity = '0'
+      document.body.appendChild(textarea)
+      textarea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textarea)
+    }
+    setStatus(successMessage)
+  } catch {
+    setStatus('복사에 실패했습니다. 브라우저 권한을 확인해 주세요.')
+  }
+}
+
+function createTechHistoryItem(result) {
+  const techCounts = getStatusCounts(result.checks || [])
+  const totalIssueCount = techCounts.error + techCounts.warn
+
+  return {
+    type: 'tech',
+    id: `tech-${result.scannedAt}-${result.targetUrl}`,
+    url: result.targetUrl,
+    scannedAt: result.scannedAt,
+    summary: createResultSummary(result),
+    totalIssueCount,
+    counts: {
+      total: totalIssueCount,
+      high: techCounts.error,
+      text: 0,
+      style: 0,
+      layout: 0,
+      cta: 0,
+      footer: 0,
+      techError: techCounts.error,
+      techWarn: techCounts.warn,
+    },
+    topIssueSummaries: createTechTopIssueSummaries(result),
+    result: createCompactTechResult(result),
+  }
+}
+
+function createCombinedHistoryItem(session) {
+  const createdAt = new Date().toISOString()
+  const visualResult = session.visual.result
+  const techResult = session.tech.result
+  const visualSummary = visualResult ? createVisualSummary(visualResult) : session.visual.error
+  const techSummary = techResult ? createResultSummary(techResult) : session.tech.error
+  const visualCards = visualResult ? createVisualIssueCards(visualResult) : []
+  const visualCounts = countIssueCards(visualCards)
+  const techCounts = techResult ? getStatusCounts(techResult.checks || []) : { error: 0, warn: 0 }
+  const totalIssueCount = visualCounts.critical + visualCounts.warning + techCounts.error + techCounts.warn
+
+  return {
+    type: 'combined',
+    id: `combined-${createdAt}-${session.webUrl}`,
+    url: session.webUrl,
+    webUrl: session.webUrl,
+    figmaUrl: session.figmaUrl,
+    scannedAt: createdAt,
+    createdAt,
+    summary: createCombinedSummary(session, visualSummary, techSummary),
+    totalIssueCount,
+    counts: {
+      total: totalIssueCount,
+      high: visualCounts.critical + techCounts.error,
+      text: Number(visualResult?.comparison?.differenceCount || 0),
+      style: Number(visualResult?.aiHints?.evidenceSummary?.content?.figmaImageCount || 0) + Number(visualResult?.aiHints?.evidenceSummary?.content?.webImageCount || 0),
+      layout: Number(visualResult?.aiHints?.evidenceSummary?.sections?.totalCount || 0),
+      cta: Number(visualResult?.aiHints?.evidenceSummary?.interactions?.primaryActionCount || 0) + Number(visualResult?.aiHints?.evidenceSummary?.interactions?.secondaryActionCount || 0),
+      footer: 0,
+      techError: techCounts.error,
+      techWarn: techCounts.warn,
+    },
+    topIssueSummaries: createCombinedTopIssueSummaries(visualCards, techResult, session),
+    visual: {
+      status: session.visual.status,
+      summary: visualSummary,
+      compactResult: visualResult ? createCompactVisualResult(visualResult) : null,
+      error: session.visual.error || '',
+    },
+    tech: {
+      status: session.tech.status,
+      summary: techSummary,
+      compactResult: techResult ? createCompactTechResult(techResult) : null,
+      error: session.tech.error || '',
+    },
+  }
+}
+
+function createCombinedSummary(session, visualSummary, techSummary) {
+  return `Visual QA ${formatSessionStatus(session.visual.status)} / Tech QA ${formatSessionStatus(session.tech.status)} · ${visualSummary || 'Visual 결과 없음'} · ${techSummary || 'Tech 결과 없음'}`
+}
+
+function createCombinedTopIssueSummaries(visualCards, techResult, session) {
+  const summaries = []
+  visualCards.slice(0, 2).forEach((card) => summaries.push(`Visual QA: ${card.title}`))
+  if (techResult) summaries.push(...createTechTopIssueSummaries(techResult).slice(0, 2))
+  if (!techResult && session.tech.error) summaries.push(`Tech QA 실패: ${session.tech.error}`)
+  if (!session.visual.result && session.visual.error) summaries.push(`Visual QA 실패: ${session.visual.error}`)
+  return summaries.slice(0, 3)
+}
+
+function formatSessionStatus(status) {
+  if (status === 'success') return '성공'
+  if (status === 'error') return '실패'
+  if (status === 'skipped') return '미실행'
+  return '대기'
+}
+
+function createTechTopIssueSummaries(result) {
+  const summaries = (result.checks || [])
     .filter((check) => check.status !== 'ok')
     .map((check) => `Tech QA: ${check.title}`)
-  const summaries = techSummaries.slice(0, 3)
+    .slice(0, 3)
 
   return summaries.length > 0 ? summaries : ['Tech QA 주요 항목 정상']
 }
 
-function createAiMockupQaRequestPayload({ result, figmaElements, figmaCtaHints, webElements, designImages }) {
+function createCompactTechResult(result) {
   return {
-    pageTitle: result.pageTitle || '',
-    url: result.targetUrl || '',
-    webScreenshotDataUrl: createAiImageDataUrl(result.webScreenshot?.dataUrl || ''),
-    figmaImageDataUrl: createAiImageDataUrl(designImages[0]?.previewUrl || ''),
-    figmaTexts: createAiTextHints(figmaElements),
-    webTexts: createAiTextHints(webElements),
-    figmaCtaHints: Array.isArray(figmaCtaHints) ? figmaCtaHints : [],
-    webCtaHints: Array.isArray(result.webCtaHints) ? result.webCtaHints : [],
+    targetUrl: result.targetUrl,
+    scannedAt: result.scannedAt,
+    pageTitle: result.pageTitle,
+    httpStatus: result.httpStatus,
+    accessible: result.accessible,
+    navigationError: result.navigationError,
+    checks: result.checks || [],
+    links: Array.isArray(result.links) ? result.links.slice(0, 50) : [],
+    uncheckedLinkCount: result.uncheckedLinkCount || 0,
+    missingHrefLinks: Array.isArray(result.missingHrefLinks) ? result.missingHrefLinks.slice(0, 50) : [],
+    images: Array.isArray(result.images) ? result.images.slice(0, 50) : [],
+    consoleMessages: Array.isArray(result.consoleMessages) ? result.consoleMessages.slice(0, 50) : [],
+    counts: result.counts || {},
+    mobile: result.mobile || { viewport: { width: 0, height: 0 }, statusCode: null, note: '' },
   }
 }
 
-function cleanAiText(value) {
-  const text = String(value || '').replace(/\s+/g, ' ').trim()
-  return text.length > AI_TEXT_HINT_MAX_LENGTH ? `${text.slice(0, AI_TEXT_HINT_MAX_LENGTH)}...` : text
-}
+function buildVisualReportText(result, summary) {
+  const meta = result.meta || {}
+  const comparison = result.comparison || {}
+  const hero = result.aiHints?.evidenceSummary?.hero || {}
 
-function createAiTextHints(elements) {
-  const seen = new Set()
-  const hints = []
-
-  elements.forEach((element) => {
-    const text = cleanAiText(typeof element === 'string' ? element : element?.text || element?.label || element?.name || '')
-    if (!text || seen.has(text)) return
-    seen.add(text)
-    hints.push(text)
-  })
-
-  return hints.slice(0, AI_TEXT_HINT_LIMIT)
-}
-
-function createAiImageDataUrl(dataUrl) {
-  return typeof dataUrl === 'string' && dataUrl.length <= AI_IMAGE_DATA_URL_MAX_LENGTH ? dataUrl : ''
-}
-
-function parseFigmaJsonInput(value) {
-  return JSON.parse(value)
-}
-
-function createFigmaJsonParseErrorMessage(error, source) {
-  const location = getJsonParseErrorLocation(error, source)
-  const locationText = location ? ` (${location.line}행 ${location.column}열)` : ''
-  const detail = error instanceof Error && error.message ? ` 상세: ${error.message}` : ''
-  return `JSON 형식을 확인해 주세요${locationText}.${detail} 문자열 안 실제 줄바꿈이 들어간 JSON일 수 있습니다. 플러그인을 최신 버전으로 다시 추출해 주세요.`
-}
-
-function getJsonParseErrorLocation(error, source) {
-  const message = error instanceof Error ? error.message : String(error || '')
-  const lineColumnMatch = message.match(/line\s+(\d+)\s+column\s+(\d+)/i)
-  if (lineColumnMatch) {
-    return { line: Number(lineColumnMatch[1]), column: Number(lineColumnMatch[2]) }
-  }
-
-  const positionMatch = message.match(/position\s+(\d+)/i)
-  if (!positionMatch) return null
-
-  const position = Number(positionMatch[1])
-  if (!Number.isFinite(position)) return null
-
-  const text = String(source || '').slice(0, position)
-  const lines = text.split(/\r\n|\n|\r/)
-  return { line: lines.length, column: lines[lines.length - 1].length + 1 }
-}
-
-function extractFigmaTextHints(parsed) {
-  const hints = []
-  const seen = new Set()
-
-  function addText(text) {
-    const cleaned = cleanAiText(text)
-    if (!cleaned || seen.has(cleaned) || hints.length >= AI_TEXT_HINT_LIMIT) return
-    seen.add(cleaned)
-    hints.push(cleaned)
-  }
-
-  function visit(node, parentHidden = false) {
-    if (!node || typeof node !== 'object' || hints.length >= AI_TEXT_HINT_LIMIT) return
-
-    if (Array.isArray(node)) {
-      node.forEach((child) => visit(child, parentHidden))
-      return
-    }
-
-    const hidden = parentHidden || isHiddenFigmaJsonNode(node)
-    if (hidden) return
-
-    if (node.type === 'TEXT' && hasUsableFigmaJsonBox(node)) {
-      if (typeof node.characters === 'string') addText(node.characters)
-      if (typeof node.text === 'string') addText(node.text)
-      if (typeof node.name === 'string') addText(node.name)
-    }
-
-    if (Array.isArray(node.children)) node.children.forEach((child) => visit(child, hidden))
-    if (node.document) visit(node.document, hidden)
-    if (node.nodes) visit(node.nodes, hidden)
-  }
-
-  visit(parsed)
-  return hints
-}
-
-function extractFigmaCtaHints(parsed) {
-  const candidates = []
-  const visibleBounds = []
-  const seen = new Set()
-
-  function visit(node, context = { hidden: false, layerPath: [] }) {
-    if (!node || typeof node !== 'object') return
-
-    if (Array.isArray(node)) {
-      node.forEach((child) => visit(child, context))
-      return
-    }
-
-    const hidden = context.hidden || isHiddenFigmaJsonNode(node)
-    if (hidden) return
-
-    const name = cleanAiText(node.name || node.title || '')
-    const layerPath = [...context.layerPath, name || node.type || 'Layer'].filter(Boolean)
-    const box = getFigmaJsonBox(node)
-    if (box) visibleBounds.push(box)
-
-    const text = cleanAiText(typeof node.characters === 'string' ? node.characters : node.text || node.label || '')
-    const pathText = layerPath.join(' / ')
-    if (text && box && isFigmaCtaCandidate(text, pathText)) {
-      const key = `${normalizeCtaCompareText(text)}:${pathText}`
-      if (!seen.has(key)) {
-        seen.add(key)
-        candidates.push({ text, layerPath: pathText, y: box.y })
-      }
-    }
-
-    if (Array.isArray(node.children)) node.children.forEach((child) => visit(child, { hidden, layerPath }))
-    if (node.document) visit(node.document, { hidden, layerPath })
-    if (node.nodes) visit(node.nodes, { hidden, layerPath })
-  }
-
-  visit(parsed)
-  const pageHeight = Math.max(...visibleBounds.map((box) => box.y + box.height), 1)
-  return candidates.slice(0, 40).map((candidate) => {
-    const yRatio = Math.max(0, Math.min(1, candidate.y / pageHeight))
-    return {
-      text: candidate.text,
-      area: getAreaFromYRatio(yRatio),
-      layerPath: candidate.layerPath,
-      yRatio: Math.round(yRatio * 1000) / 1000,
-    }
-  })
-}
-
-function getFigmaJsonBox(node) {
-  const box = node.absoluteBoundingBox || node.absoluteRenderBounds || node.bounds || null
-  if (!box || Number(box.width) <= 0 || Number(box.height) <= 0) return null
-  return {
-    y: Number(box.y) || 0,
-    height: Number(box.height) || 0,
-  }
-}
-
-function isFigmaCtaCandidate(text, layerPath) {
-  return /button|btn|cta|basic-button|link-button/i.test(layerPath)
-    || /바로가기|신청|상담|예약|프로모션|자세히|구매/i.test(text)
-}
-
-function normalizeCtaCompareText(value) {
-  return String(value || '').toLowerCase().replace(/[\s\u00a0.,:;!?'"“”‘’()[\]{}<>_/\\-]/g, '')
-}
-
-function getAreaFromYRatio(value) {
-  if (value < 0.33) return 'top'
-  if (value < 0.66) return 'middle'
-  return 'bottom'
-}
-
-function isHiddenFigmaJsonNode(node) {
-  if (node.visible === false) return true
-  if (Number(node.opacity) === 0) return true
-  return false
-}
-
-function hasUsableFigmaJsonBox(node) {
-  const box = node.absoluteBoundingBox || node.absoluteRenderBounds || null
-  if (!box) return false
-  return Number(box.width) > 0 && Number(box.height) > 0
-}
-
-function getAiResultKey(result) {
-  return `${result?.targetUrl || ''}:${result?.scannedAt || ''}`
-}
-
-function normalizeAiMockupQaFrontendResult(result) {
-  if (!result || typeof result !== 'object') {
-    throw new AiQaRequestError('normalize_error', 'AI QA 결과 형식이 올바르지 않습니다.')
-  }
-
-  const issues = Array.isArray(result.issues) ? result.issues : []
-  const summary = result.summary && typeof result.summary === 'object' ? result.summary : {}
-
-  return { ...result, summary, issues }
-}
-
-class AiQaRequestError extends Error {
-  constructor(code, message) {
-    super(message)
-    this.name = 'AiQaRequestError'
-    this.code = code
-  }
-}
-
-function readFileAsText(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result || ''))
-    reader.onerror = () => reject(reader.error)
-    reader.readAsText(file)
-  })
-}
-
-function readFileAsDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result || ''))
-    reader.onerror = () => reject(reader.error)
-    reader.readAsDataURL(file)
-  })
+  return [
+    '[PagePilot Visual QA]',
+    `Web URL: ${meta.webUrl || ''}`,
+    `Figma Node: ${meta.figmaNodeId || ''}`,
+    `Created At: ${meta.createdAt || ''}`,
+    `Summary: ${summary}`,
+    '',
+    `Difference: ${comparison.differenceCount || 0}`,
+    `Figma only: ${comparison.figmaOnlyCount || 0}`,
+    `Web only: ${comparison.webOnlyCount || 0}`,
+    `Hero CTA: Figma ${hero.figmaCtaCount || 0} / Web ${hero.webCtaCount || 0}`,
+    `Hero Media: Figma ${(hero.figmaMediaTypes || []).join(', ') || '-'} / Web ${(hero.webMediaTypes || []).join(', ') || '-'}`,
+  ].join('\n')
 }
 
 export default App

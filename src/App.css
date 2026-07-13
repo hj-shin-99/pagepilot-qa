@@ -2595,6 +2595,273 @@
   }
 }
 
+.visual-qa-panel {
+  padding-bottom: 28px;
+}
+
+.visual-severity-grid,
+.visual-two-column {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.visual-two-column {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.visual-severity-card {
+  padding: 18px;
+}
+
+.visual-severity-card span {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.visual-severity-card.critical {
+  border-color: var(--danger-line);
+  background: var(--danger-bg);
+}
+
+.visual-severity-card.warning {
+  border-color: var(--warning-line);
+  background: var(--warning-bg);
+}
+
+.visual-severity-card.check {
+  border-color: var(--info-line);
+  background: var(--info-bg);
+}
+
+.visual-card-list-card,
+.visual-section-card,
+.visual-image-card {
+  padding: 20px;
+}
+
+.visual-card-list-card > summary,
+.visual-folded-detail > summary,
+.visual-technical-detail > summary {
+  cursor: pointer;
+}
+
+.visual-card-list-card > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--ink);
+  font-weight: 850;
+  list-style: none;
+}
+
+.visual-card-list-card > summary::-webkit-details-marker {
+  display: none;
+}
+
+.visual-card-list-card[open] > summary {
+  margin-bottom: 14px;
+}
+
+.visual-card-list,
+.visual-entity-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.visual-issue-card,
+.visual-entity-list li,
+.visual-key-value {
+  display: grid;
+  gap: 5px;
+  border: 1px solid #eef0f3;
+  border-radius: 14px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.visual-issue-card.critical {
+  border-color: var(--danger-line);
+}
+
+.visual-issue-card.warning {
+  border-color: var(--warning-line);
+}
+
+.visual-issue-card.check {
+  border-color: var(--info-line);
+}
+
+.visual-issue-card > span {
+  justify-self: start;
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: #ffffff;
+  background: #0f172a;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.visual-issue-card.critical > span {
+  background: var(--danger);
+}
+
+.visual-issue-card.warning > span {
+  background: var(--warning);
+}
+
+.visual-issue-card.check > span {
+  background: var(--accent);
+}
+
+.visual-issue-card strong,
+.visual-entity-list strong,
+.visual-key-value strong {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 850;
+  overflow-wrap: anywhere;
+}
+
+.visual-issue-card p,
+.visual-entity-list span,
+.visual-issue-card small,
+.visual-entity-list small,
+.visual-technical-detail small {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.visual-section-body {
+  display: grid;
+  gap: 10px;
+}
+
+.visual-key-value {
+  grid-template-columns: minmax(110px, 0.35fr) minmax(0, 1fr);
+  align-items: start;
+}
+
+.visual-key-value span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.visual-compare-shell {
+  height: min(560px, 62vh);
+  min-height: 280px;
+}
+
+.mockup-ai-image-frame.is-empty {
+  min-height: 180px;
+}
+
+.comparison-placeholder.mockup-ai-image-placeholder {
+  display: grid;
+  gap: 6px;
+  min-height: 180px;
+  overflow-wrap: anywhere;
+}
+
+.comparison-placeholder.mockup-ai-image-placeholder small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.visual-folded-detail {
+  border: 1px solid #eef0f3;
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: #ffffff;
+}
+
+.visual-folded-detail > summary,
+.visual-technical-detail > summary {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.visual-folded-detail[open] > summary,
+.visual-technical-detail[open] > summary {
+  margin-bottom: 8px;
+}
+
+.scan-secondary-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.scan-secondary-actions .secondary-button {
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.field-label-note {
+  color: var(--panel-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+@media (max-width: 980px) {
+  .app-shell,
+  .app-shell.sidebar-collapsed {
+    grid-template-columns: 1fr;
+  }
+
+  .control-panel,
+  .control-panel.is-collapsed {
+    position: static;
+    height: auto;
+    padding: 18px;
+  }
+
+  .control-panel.is-collapsed {
+    overflow: visible;
+  }
+
+  .visual-severity-grid,
+  .visual-two-column {
+    grid-template-columns: 1fr;
+  }
+
+  .audit-header-top {
+    display: grid;
+  }
+}
+
+@media (max-width: 640px) {
+  .workspace {
+    padding: 16px;
+  }
+
+  .visual-key-value {
+    grid-template-columns: 1fr;
+  }
+
+  .visual-card-list-card,
+  .visual-section-card,
+  .visual-image-card,
+  .audit-header {
+    padding: 16px;
+  }
+}
+
 .figma-inspect-button {
   width: 100%;
 }

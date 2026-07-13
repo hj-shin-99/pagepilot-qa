@@ -81,7 +81,7 @@ function createDependencies() {
         return createWebVisualAnalysis(result, {
           saveScreenshot() {
             return {
-              path: '.cache/visual/screenshots/test.png',
+              path: '.cache/visual/screenshots/7ab5b706fd88d75e7418254e.png',
               width: 1920,
               height: 2800,
               mimeType: 'image/png',
@@ -140,7 +140,9 @@ test('buildVisualPayloadResponse uses one scanUrl call and reuses one scanResult
   assert.equal(calls.scanArgs.options.includeVisualPayloadData, true)
   assert.equal(calls.scanArgs.options.includeMobile, false)
   assert.equal(calls.webAnalysisInput.visualPayloadData.textNodes[0].text, 'Hero title')
-  assert.equal(result.web.screenshot.path, '.cache/visual/screenshots/test.png')
+  assert.equal(result.figma.displayImageUrl, '/api/figma/render/render-1')
+  assert.equal(result.web.screenshot.path, '.cache/visual/screenshots/7ab5b706fd88d75e7418254e.png')
+  assert.equal(result.web.displayImageUrl, '/api/visual/screenshot/7ab5b706fd88d75e7418254e.png')
   assert.equal(result.web.textCount, 1)
   assert.equal(result.meta.playwrightRunCount, 1)
   assert.equal(result.meta.openAiCalled, false)

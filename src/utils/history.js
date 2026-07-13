@@ -42,23 +42,59 @@ export function saveHistoryItem(item) {
 function sanitizeHistoryItem(item, index = 0) {
   if (!item || typeof item !== 'object') return null
 
-  const url = getString(item.url || item.result?.targetUrl)
+  const url = getString(item.url || item.webUrl || item.result?.targetUrl)
   if (!url) return null
 
-  const scannedAt = getValidDate(item.scannedAt || item.result?.scannedAt)
+  const scannedAt = getValidDate(item.scannedAt || item.createdAt || item.result?.scannedAt)
   const counts = sanitizeCounts(item.counts)
   const topIssueSummaries = sanitizeTopIssueSummaries(item.topIssueSummaries, item.issueSummary)
   const designImageFilenames = sanitizeDesignImageFilenames(item.designImageFilenames, item.inputs?.designImages)
+  const figmaUrl = getString(item.figmaUrl)
+  const result = item.result && typeof item.result === 'object' ? item.result : null
+  const visual = sanitizeSessionBranch(item.visual)
+  const tech = sanitizeSessionBranch(item.tech)
+  const type = sanitizeHistoryType(item.type, result, figmaUrl, visual, tech)
 
   return {
+    type,
     id: getString(item.id) || `${scannedAt}-${url}-${index}`,
     url,
+    webUrl: url,
+    figmaUrl,
     scannedAt,
+    createdAt: getValidDate(item.createdAt || scannedAt),
+    summary: getString(item.summary),
     totalIssueCount: getNumber(item.totalIssueCount) || counts.total,
     counts,
     topIssueSummaries,
     designImageFilenames,
+    result,
+    visual,
+    tech,
   }
+}
+
+function sanitizeHistoryType(type, result, figmaUrl, visual, tech) {
+  if (type === 'visual' || type === 'tech' || type === 'combined') return type
+  if (visual || tech) return 'combined'
+  if (result?.targetUrl) return 'tech'
+  if (result?.meta || result?.comparison || figmaUrl) return 'visual'
+  return 'tech'
+}
+
+function sanitizeSessionBranch(branch) {
+  if (!branch || typeof branch !== 'object') return null
+  return {
+    status: sanitizeBranchStatus(branch.status),
+    summary: getString(branch.summary),
+    compactResult: branch.compactResult && typeof branch.compactResult === 'object' ? branch.compactResult : null,
+    error: getString(branch.error),
+  }
+}
+
+function sanitizeBranchStatus(status) {
+  if (['idle', 'loading', 'success', 'error', 'skipped'].includes(status)) return status
+  return 'idle'
 }
 
 function sanitizeCounts(counts) {

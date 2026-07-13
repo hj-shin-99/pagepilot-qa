@@ -36,6 +36,43 @@ export async function buildVisualPayloadResponse(input, dependencies) {
   }
   const instrumentation = { playwrightRunCount: 0 }
 
+  const webScanStartedAt = now()
+  const scanResult = await dependencies.scanUrl(input.webUrl, {
+    includeVisualPayloadData: true,
+    includeMobile: false,
+    instrumentation,
+  })
+  timings.webScanMs = now() - webScanStartedAt
+
+  return buildVisualPayloadFromScanResult({
+    figmaUrl: input.figmaUrl,
+    webUrl: input.webUrl,
+    debug,
+    scanResult,
+    timings,
+    totalStartedAt,
+  }, dependencies)
+}
+
+export async function buildVisualPayloadFromScanResult(input, dependencies) {
+  const now = dependencies.now || Date.now
+  const debug = input?.debug === true
+  const totalStartedAt = Number(input?.totalStartedAt) || now()
+  const timings = input?.timings && typeof input.timings === 'object'
+    ? { figmaNodeLoadMs: 0, figmaRenderLoadMs: 0, webScanMs: 0, textCompareMs: 0, payloadBuildMs: 0, totalMs: 0, ...input.timings }
+    : {
+        figmaNodeLoadMs: 0,
+        figmaRenderLoadMs: 0,
+        webScanMs: 0,
+        textCompareMs: 0,
+        payloadBuildMs: 0,
+        totalMs: 0,
+      }
+  const scanResult = input?.scanResult && typeof input.scanResult === 'object' ? input.scanResult : null
+  if (!scanResult) {
+    throw dependencies.createHttpError(500, 'Visual QA 생성을 위한 Web scanResult가 없습니다.')
+  }
+
   const { fileKey, nodeId } = dependencies.parseFigmaUrl(input.figmaUrl)
   const figmaToken = dependencies.getFigmaToken()
   if (!figmaToken) {
@@ -64,14 +101,7 @@ export async function buildVisualPayloadResponse(input, dependencies) {
   })
   timings.figmaRenderLoadMs = now() - figmaRenderStartedAt
 
-  const webScanStartedAt = now()
-  const scanResult = await dependencies.scanUrl(input.webUrl, {
-    includeVisualPayloadData: true,
-    includeMobile: false,
-    instrumentation,
-  })
   const webAnalysis = dependencies.createWebVisualAnalysis(scanResult)
-  timings.webScanMs = now() - webScanStartedAt
 
   const textCompareStartedAt = now()
   const matchResult = dependencies.matchTextNodes(
@@ -117,7 +147,7 @@ export async function buildVisualPayloadResponse(input, dependencies) {
       createdAt: new Date(totalStartedAt).toISOString(),
       webUrl: input.webUrl,
       figmaNodeId: nodeId,
-      playwrightRunCount: webAnalysis.meta?.playwrightRunCount || instrumentation.playwrightRunCount || 0,
+      playwrightRunCount: webAnalysis.meta?.playwrightRunCount || 0,
       figmaCacheSource: figmaResult.cache?.source || 'unknown',
       figmaRenderCacheSource: figmaRender.cache?.source || 'unknown',
       webScreenshotCreated: webAnalysis.screenshot?.created === true,
@@ -126,6 +156,7 @@ export async function buildVisualPayloadResponse(input, dependencies) {
     },
     ...artifacts.payload,
   }
+  attachDisplayImageUrls(response)
 
   if (debug) {
     const imageValidation = await validateImageAssets(response, dependencies.validateImageAsset)
@@ -150,6 +181,24 @@ export async function buildVisualPayloadResponse(input, dependencies) {
   }
 
   return response
+}
+
+function attachDisplayImageUrls(response) {
+  if (response.figma && typeof response.figma === 'object') {
+    const renderId = typeof response.figma.renderId === 'string' ? response.figma.renderId.trim() : ''
+    if (renderId && /^[0-9a-zA-Z._-]+$/.test(renderId)) {
+      response.figma.displayImageUrl = `/api/figma/render/${encodeURIComponent(renderId)}`
+    }
+  }
+
+  if (response.web && typeof response.web === 'object') {
+    const localImagePath = [response.web.localImagePath, response.web.screenshot?.path, response.web.image]
+      .find((value) => typeof value === 'string' && value.trim())?.trim() || ''
+    const fileName = localImagePath.replace(/\\/g, '/').split('/').filter(Boolean).at(-1) || ''
+    if (/^[a-f0-9]{24}\.png$/i.test(fileName) && !localImagePath.includes('..')) {
+      response.web.displayImageUrl = `/api/visual/screenshot/${encodeURIComponent(fileName)}`
+    }
+  }
 }
 
 function createDebugPayload({ figmaResult, figmaRender, webAnalysis, textComparison, timings, payloadQuality, sectionTrace, heroCandidateTrace, figmaActionInputTrace, webVideoPipelineTrace, entitySectionTrace, webVideoTrace, heroActionResolution, heroMediaResolution, canonicalMergeTrace, imageValidation }) {

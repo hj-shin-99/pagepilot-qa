@@ -6,12 +6,14 @@ import OpenAI from 'openai'
 import { chromium, request as playwrightRequest } from 'playwright'
 import { createFigmaApiClient, FigmaApiError, FigmaRateLimitError } from './figmaApiClient.js'
 import { createFigmaRenderClient } from './figmaRenderClient.js'
+import { createImageAssetHandlers } from './imageAssetRoutes.js'
 import { extractFigmaStructure } from './figmaStructure.js'
 import { createFigmaTextPreview, extractVisibleFigmaTextNodes } from './figmaText.js'
 import { createTextDifferenceCandidates } from './textDiff.js'
 import { matchTextNodes } from './textMatcher.js'
 import { buildVisualQaPayloadArtifacts } from './visualQaPayload.js'
-import { createVisualPayloadHandler } from './visualPayloadRoute.js'
+import { createQaRunHandler, isWebScanNavigationFailure } from './qaRunRoute.js'
+import { buildVisualPayloadFromScanResult, createVisualPayloadHandler } from './visualPayloadRoute.js'
 import { createWebVisualAnalysis } from './webVisualAnalysis.js'
 import { extractVisibleWebTextElements } from './webText.js'
 
@@ -64,6 +66,11 @@ const figmaRenderClient = createFigmaRenderClient({
   maxBytes: Number(process.env.FIGMA_RENDER_MAX_BYTES),
 })
 
+const imageAssetHandlers = createImageAssetHandlers({
+  metaUrl: import.meta.url,
+  getCacheControl: getRenderCacheControlHeader,
+})
+
 const visualPayloadHandler = createVisualPayloadHandler({
   now: () => Date.now(),
   isHttpUrl,
@@ -79,6 +86,24 @@ const visualPayloadHandler = createVisualPayloadHandler({
   createTextCompareResponse,
   buildVisualQaPayloadArtifacts,
   mapFigmaLoaderError,
+})
+
+const qaRunHandler = createQaRunHandler({
+  now: () => Date.now(),
+  isHttpUrl,
+  parseFigmaUrl,
+  getFigmaToken: () => process.env.FIGMA_TOKEN?.trim() || '',
+  createHttpError: (status, message) => new FigmaInspectError(status, 'qa_run_error', message),
+  inspectFigmaNode,
+  getFigmaRenderedImage: figmaRenderClient.getFigmaRenderedImage,
+  scanUrl,
+  createWebVisualAnalysis,
+  matchTextNodes,
+  createTextDifferenceCandidates,
+  createTextCompareResponse,
+  buildVisualQaPayloadArtifacts,
+  buildVisualPayloadFromScanResult,
+  isWebScanNavigationFailure,
 })
 
 app.use(express.json({ limit: '80mb' }))
@@ -278,20 +303,11 @@ app.post('/api/figma/render', async (req, res) => {
 
 app.post('/api/visual/payload', visualPayloadHandler)
 
-app.get('/api/figma/render/:renderId', async (req, res) => {
-  const renderId = typeof req.params?.renderId === 'string' ? req.params.renderId.trim() : ''
-  const file = figmaRenderClient.getLocalRenderFile({ renderId })
+app.post('/api/qa/run', qaRunHandler)
 
-  if (!file) {
-    res.status(404).json({ message: '렌더 이미지를 찾을 수 없습니다.' })
-    return
-  }
+app.get('/api/visual/screenshot/:fileName', imageAssetHandlers.visualScreenshotHandler)
 
-  res.setHeader('Content-Type', file.mimeType)
-  res.setHeader('Content-Length', String(file.sizeBytes))
-  res.setHeader('Cache-Control', getRenderCacheControlHeader())
-  res.sendFile(file.imagePath)
-})
+app.get('/api/figma/render/:renderId', imageAssetHandlers.figmaRenderHandler)
 
 app.post('/api/figma/cache/clear', async (req, res) => {
   const clearAll = req.body?.clearAll === true
@@ -1827,12 +1843,14 @@ function limitText(value, maxLength) {
 async function scanUrl(targetUrl, options = {}) {
   const scanOptions = normalizeScanUrlOptions(options)
   const browser = await chromium.launch({ headless: true })
+  incrementInstrumentationCount(scanOptions.instrumentation, 'browserLaunchCount')
   const consoleMessages = []
   const failedImageRequests = new Map()
   const failedResourceRequests = []
   const badResourceResponses = []
   let mainResponse = null
   let mainError = ''
+  let loadWarning = ''
   let pageTitle
   let domSnapshot
   let mobileResult
@@ -1850,6 +1868,7 @@ async function scanUrl(targetUrl, options = {}) {
     await blockPostRequests(context)
 
     const page = await context.newPage()
+    incrementInstrumentationCount(scanOptions.instrumentation, 'desktopPageCount')
     incrementPlaywrightRunCount(scanOptions.instrumentation)
     attachCollectors(page, consoleMessages, failedImageRequests, failedResourceRequests, badResourceResponses)
 
@@ -1859,7 +1878,7 @@ async function scanUrl(targetUrl, options = {}) {
         timeout: NAVIGATION_TIMEOUT_MS,
       })
       await page.waitForLoadState('networkidle', { timeout: 5000 }).catch((error) => {
-        mainError = mainError || `networkidle 대기 제한: ${error.message}`
+        loadWarning = `networkidle 대기 제한: ${sanitizePlaywrightMessage(error.message)}`
       })
     } catch (error) {
       mainError = error instanceof Error ? error.message : '페이지 접속 실패'
@@ -1883,10 +1902,12 @@ async function scanUrl(targetUrl, options = {}) {
   const linksToCheck = getLinksToCheck(snapshot.links)
   const linkStatuses = await checkLinkStatuses(linksToCheck)
   const images = mergeImageFailures(snapshot.images, failedImageRequests)
-  const missingHrefLinks = snapshot.interactionTargets.filter((target) => !target.href)
+  const missingHrefLinks = snapshot.interactionTargets.filter(isMissingNavigationHref)
+  const networkIssueSummary = classifyNetworkIssues(failedResourceRequests.concat(badResourceResponses))
   const checks = buildChecks({
     mainResponse,
     mainError,
+    loadWarning,
     pageTitle: safePageTitle,
     consoleMessages,
     images,
@@ -1902,7 +1923,8 @@ async function scanUrl(targetUrl, options = {}) {
     duplicateIds: snapshot.duplicateIds,
     headingInfo: snapshot.headingInfo,
     largeResources: snapshot.largeResources,
-    networkIssues: failedResourceRequests.concat(badResourceResponses),
+    networkIssues: networkIssueSummary.actionable,
+    referenceNetworkIssues: networkIssueSummary.reference,
     unlabeledClickables: snapshot.unlabeledClickables,
   })
 
@@ -1913,6 +1935,7 @@ async function scanUrl(targetUrl, options = {}) {
     httpStatus: mainResponse?.status() ?? null,
     accessible: Boolean(mainResponse && mainResponse.ok()),
     navigationError: mainError,
+    loadWarning,
     checks,
     links: linkStatuses,
     uncheckedLinkCount: 0,
@@ -1937,8 +1960,12 @@ function normalizeScanUrlOptions(options = {}) {
 }
 
 function incrementPlaywrightRunCount(instrumentation) {
+  incrementInstrumentationCount(instrumentation, 'playwrightRunCount')
+}
+
+function incrementInstrumentationCount(instrumentation, key) {
   if (!instrumentation) return
-  instrumentation.playwrightRunCount = Number(instrumentation.playwrightRunCount || 0) + 1
+  instrumentation[key] = Number(instrumentation[key] || 0) + 1
 }
 
 async function scanWebTextForCompare(targetUrl) {
@@ -1963,9 +1990,7 @@ async function scanWebTextForCompare(targetUrl) {
         waitUntil: 'domcontentloaded',
         timeout: NAVIGATION_TIMEOUT_MS,
       })
-      await page.waitForLoadState('networkidle', { timeout: 5000 }).catch((error) => {
-        mainError = mainError || `networkidle 대기 제한: ${error.message}`
-      })
+      await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {})
     } catch (error) {
       mainError = error instanceof Error ? error.message : '페이지 접속 실패'
     }
@@ -2345,10 +2370,13 @@ async function safeDomSnapshot(page, targetUrl) {
 
       const images = Array.from(document.images).map((image, index) => {
         const rect = getPageRect(image)
+        const altClassification = classifyImageForAlt(image, rect)
         return {
           index: index + 1,
           src: image.currentSrc || image.src || '',
           alt: image.alt || '',
+          altCategory: altClassification.category,
+          altReason: altClassification.reason,
           loaded: image.complete && image.naturalWidth > 0,
           naturalWidth: image.naturalWidth,
           naturalHeight: image.naturalHeight,
@@ -2366,7 +2394,7 @@ async function safeDomSnapshot(page, targetUrl) {
       }))
       const webCtaHints = collectWebCtaHints()
       const metaInfo = collectMetaInfo()
-      const missingAltImages = images.filter((image) => !normalizeText(image.alt)).slice(0, 30)
+      const missingAltImages = images.filter((image) => image.altCategory === 'meaningful-image' && !normalizeText(image.alt)).slice(0, 30)
       const formInfo = collectFormInfo()
       const externalBlankLinks = collectExternalBlankLinks(links, baseUrl)
       const duplicateIds = collectDuplicateIds()
@@ -2549,6 +2577,45 @@ async function safeDomSnapshot(page, targetUrl) {
           || normalizeText(element.getAttribute('aria-labelledby') || '')
           || normalizeText(element.getAttribute('title') || '')
           || normalizeText(element.querySelector('img')?.getAttribute('alt') || '')
+      }
+
+      function classifyImageForAlt(image, rect) {
+        if (!image || !isVisibleElement(image) || !hasVisibleRect(rect)) {
+          return { category: 'excluded-image', reason: 'hidden-or-zero-size' }
+        }
+
+        const role = (image.getAttribute('role') || '').toLowerCase()
+        if (role === 'presentation' || role === 'none') {
+          return { category: 'decorative-image', reason: 'presentational-role' }
+        }
+
+        if (image.closest('[aria-hidden="true"]')) {
+          return { category: 'excluded-image', reason: 'aria-hidden' }
+        }
+
+        const alt = normalizeText(image.getAttribute('alt') || '')
+        if (alt) return { category: 'meaningful-image', reason: 'has-alt' }
+
+        const interactiveAncestor = image.closest('a, button, [role="button"]')
+        if (interactiveAncestor && getAccessibleLabel(interactiveAncestor)) {
+          return { category: 'decorative-image', reason: 'labeled-interactive-icon' }
+        }
+
+        const figureCaption = normalizeText(image.closest('figure')?.querySelector('figcaption')?.innerText || '')
+        if (figureCaption) return { category: 'meaningful-image', reason: 'figure-caption' }
+
+        const width = Number(rect?.width || image.naturalWidth || 0)
+        const height = Number(rect?.height || image.naturalHeight || 0)
+        if (width <= 24 && height <= 24) {
+          return { category: 'decorative-image', reason: 'small-icon' }
+        }
+
+        const src = String(image.currentSrc || image.src || '')
+        if (/sprite|icon|spacer|blank|transparent|pixel/i.test(src)) {
+          return { category: 'decorative-image', reason: 'decorative-source-name' }
+        }
+
+        return { category: 'meaningful-image', reason: 'visible-content-image' }
       }
 
       function collectWebCtaHints() {
@@ -2869,6 +2936,7 @@ async function scanMobile(browser, targetUrl, instrumentation) {
 
   try {
     const page = await context.newPage()
+    incrementInstrumentationCount(instrumentation, 'mobilePageCount')
     incrementPlaywrightRunCount(instrumentation)
     const response = await page.goto(targetUrl, {
       waitUntil: 'domcontentloaded',
@@ -2991,6 +3059,104 @@ function mergeImageFailures(images, failedImageRequests) {
   })
 }
 
+function sanitizePlaywrightMessage(value) {
+  return String(value || '')
+    .split('\n')
+    .filter((line) => !/^\s*at\s+/.test(line))
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 3)
+    .join(' ')
+}
+
+function isMissingNavigationHref(target = {}) {
+  if (target.href || target.url) return false
+  if (!hasVisibleBox(target.boundingBox)) return false
+
+  const text = normalizeTargetText(target)
+  if (isUiControlTarget(target, text)) return false
+
+  if (String(target.kind || '').toLowerCase() === 'a') {
+    return looksLikeNavigationAction(target, text)
+  }
+
+  return looksLikeNavigationAction(target, text)
+}
+
+function hasVisibleBox(box) {
+  return Boolean(box && Number(box.width) > 0 && Number(box.height) > 0)
+}
+
+function normalizeTargetText(target = {}) {
+  return String([
+    target.label,
+    target.text,
+    target.ariaLabel,
+    target.selector,
+    target.domPath,
+    target.section,
+  ].filter(Boolean).join(' ')).replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
+function isUiControlTarget(target = {}, text = '') {
+  const kind = String(target.kind || '').toLowerCase()
+  const box = target.boundingBox || {}
+  if (Number(box.width) <= 24 && Number(box.height) <= 24 && /^(x|×|<|>|\+|-|•|·|\.|)$/i.test(String(target.label || target.text || '').trim())) return true
+  if (kind === 'input' && /submit|reset|button/i.test(text)) return true
+  return /\b(tab|tabpanel|accordion|modal|dialog|drawer|carousel|slider|swiper|pagination|prev|previous|next|play|pause|mute|unmute|volume|close|dismiss|menu|hamburger|toggle|scroll|top|search|filter|sort|submit|reset)\b/i.test(text)
+    || /(닫기|이전|다음|재생|정지|음소거|메뉴|탭|토글|검색|필터|정렬|맨 위|위로|제출|초기화)/i.test(text)
+}
+
+function looksLikeNavigationAction(target = {}, text = '') {
+  const kind = String(target.kind || '').toLowerCase()
+  if (kind === 'a' && /\S/.test(String(target.label || target.text || target.ariaLabel || ''))) return true
+  return /\b(link|navigation|nav|cta|button|btn|more|details|learn|view|read|shop|buy|apply|reserve|book|download|contact|start|continue|go)\b/i.test(text)
+    || /(바로가기|더보기|더 알아보기|자세히|상세|보기|구매|신청|예약|문의|상담|견적|다운로드|이동|계속)/i.test(text)
+}
+
+function classifyNetworkIssues(networkIssues = []) {
+  const actionable = []
+  const reference = []
+
+  networkIssues.forEach((issue) => {
+    const classified = classifyNetworkIssue(issue)
+    if (classified.category === 'reference') reference.push(classified.item)
+    else actionable.push(classified.item)
+  })
+
+  return {
+    actionable: actionable.slice(0, 30),
+    reference: reference.slice(0, 30),
+  }
+}
+
+function classifyNetworkIssue(issue = {}) {
+  const type = String(issue.type || '').toLowerCase()
+  const message = String(issue.message || '')
+  const statusCode = Number(issue.statusCode || 0)
+  const isMedia = ['media', 'video', 'audio'].includes(type)
+  const isAborted = /ERR_ABORTED|aborted|cancelled|canceled/i.test(message)
+  const isConnectionFailure = /ENOTFOUND|ERR_NAME_NOT_RESOLVED|ECONNREFUSED|ERR_CONNECTION_REFUSED|ERR_CONNECTION_RESET|ERR_INTERNET_DISCONNECTED|ERR_CERT/i.test(message)
+
+  if (type === 'document' || isConnectionFailure) {
+    return { category: 'actionable', item: { ...issue, category: 'critical-resource', confidence: 'high' } }
+  }
+
+  if (isMedia && isAborted) {
+    return { category: 'reference', item: { ...issue, category: 'reference-media-abort', confidence: 'low' } }
+  }
+
+  if (statusCode >= 400 && ['script', 'stylesheet', 'image', 'font', 'fetch', 'xhr'].includes(type)) {
+    return { category: 'actionable', item: { ...issue, category: 'resource-http-error', confidence: 'medium' } }
+  }
+
+  if (!statusCode && !isAborted && ['script', 'stylesheet', 'image', 'font', 'fetch', 'xhr'].includes(type)) {
+    return { category: 'actionable', item: { ...issue, category: 'resource-request-failure', confidence: 'medium' } }
+  }
+
+  return { category: 'reference', item: { ...issue, category: 'reference-network-log', confidence: 'low' } }
+}
+
 function buildChecks({
   mainResponse,
   mainError,
@@ -3010,6 +3176,7 @@ function buildChecks({
   headingInfo = { h1Count: 0, headings: [], skipped: [] },
   largeResources = [],
   networkIssues = [],
+  referenceNetworkIssues = [],
   unlabeledClickables = [],
 }) {
   const httpStatus = mainResponse?.status() ?? null
@@ -3027,14 +3194,14 @@ function buildChecks({
       title: '페이지 접속 가능 여부',
       status: mainResponse?.ok() ? 'ok' : 'error',
       value: mainResponse?.ok() ? '접속 가능' : '접속 실패',
-      detail: mainError || 'Playwright가 입력 URL에 정상 접속했습니다.',
+      detail: mainError ? sanitizePlaywrightMessage(mainError) : 'Playwright가 입력 URL에 정상 접속했습니다.',
     },
     {
       id: 'http-status',
       title: 'HTTP 응답 상태',
       status: getHttpStatus(httpStatus),
       value: httpStatus ? String(httpStatus) : '응답 없음',
-      detail: httpStatus ? `메인 문서 응답 코드 ${httpStatus}` : mainError || '응답 객체를 수집하지 못했습니다.',
+      detail: httpStatus ? `메인 문서 응답 코드 ${httpStatus}` : sanitizePlaywrightMessage(mainError) || '응답 객체를 수집하지 못했습니다.',
     },
     {
       id: 'title',
@@ -3159,8 +3326,10 @@ function buildChecks({
       title: '네트워크 실패 요청',
       status: networkIssues.length > 0 ? 'warn' : 'ok',
       value: `${networkIssues.length}건 확인 필요`,
-      detail: networkIssues.length > 0 ? '일부 페이지 구성 리소스 요청이 실패하거나 오류 응답을 반환했습니다.' : '수집된 네트워크 실패 요청이 없습니다.',
-      items: networkIssues,
+      detail: networkIssues.length > 0
+        ? `중요 리소스 요청 실패를 확인했습니다. 참고성 로그 ${referenceNetworkIssues.length}건은 Warning 산정에서 제외했습니다.`
+        : referenceNetworkIssues.length > 0 ? `사용자 영향이 낮은 참고성 네트워크 로그 ${referenceNetworkIssues.length}건만 감지되었습니다.` : '수집된 네트워크 실패 요청이 없습니다.',
+      items: networkIssues.concat(referenceNetworkIssues),
     },
     {
       id: 'mobile-overflow',

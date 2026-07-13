@@ -1037,7 +1037,7 @@ function isLayoutLikeHeroAnchor(anchor, source, figmaContext) {
     const childCount = countFigmaAnchorChildren(anchor?.node, figmaContext)
     return widthRatio >= 0.55 || heightRatio >= 0.14 || childCount >= 3
   }
-  return /section|hero|banner|main_visual|visual|kv|wrap|container|inner|main/.test(normalizeString(anchor?.path).toLowerCase())
+  return /section|hero|banner|main.?visual|visual|kv|wrap|container|inner|main/.test(normalizeString(anchor?.path).toLowerCase())
 }
 
 function countFigmaAnchorChildren(node, figmaContext) {
@@ -1108,7 +1108,7 @@ function isNavigationOrFooterAnchor(anchor, source) {
 function scoreHeroAnchorSemantics(path) {
   const searchable = normalizeString(path).toLowerCase()
   let score = 0
-  if (/hero|main.?visual|main_visual|kv|banner|visual/.test(searchable)) score += 90
+  if (/hero|main.?visual|kv|banner|visual/.test(searchable)) score += 90
   if (/section|container|wrap|inner/.test(searchable)) score += 20
   if (/txt|text|title|heading/.test(searchable)) score -= 35
   if (/img|image|video/.test(searchable)) score -= 20

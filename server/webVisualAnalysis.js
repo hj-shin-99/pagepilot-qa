@@ -1,12 +1,14 @@
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { inferWebTextRole } from './webText.js'
 
 const MAX_CTA_CANDIDATES = 20
 const MAX_IMAGE_CANDIDATES = 20
 const MAX_VIDEO_CANDIDATES = 10
 const MAX_SECTION_CANDIDATES = 20
+const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 export function createWebVisualAnalysis(scanResult, options = {}) {
   const safeScanResult = scanResult && typeof scanResult === 'object' ? scanResult : {}
@@ -309,7 +311,7 @@ function createEmptyScreenshotResult(webScreenshot, error) {
 }
 
 function getVisualScreenshotCacheDir() {
-  return path.resolve('.cache', 'visual', 'screenshots')
+  return path.resolve(PROJECT_ROOT, '.cache', 'visual', 'screenshots')
 }
 
 function ensureDirectory(directoryPath) {

@@ -1,5 +1,6 @@
 import OpenAI from 'openai'
 import { createAiReviewMessages } from './prompts/aiReviewPrompt.js'
+import { createVisualVisionReviewMessages } from './prompts/visualVisionPrompt.js'
 
 const DEFAULT_MODEL = 'gpt-4.1-mini'
 const DEFAULT_TIMEOUT_MS = 60000
@@ -15,21 +16,39 @@ export function createAiReviewService(options = {}) {
     async review(payload) {
       if (!client) throw createAiReviewError('missing_api_key', 'OPENAI_API_KEY가 설정되지 않았습니다.', false)
 
+      const startedAt = Date.now()
+      let imageInputCount = 0
       try {
+        const messages = hasVisionInput(payload) ? createVisualVisionReviewMessages(payload) : createAiReviewMessages(payload)
+        imageInputCount = countImageInputs(messages)
         const completion = await client.chat.completions.create({
           model,
-          messages: createAiReviewMessages(payload),
+          messages,
           response_format: { type: 'json_object' },
-          max_completion_tokens: 1400,
+          max_completion_tokens: imageInputCount > 0 ? 1800 : 1400,
         })
         const rawText = completion.choices?.[0]?.message?.content || ''
         return {
-          meta: { openAiCalled: true, model },
+          meta: {
+            openAiCalled: true,
+            model,
+            visionUsed: imageInputCount > 0,
+            imageInputCount,
+            aiReviewDurationMs: Date.now() - startedAt,
+          },
           review: normalizeAiReview(parseJsonObject(rawText), payload),
         }
       } catch (error) {
-        if (error?.openAiCalled === true) throw error
+        if (error?.openAiCalled === true) {
+          error.visionUsed = error.visionUsed ?? false
+          error.imageInputCount = error.imageInputCount ?? 0
+          error.aiReviewDurationMs = error.aiReviewDurationMs ?? Date.now() - startedAt
+          throw error
+        }
         const wrapped = createAiReviewError('openai_review_failed', error instanceof Error ? error.message : 'AI Review 호출에 실패했습니다.', true)
+        wrapped.visionUsed = imageInputCount > 0
+        wrapped.imageInputCount = imageInputCount
+        wrapped.aiReviewDurationMs = Date.now() - startedAt
         wrapped.cause = error
         throw wrapped
       }
@@ -45,6 +64,7 @@ export function normalizeAiReview(value, payload = {}) {
     mustFix: normalizeIssueArray(input.mustFix, 'critical'),
     verify: normalizeIssueArray(input.verify, 'warning'),
     developerNotes: normalizeIssueArray(input.developerNotes, 'check'),
+    visualDifferences: normalizeVisualDifferenceArray(input.visualDifferences),
     clientReplyDraft: normalizeKoreanText(input.clientReplyDraft, createFallbackClientReply(payload)),
   }
 
@@ -60,6 +80,7 @@ export function createFallbackAiReview(payload = {}, reason = '') {
     mustFix: hasBlocking ? createFallbackMustFix(payload) : [],
     verify: createFallbackVerify(payload),
     developerNotes: [createIssueObject({ category: 'tech', title: 'AI Review fallback 사용', description: reason || 'AI 응답을 사용하지 못해 규칙 기반 요약으로 대체했습니다.', severity: 'check' })],
+    visualDifferences: [],
     clientReplyDraft: createFallbackClientReply(payload),
   }
 }
@@ -93,6 +114,27 @@ function normalizeKoreanText(value, fallback) {
 function normalizeIssueArray(value, defaultSeverity) {
   if (!Array.isArray(value)) return []
   return dedupeIssues(value.map((item) => normalizeIssue(item, defaultSeverity)).filter(Boolean)).slice(0, 10)
+}
+
+function normalizeVisualDifferenceArray(value) {
+  if (!Array.isArray(value)) return []
+  return dedupeVisualDifferences(value.map(normalizeVisualDifference).filter(Boolean)).slice(0, 10)
+}
+
+function normalizeVisualDifference(item, index) {
+  if (!item || typeof item !== 'object') return null
+  const category = normalizeVisualDifferenceCategory(item.category)
+  return {
+    area: normalizeString(item.area).slice(0, 80) || 'Page Content',
+    category,
+    title: normalizeString(item.title).slice(0, 160) || `${category} 차이 확인`,
+    summary: normalizeString(item.summary || item.description).slice(0, 500),
+    figmaValue: normalizeString(item.figmaValue || item.figma).slice(0, 500),
+    webValue: normalizeString(item.webValue || item.web).slice(0, 500),
+    severity: normalizeSeverity(item.severity),
+    confidence: normalizeConfidence(item.confidence),
+    order: Number.isFinite(Number(item.order)) ? Number(item.order) : index,
+  }
 }
 
 function normalizeIssue(item, defaultSeverity) {
@@ -181,6 +223,18 @@ function normalizeCategory(value) {
   return ['price', 'text', 'cta', 'media', 'tech', 'seo', 'accessibility'].includes(category) ? category : 'tech'
 }
 
+function normalizeVisualDifferenceCategory(value) {
+  const category = normalizeString(value).toLowerCase()
+  if (category === 'image') return 'Image'
+  if (category === 'layout') return 'Layout'
+  if (category === 'text') return 'Text'
+  if (category === 'cta') return 'CTA'
+  if (category === 'price') return 'Price'
+  if (category === 'media') return 'Media'
+  if (category === 'missing') return 'Missing'
+  return 'Layout'
+}
+
 function normalizeSeverity(value) {
   const severity = normalizeString(value).toLowerCase()
   return ['critical', 'warning', 'check'].includes(severity) ? severity : 'warning'
@@ -194,6 +248,32 @@ function dedupeIssues(items) {
     seen.add(key)
     return true
   })
+}
+
+function dedupeVisualDifferences(items) {
+  const seen = new Set()
+  return items.filter((item) => {
+    const key = `${item.area}:${item.category}:${item.title}:${item.figmaValue}:${item.webValue}`.toLowerCase()
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function normalizeConfidence(value) {
+  const confidence = normalizeString(value).toLowerCase()
+  return ['high', 'medium', 'low'].includes(confidence) ? confidence : 'medium'
+}
+
+function hasVisionInput(payload = {}) {
+  return Boolean(payload.visionInput?.images?.figma?.dataUrl && payload.visionInput?.images?.web?.dataUrl)
+}
+
+function countImageInputs(messages = []) {
+  return messages.reduce((count, message) => {
+    if (!Array.isArray(message.content)) return count
+    return count + message.content.filter((part) => part?.type === 'image_url' && part.image_url?.url).length
+  }, 0)
 }
 
 function arrayHasItems(value) {

@@ -17,6 +17,7 @@ import { matchTextNodes } from './textMatcher.js'
 import { buildVisualQaPayloadArtifacts } from './visualQaPayload.js'
 import { buildQaRunResponse, createQaRunHandler, isWebScanNavigationFailure } from './qaRunRoute.js'
 import { buildVisualPayloadFromScanResult, createVisualPayloadHandler } from './visualPayloadRoute.js'
+import { createVisualVisionService } from './visualVisionService.js'
 import { createWebVisualAnalysis } from './webVisualAnalysis.js'
 import { extractVisibleWebTextElements } from './webText.js'
 
@@ -49,12 +50,6 @@ const NAV_CTA_CONTEXT_PATTERNS = [
   'menu',
   'bar items',
 ]
-const HERO_CTA_TEXT_PATTERNS = [
-  '사전예약하기',
-  '프로모션 바로가기',
-  '온라인 구매 상담',
-]
-
 const app = express()
 
 loadLocalEnv()
@@ -123,15 +118,21 @@ const aiReviewService = createAiReviewService({
   timeoutMs: AI_QA_TIMEOUT_MS,
 })
 
+const visualVisionService = createVisualVisionService({
+  metaUrl: import.meta.url,
+})
+
 const aiReviewHandler = createAiReviewHandler({
   isHttpUrl,
   buildQaRunResponse,
   qaRunDependencies,
   aiReviewService,
+  visualVisionService,
 })
 
 const aiReviewFromPayloadHandler = createAiReviewFromPayloadHandler({
   aiReviewService,
+  visualVisionService,
 })
 
 app.use(express.json({ limit: '80mb' }))
@@ -653,7 +654,7 @@ function normalizeCtaHints(value, source) {
       visible: item?.visible !== false,
       layerPath: source === 'figma' ? limitText(item?.layerPath || '', 220) : '',
       yRatio: Number.isFinite(Number(item?.yRatio)) ? Math.max(0, Math.min(1, Number(item.yRatio))) : null,
-      navCandidate: isNavigationCtaContext(contextText) && !isHeroCtaText(text),
+      navCandidate: isNavigationCtaContext(contextText) && !isHeroCtaHint({ ...item, area }),
     })
   })
 
@@ -904,7 +905,7 @@ function getMockupAiQaSystemPrompt() {
     'Figma JSON과 Web DOM 텍스트는 참고용 힌트일 뿐이며 절대 기준이 아니다.',
     'JSON에만 존재하고 Figma 시안 이미지에 보이지 않는 항목은 이슈로 만들지 않는다.',
     'Global navigation/navigation/nav/gnb/header/search/menu/bar items 영역의 메뉴/검색/헤더 CTA 차이는 기본 이슈에서 제외하거나 낮은 우선순위로 둔다.',
-    '단, Hero CTA인 사전예약하기, 프로모션 바로가기, 온라인 구매 상담 차이는 유지한다.',
+    '단, Hero/Main Visual 영역의 CTA 차이는 유지한다.',
     '문구 이슈는 Figma JSON, Web DOM, 이미지 OCR/Vision 중 한 소스만 다르게 읽은 경우 수정 필요로 만들지 말고 확인 필요 이하로 낮춘다.',
     'Hero KV 문구와 Footer/Disclaimer/약관성 장문을 서로 매칭하지 않는다. 법적/약관 키워드는 제외 기준이 아니라 영역 오매칭 방지용 문맥 힌트로만 사용한다.',
     '숫자, 금액, 월 납입금 차이는 위 OCR 완화 규칙으로 제거하지 않는다.',
@@ -940,7 +941,7 @@ function createMockupAiQaPrompt(payload) {
     'Web DOM visible text와 textMismatchHints도 참고 힌트이며, 이미지 비교 판단보다 우선하지 않습니다.',
     'CTA 버튼 차이는 figmaCtaHints와 webCtaHints의 같은 area 구성 차이를 중요하게 참고하세요.',
     'Global navigation/navigation/nav/gnb/header/search/menu/bar items 영역의 메뉴/검색/헤더 CTA 차이는 기본 이슈에서 제외하거나 낮은 우선순위로 두세요.',
-    '단, Hero CTA인 사전예약하기, 프로모션 바로가기, 온라인 구매 상담 차이는 유지하세요.',
+    '단, Hero/Main Visual 영역의 CTA 차이는 유지하세요.',
     '문구 이슈는 Figma JSON, Web DOM, 이미지 OCR/Vision 중 한 소스만 다르게 읽은 경우 수정 필요로 만들지 말고 확인 필요 이하로 낮추세요.',
     'Hero KV 문구와 Footer/Disclaimer/약관성 장문을 서로 매칭하지 마세요. 법적/약관 키워드는 제외 기준이 아니라 영역 오매칭 방지용 문맥 힌트로만 사용하세요.',
     '숫자, 금액, 월 납입금 차이는 위 OCR 완화 규칙으로 제거하지 마세요.',
@@ -1073,23 +1074,24 @@ function createCtaComparisonResult(payload = {}) {
 }
 
 function filterDefaultCtaHints(hints) {
-  return hints.filter((hint) => isHeroCtaText(hint?.text) || !isNavigationCtaHint(hint))
+  return hints.filter((hint) => isHeroCtaHint(hint) || !isNavigationCtaHint(hint))
 }
 
 function isNavigationCtaHint(hint) {
-  if (!hint || isHeroCtaText(hint.text)) return false
+  if (!hint || isHeroCtaHint(hint)) return false
   if (hint.navCandidate) return true
   return isNavigationCtaContext(`${hint.layerPath || ''} ${hint.name || ''} ${hint.selector || ''}`)
+}
+
+function isHeroCtaHint(hint) {
+  if (!hint) return false
+  const context = `${hint.area || ''} ${hint.section || ''} ${hint.sectionRole || ''} ${hint.layerPath || ''} ${hint.name || ''} ${hint.selector || ''}`
+  return /hero|main.?visual|key.?visual|kv|banner|top/i.test(context)
 }
 
 function isNavigationCtaContext(value) {
   const text = String(value || '').toLowerCase()
   return NAV_CTA_CONTEXT_PATTERNS.some((pattern) => text.includes(pattern))
-}
-
-function isHeroCtaText(value) {
-  const text = normalizeComparableQaText(value)
-  return HERO_CTA_TEXT_PATTERNS.some((pattern) => text.includes(normalizeComparableQaText(pattern)))
 }
 
 function createCtaAreaIssues(area, figmaHints, webHints) {
@@ -1661,7 +1663,7 @@ function getIssueSearchText(issue) {
 }
 
 function hasHighPrioritySignal(issue, text) {
-  if (isHeroCtaText(text)) return true
+  if (isHeroIssueText(text)) return true
   if (isNavigationIssueText(text)) return false
   if (issue?.area === 'top' && /(메인|kv|hero|히어로|배너|프로모션|혜택|가격|금액|월\s*납입|월납입|만원|cta|버튼|신청|예약|구매|상담)/i.test(text)) return true
   if (issue?.type === 'CTA') return !isNavigationIssueText(text)
@@ -1675,8 +1677,12 @@ function hasLowPrioritySignal(text) {
 }
 
 function isNavigationIssueText(text) {
-  if (isHeroCtaText(text)) return false
+  if (isHeroIssueText(text)) return false
   return isNavigationCtaContext(text) || /(gnb|header|nav|navigation|global\s*navigation|menu|search|bar\s*items|상단\s*메뉴|전체\s*메뉴|검색)/i.test(String(text || ''))
+}
+
+function isHeroIssueText(text) {
+  return /(hero|main.?visual|key.?visual|kv|히어로|메인\s*비주얼|메인\s*kv|cta|button|버튼)/i.test(String(text || ''))
 }
 
 function isTextOrMoneyIssue(issue) {

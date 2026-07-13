@@ -91,6 +91,7 @@ function sanitizeAiReview(aiReview) {
       mustFix: sanitizeAiIssueList(review.mustFix),
       verify: sanitizeAiIssueList(review.verify),
       developerNotes: sanitizeAiIssueList(review.developerNotes),
+      visualDifferences: sanitizeVisualDifferences(review.visualDifferences),
       clientReplyDraft: getString(review.clientReplyDraft),
     },
   }
@@ -111,6 +112,24 @@ function sanitizeAiIssueList(value) {
       description: getString(item.description),
       evidence: Array.isArray(item.evidence) ? item.evidence.map(getString).filter(Boolean).slice(0, 4) : [],
       severity: getString(item.severity) || 'warning',
+    }
+  }).filter(Boolean).slice(0, 10)
+}
+
+function sanitizeVisualDifferences(value) {
+  if (!Array.isArray(value)) return []
+  return value.map((item, index) => {
+    if (!item || typeof item !== 'object') return null
+    return {
+      area: getString(item.area) || 'Page Content',
+      category: getString(item.category) || 'Layout',
+      title: getString(item.title),
+      summary: getString(item.summary),
+      figmaValue: getString(item.figmaValue),
+      webValue: getString(item.webValue),
+      severity: getString(item.severity) || 'warning',
+      confidence: getString(item.confidence) || 'medium',
+      order: Number.isFinite(Number(item.order)) ? Number(item.order) : index,
     }
   }).filter(Boolean).slice(0, 10)
 }

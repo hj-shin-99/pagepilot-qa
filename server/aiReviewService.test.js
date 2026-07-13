@@ -39,9 +39,41 @@ test('AI review service calls OpenAI client exactly once and normalizes structur
   assert.equal(calls.request.response_format.type, 'json_object')
   assert.equal(calls.request.messages.length, 2)
   assert.equal(result.meta.openAiCalled, true)
+  assert.equal(result.meta.visionUsed, false)
+  assert.equal(result.meta.imageInputCount, 0)
+  assert.equal(Number.isFinite(result.meta.aiReviewDurationMs), true)
   assert.equal(result.review.releaseDecision, 'blocked')
   assert.equal(result.review.mustFix[0].category, 'price')
-  assert.deepEqual(Object.keys(result.review).sort(), ['clientReplyDraft', 'developerNotes', 'mustFix', 'releaseDecision', 'summary', 'verify'])
+  assert.deepEqual(Object.keys(result.review).sort(), ['clientReplyDraft', 'developerNotes', 'mustFix', 'releaseDecision', 'summary', 'verify', 'visualDifferences'])
+})
+
+test('AI review service sends two images in a single multimodal call when vision input exists', async () => {
+  const calls = { create: 0, request: null }
+  const service = createAiReviewService({
+    client: {
+      chat: {
+        completions: {
+          async create(request) {
+            calls.create += 1
+            calls.request = request
+            return { choices: [{ message: { content: JSON.stringify({ releaseDecision: 'caution', summary: '시각 차이 확인', mustFix: [], verify: [], developerNotes: [], clientReplyDraft: '', visualDifferences: [{ area: 'Main Visual', category: 'Media', title: 'Hero KV 비주얼이 다릅니다.', summary: '이미지 구성이 다릅니다.', figmaValue: 'Hero image', webValue: 'Hero video', severity: 'warning', confidence: 'high', order: 0 }] }) } }] }
+          },
+        },
+      },
+    },
+  })
+  const payload = createPayload()
+  payload.visionInput = { enabled: true, images: { figma: { dataUrl: 'data:image/jpeg;base64,AAA' }, web: { dataUrl: 'data:image/jpeg;base64,BBB' } } }
+
+  const result = await service.review(payload)
+  const imageParts = calls.request.messages[1].content.filter((item) => item.type === 'image_url')
+
+  assert.equal(calls.create, 1)
+  assert.equal(imageParts.length, 2)
+  assert.equal(result.meta.openAiCalled, true)
+  assert.equal(result.meta.visionUsed, true)
+  assert.equal(result.meta.imageInputCount, 2)
+  assert.equal(result.review.visualDifferences[0].category, 'Media')
 })
 
 test('AI review service marks OpenAI failures as attempted calls', async () => {
@@ -59,7 +91,7 @@ test('AI review service marks OpenAI failures as attempted calls', async () => {
 
   await assert.rejects(
     service.review(createPayload()),
-    (error) => error.openAiCalled === true && error.code === 'openai_review_failed',
+    (error) => error.openAiCalled === true && error.code === 'openai_review_failed' && Number.isFinite(error.aiReviewDurationMs),
   )
 })
 

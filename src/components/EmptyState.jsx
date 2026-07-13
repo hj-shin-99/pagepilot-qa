@@ -1,4 +1,4 @@
-function EmptyState({ scanState, scanError, mode = 'visual', combined = false }) {
+function EmptyState({ scanState, scanError, mode = 'visual', combined = false, scanStage = 'idle' }) {
   const isScanning = scanState === 'scanning' || scanState === 'loading'
   const isFailed = scanState === 'failed' || scanState === 'error'
   const isSkipped = scanState === 'skipped'
@@ -17,7 +17,7 @@ function EmptyState({ scanState, scanError, mode = 'visual', combined = false })
         <p>{isFailed ? scanError : getDescription({ isTech, isSkipped, combined })}</p>
         {isScanning ? (
           <ol className="scan-stage-list" aria-label="검사 진행 단계">
-            {getStages({ isTech, combined }).map((stage, index) => <li className={index === 0 ? 'is-active' : ''} key={stage}>{stage}</li>)}
+            {getStages({ isTech, combined }).map((stage, index) => <li className={getStageClassName(index, getActiveStageIndex({ isTech, combined, scanStage }))} key={stage}>{stage}</li>)}
           </ol>
         ) : null}
       </div>
@@ -42,10 +42,26 @@ function getDescription({ isTech, isSkipped, combined }) {
 }
 
 function getStages({ isTech, combined }) {
-  if (combined) return ['Web 페이지와 Figma 시안 분석', 'Visual QA와 Tech QA 함께 검사', '결과 정리']
+  if (combined) return ['Web/Figma 데이터 수집', 'AI Vision 비교', '결과 정리 및 저장']
   return isTech
     ? ['Web 페이지 분석', 'Tech QA 항목 검사']
     : ['Figma Frame 로드 및 렌더링', 'Web 페이지 접속 및 캡처', 'Text Matcher 및 canonical evidence 생성']
+}
+
+function getActiveStageIndex({ isTech, combined, scanStage }) {
+  if (combined) {
+    if (scanStage === 'ai-review') return 1
+    if (scanStage === 'finalizing') return 2
+    return 0
+  }
+  if (scanStage === 'finalizing') return isTech ? 1 : 2
+  return 0
+}
+
+function getStageClassName(index, activeIndex) {
+  if (index === activeIndex) return 'is-active'
+  if (index < activeIndex) return 'is-complete'
+  return ''
 }
 
 export default EmptyState

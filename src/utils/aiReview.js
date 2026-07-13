@@ -34,6 +34,7 @@ export function buildAiReviewPayloadFromQaResult(qaResult = {}) {
       prices: createPriceEvidence(visual),
       media: createMediaEvidence(visual),
     },
+    visualAssets: createVisualAssetReferences(visual),
     techEvidence: {
       access: findCheckSummary(tech, 'access'),
       httpStatus: findCheckSummary(tech, 'http-status'),
@@ -50,6 +51,7 @@ export function buildAiReviewPayloadFromQaResult(qaResult = {}) {
       mustFix: [],
       verify: [],
       developerNotes: [],
+      visualDifferences: [],
       clientReplyDraft: '',
     },
   }
@@ -61,8 +63,14 @@ export function sanitizeAiReviewResponse(response = {}) {
     success: response.success === true,
     meta: {
       openAiCalled: response.meta?.openAiCalled === true,
+      visionUsed: response.meta?.visionUsed === true,
+      imageInputCount: numberValue(response.meta?.imageInputCount),
+      figmaImagePrepared: response.meta?.figmaImagePrepared === true,
+      webImagePrepared: response.meta?.webImagePrepared === true,
       fallbackUsed: response.meta?.fallbackUsed === true,
       model: getString(response.meta?.model),
+      aiReviewDurationMs: numberValue(response.meta?.aiReviewDurationMs),
+      visionFailureReason: getString(response.meta?.visionFailureReason),
     },
     review: {
       releaseDecision: normalizeDecision(review.releaseDecision),
@@ -70,6 +78,7 @@ export function sanitizeAiReviewResponse(response = {}) {
       mustFix: sanitizeIssueArray(review.mustFix),
       verify: sanitizeIssueArray(review.verify),
       developerNotes: sanitizeIssueArray(review.developerNotes),
+      visualDifferences: sanitizeVisualDifferenceArray(review.visualDifferences),
       clientReplyDraft: getString(review.clientReplyDraft),
     },
     error: response.error && typeof response.error === 'object' ? { code: getString(response.error.code), message: getString(response.error.message) } : null,
@@ -147,6 +156,13 @@ function createMediaEvidence(visual = {}) {
   }
 }
 
+function createVisualAssetReferences(visual = {}) {
+  return {
+    figmaRenderId: getSafeAssetId(visual.figma?.renderId),
+    webScreenshotFileName: getSafeScreenshotFileName(visual.web?.displayImageUrl || visual.web?.localImagePath || visual.web?.screenshotPath || visual.web?.screenshot?.path || visual.web?.image),
+  }
+}
+
 function findCheckSummary(tech = {}, checkId) {
   const check = arrayOfObjects(tech.checks).find((item) => item.id === checkId)
   if (!check) return {}
@@ -177,6 +193,25 @@ function limitActions(items) {
 
 function sanitizeIssueArray(value) {
   return Array.isArray(value) ? value.map(sanitizeIssue).filter(Boolean).slice(0, 10) : []
+}
+
+function sanitizeVisualDifferenceArray(value) {
+  return Array.isArray(value) ? value.map(sanitizeVisualDifference).filter(Boolean).slice(0, 10) : []
+}
+
+function sanitizeVisualDifference(item, index) {
+  if (!item || typeof item !== 'object') return null
+  return {
+    area: getString(item.area) || 'Page Content',
+    category: getString(item.category) || 'Layout',
+    title: getString(item.title),
+    summary: getString(item.summary || item.description),
+    figmaValue: getString(item.figmaValue || item.figma),
+    webValue: getString(item.webValue || item.web),
+    severity: getString(item.severity) || 'warning',
+    confidence: getString(item.confidence) || 'medium',
+    order: Number.isFinite(Number(item.order)) ? Number(item.order) : index,
+  }
 }
 
 function sanitizeIssue(item) {
@@ -236,6 +271,17 @@ function getSafeUrl(value) {
   const text = getString(value)
   if (!text || text.startsWith('data:') || text.includes('.cache/') || /^[a-zA-Z]:[\\/]/.test(text)) return ''
   return text.startsWith('/api/') || text.startsWith('/') || /^https?:\/\//i.test(text) ? text : ''
+}
+
+function getSafeAssetId(value) {
+  const text = getString(value)
+  return /^[0-9a-zA-Z._-]+$/.test(text) ? text : ''
+}
+
+function getSafeScreenshotFileName(value) {
+  const normalized = getString(value).replace(/\\/g, '/')
+  const fileName = normalized.split('/').filter(Boolean).at(-1) || ''
+  return /^[a-f0-9]{24}\.png$/i.test(fileName) ? fileName : ''
 }
 
 function getString(value) {

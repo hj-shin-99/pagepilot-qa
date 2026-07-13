@@ -86,7 +86,7 @@ export function inferFigmaSectionHint(node) {
   if (/nav|navigation|gnb|menu|header/.test(searchable)) return 'navigation'
   if (/footer/.test(searchable)) return 'footer'
   if (/legal|privacy|terms|cookie|disclaimer|약관|개인정보|유의사항/.test(searchable)) return 'legal'
-  if (/hero|kv|banner|main_visual/.test(searchable)) return 'hero'
+  if (/hero|kv|banner|main.?visual/.test(searchable)) return 'hero'
 
   const yRatio = Number(node?.yRatio)
   if (!Number.isFinite(yRatio)) return 'unknown'

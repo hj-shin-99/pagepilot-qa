@@ -9,6 +9,8 @@ test('client AI Review payload keeps numeric differences blocking and spacing di
   assert.equal(payload.visualEvidence.textDifferences.find((item) => item.webText === 'HelloWorld').severity, 'check')
   assert.equal(JSON.stringify(payload).includes('data:image'), false)
   assert.equal(JSON.stringify(payload).includes('.cache/'), false)
+  assert.equal(payload.visualAssets.figmaRenderId, 'render_1')
+  assert.equal(payload.visualAssets.webScreenshotFileName, 'aaaaaaaaaaaaaaaaaaaaaaaa.png')
 })
 
 test('client AI Review response uses review as single source of truth', () => {
@@ -22,6 +24,7 @@ test('client AI Review response uses review as single source of truth', () => {
       mustFix: [],
       verify: [{ category: 'media', title: '미디어 확인', description: '의도 확인', severity: 'warning' }],
       developerNotes: [],
+      visualDifferences: [{ area: 'Main Visual', category: 'Media', title: 'Hero media differs', summary: 'Image versus video.', figmaValue: 'Image', webValue: 'Video', severity: 'warning', confidence: 'high', order: 0 }],
       clientReplyDraft: '확인 후 진행하겠습니다.',
     },
   })
@@ -30,6 +33,7 @@ test('client AI Review response uses review as single source of truth', () => {
   assert.equal(response.meta.openAiCalled, true)
   assert.equal(response.meta.model, 'gpt-4.1-mini')
   assert.equal(response.review.verify[0].category, 'media')
+  assert.equal(response.review.visualDifferences[0].title, 'Hero media differs')
 })
 
 function createQaResult() {
@@ -37,8 +41,8 @@ function createQaResult() {
     visual: {
       result: {
         meta: { webUrl: 'https://example.com', figmaNodeId: '1:2' },
-        web: { screenshot: { dataUrl: 'data:image/png;base64,AAAA' } },
-        figma: { localImagePath: '.cache/figma/renders/a.png' },
+        web: { displayImageUrl: '/api/visual/screenshot/aaaaaaaaaaaaaaaaaaaaaaaa.png', screenshot: { dataUrl: 'data:image/png;base64,AAAA' } },
+        figma: { renderId: 'render_1', localImagePath: '.cache/figma/renders/a.png' },
         comparison: {
           differences: [
             { figmaText: '월 47만원', webText: '월 50만원', confidence: 'high' },

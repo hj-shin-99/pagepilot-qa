@@ -23,14 +23,15 @@ export function createAiReviewPayload({ visualResult, techResult } = {}) {
       techErrorCount: techIssues.errorCount,
       techWarningCount: techIssues.warningCount,
     },
-    visualEvidence: {
-      textDifferences: visualIssues.filter((issue) => issue.kind === 'text-difference').slice(0, MAX_VISUAL_ITEMS),
-      hero: createHeroEvidence(visual),
-      cta: createCtaEvidence(visual),
-      prices: createPriceEvidence(visual),
-      media: createMediaEvidence(visual),
-    },
-    techEvidence: {
+      visualEvidence: {
+        textDifferences: visualIssues.filter((issue) => issue.kind === 'text-difference').slice(0, MAX_VISUAL_ITEMS),
+        hero: createHeroEvidence(visual),
+        cta: createCtaEvidence(visual),
+        prices: createPriceEvidence(visual),
+        media: createMediaEvidence(visual),
+      },
+      visualAssets: createVisualAssetReferences(visual),
+      techEvidence: {
       access: findCheckSummary(tech, 'access'),
       httpStatus: findCheckSummary(tech, 'http-status'),
       consoleErrors: getCheckItems(tech, 'console-errors', 'error'),
@@ -46,6 +47,7 @@ export function createAiReviewPayload({ visualResult, techResult } = {}) {
       mustFix: [],
       verify: [],
       developerNotes: [],
+      visualDifferences: [],
       clientReplyDraft: '',
     },
   }
@@ -104,25 +106,23 @@ export function createAiReviewHandler(dependencies) {
       return
     }
 
+    let prepared = { payload, meta: {} }
     try {
-      const result = await dependencies.aiReviewService.review(payload)
+      prepared = await prepareAiReviewPayloadForVision(payload, dependencies)
+      const result = await dependencies.aiReviewService.review(prepared.payload)
+      const meta = createAiReviewResponseMeta({ qaMeta: qaResult?.meta, preparedMeta: prepared.meta, resultMeta: result.meta, fallbackUsed: false })
+      logAiReviewMeta(meta)
       res.json({
         success: true,
-        meta: {
-          ...(qaResult?.meta || {}),
-          ...(result.meta || {}),
-          openAiCalled: true,
-        },
+        meta,
         review: result.review,
       })
     } catch (error) {
+      const meta = createAiReviewResponseMeta({ qaMeta: qaResult?.meta, preparedMeta: prepared.meta, error, fallbackUsed: true })
+      logAiReviewMeta(meta)
       res.status(200).json({
         success: true,
-        meta: {
-          ...(qaResult?.meta || {}),
-          openAiCalled: error?.openAiCalled === true,
-          fallbackUsed: true,
-        },
+        meta,
         review: createFallbackAiReview(payload, error instanceof Error ? error.message : ''),
         error: {
           code: typeof error?.code === 'string' ? error.code : 'openai_review_failed',
@@ -141,24 +141,23 @@ export function createAiReviewFromPayloadHandler(dependencies) {
       return
     }
 
+    let prepared = { payload, meta: {} }
     try {
-      const result = await dependencies.aiReviewService.review(payload)
+      prepared = await prepareAiReviewPayloadForVision(payload, dependencies)
+      const result = await dependencies.aiReviewService.review(prepared.payload)
+      const meta = createAiReviewResponseMeta({ preparedMeta: prepared.meta, resultMeta: result.meta, fallbackUsed: false })
+      logAiReviewMeta(meta)
       res.json({
         success: true,
-        meta: {
-          ...(result.meta || {}),
-          openAiCalled: true,
-          fallbackUsed: false,
-        },
+        meta,
         review: result.review,
       })
     } catch (error) {
+      const meta = createAiReviewResponseMeta({ preparedMeta: prepared.meta, error, fallbackUsed: true })
+      logAiReviewMeta(meta)
       res.status(200).json({
         success: true,
-        meta: {
-          openAiCalled: error?.openAiCalled === true,
-          fallbackUsed: true,
-        },
+        meta,
         review: createFallbackAiReview(payload, error instanceof Error ? error.message : ''),
         error: {
           code: typeof error?.code === 'string' ? error.code : 'openai_review_failed',
@@ -167,6 +166,49 @@ export function createAiReviewFromPayloadHandler(dependencies) {
       })
     }
   }
+}
+
+async function prepareAiReviewPayloadForVision(payload, dependencies = {}) {
+  if (!dependencies.visualVisionService) return { payload, meta: { visionPrepared: false, figmaImagePrepared: false, webImagePrepared: false, visionFailureReason: 'image-input-not-attached' } }
+  try {
+    return await dependencies.visualVisionService.attachVisionInput(payload)
+  } catch (error) {
+    return { payload, meta: { visionPrepared: false, figmaImagePrepared: false, webImagePrepared: false, visionFailureReason: 'image-prepare-failed', visionError: error instanceof Error ? error.message : 'vision_prepare_failed' } }
+  }
+}
+
+function createAiReviewResponseMeta({ qaMeta, preparedMeta = {}, resultMeta, error, fallbackUsed }) {
+  const imageInputCount = Number(resultMeta?.imageInputCount ?? error?.imageInputCount ?? 0)
+  const openAiCalled = resultMeta?.openAiCalled === true || error?.openAiCalled === true
+  const visionUsed = resultMeta?.visionUsed === true || error?.visionUsed === true
+  const visionFailureReason = getVisionFailureReason({ preparedMeta, imageInputCount, openAiCalled, fallbackUsed, error })
+
+  return {
+    ...(qaMeta || {}),
+    ...preparedMeta,
+    ...(resultMeta || {}),
+    openAiCalled,
+    visionUsed,
+    imageInputCount,
+    figmaImagePrepared: preparedMeta.figmaImagePrepared === true,
+    webImagePrepared: preparedMeta.webImagePrepared === true,
+    fallbackUsed: fallbackUsed === true,
+    model: safeText(resultMeta?.model || error?.model),
+    aiReviewDurationMs: Number(resultMeta?.aiReviewDurationMs ?? error?.aiReviewDurationMs ?? 0),
+    visionFailureReason,
+  }
+}
+
+function getVisionFailureReason({ preparedMeta = {}, imageInputCount, openAiCalled, fallbackUsed, error }) {
+  if (typeof preparedMeta.visionFailureReason === 'string' && preparedMeta.visionFailureReason) return preparedMeta.visionFailureReason
+  if (preparedMeta.visionPrepared === true && imageInputCount !== 2) return 'image-input-not-attached'
+  if (fallbackUsed && openAiCalled && imageInputCount > 0) return 'openai-failed'
+  if (fallbackUsed && error) return typeof error?.code === 'string' ? error.code : 'openai-failed'
+  return ''
+}
+
+function logAiReviewMeta(meta = {}) {
+  console.info(`[AI Review] called=${meta.openAiCalled === true} vision=${meta.visionUsed === true} images=${Number(meta.imageInputCount || 0)} fallback=${meta.fallbackUsed === true} durationMs=${Number(meta.aiReviewDurationMs || 0)}`)
 }
 
 function createVisualIssues(visual = {}) {
@@ -197,6 +239,24 @@ function createVisualIssues(visual = {}) {
   }
 
   return dedupeByJson(issues).slice(0, MAX_VISUAL_ITEMS)
+}
+
+function createVisualAssetReferences(visual = {}) {
+  return {
+    figmaRenderId: safeAssetId(visual.figma?.renderId),
+    webScreenshotFileName: getSafeScreenshotFileName(visual.web?.displayImageUrl || visual.web?.localImagePath || visual.web?.screenshotPath || visual.web?.screenshot?.path || visual.web?.image),
+  }
+}
+
+function safeAssetId(value) {
+  const text = safeText(value, 160)
+  return /^[0-9a-zA-Z._-]+$/.test(text) ? text : ''
+}
+
+function getSafeScreenshotFileName(value) {
+  const normalized = safeText(value, 240).replace(/\\/g, '/')
+  const fileName = normalized.split('/').filter(Boolean).at(-1) || ''
+  return /^[a-f0-9]{24}\.png$/i.test(fileName) ? fileName : ''
 }
 
 function classifyVisualDifferenceSeverity(item = {}) {

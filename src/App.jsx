@@ -31,6 +31,7 @@ function App() {
   const [techScanError, setTechScanError] = useState('')
   const [aiReview, setAiReview] = useState(null)
   const [aiReviewState, setAiReviewState] = useState('idle')
+  const [scanStage, setScanStage] = useState('idle')
   const [historyItems, setHistoryItems] = useState(() => loadHistoryItems())
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
 
@@ -53,17 +54,20 @@ function App() {
     setTechResult(null)
     setAiReview(null)
     setAiReviewState('idle')
+    setScanStage('idle')
 
     if (!isValidHttpUrl(webUrl)) {
       setInputError('http:// 또는 https://로 시작하는 Web URL을 입력해 주세요.')
       setTechScanState('idle')
       setVisualScanState(frameUrl ? 'error' : 'skipped')
+      setScanStage('idle')
       setActiveTab('tech')
       return
     }
 
     setTechScanState('loading')
     setVisualScanState(frameUrl ? 'loading' : 'skipped')
+    setScanStage(frameUrl ? 'qa-run' : 'tech-run')
     setActiveTab(frameUrl ? 'visual' : 'tech')
 
     let session
@@ -86,10 +90,8 @@ function App() {
       session.visual.error = commonError
       session.tech.error = commonError
     }
-    applyTechSessionState(session.tech, setTechResult, setTechScanState, setTechScanError)
-    applyVisualSessionState(session.visual, setVisualResult, setVisualScanState, setVisualScanError)
-
     if (frameUrl && session.tech.status === 'success' && session.visual.status === 'success') {
+      setScanStage('ai-review')
       setAiReviewState('loading')
       try {
         const review = await requestAiReviewFromPayload(buildAiReviewPayloadFromSession(session))
@@ -104,11 +106,16 @@ function App() {
       }
     }
 
+    setScanStage('finalizing')
+    applyTechSessionState(session.tech, setTechResult, setTechScanState, setTechScanError)
+    applyVisualSessionState(session.visual, setVisualResult, setVisualScanState, setVisualScanError)
+
     if (session.shouldSaveCombined) {
       setHistoryItems(saveHistoryItem(createCombinedHistoryItem(session)))
     } else if (session.tech.status === 'success') {
       setHistoryItems(saveHistoryItem(createTechHistoryItem(session.tech.result)))
     }
+    setScanStage('idle')
   }
 
   const handleRestoreHistory = (item) => {
@@ -197,7 +204,7 @@ function App() {
               <CheckList checks={techResult.checks || []} />
               <DetailPanel result={techResult} />
             </section>
-          ) : <EmptyState scanState={techScanState} scanError={techScanError} mode="tech" combined={visualScanState === 'loading'} />
+          ) : <EmptyState scanState={techScanState} scanError={techScanError} mode="tech" combined={visualScanState === 'loading'} scanStage={scanStage} />
         ) : visualResult ? (
           <VisualQaPanel
             copyStatus={visualCopyStatus}
@@ -208,7 +215,7 @@ function App() {
             onCopyResult={handleCopyVisualResult}
           />
         ) : (
-          <EmptyState scanState={visualScanState} scanError={visualScanError} mode="visual" combined={techScanState === 'loading'} />
+          <EmptyState scanState={visualScanState} scanError={visualScanError} mode="visual" combined={techScanState === 'loading'} scanStage={scanStage} />
         )}
       </section>
     </main>
@@ -237,6 +244,7 @@ function createLocalAiReviewFallback(error) {
       mustFix: [],
       verify: [{ category: 'tech', title: 'AI Review 재시도 필요', description: message, evidence: [], severity: 'warning' }],
       developerNotes: [{ category: 'tech', title: 'AI Review fallback', description: message, evidence: [], severity: 'check' }],
+      visualDifferences: [],
       clientReplyDraft: '자동 QA 결과는 확인되었으나 AI 종합 검토는 일시적으로 완료하지 못했습니다. 규칙 기반 결과를 기준으로 우선 확인하겠습니다.',
     },
     error: { code: 'ai_review_request_failed', message },
@@ -382,7 +390,13 @@ function sanitizeHistoryAiReview(aiReview) {
   return {
     meta: {
       openAiCalled: safe.meta.openAiCalled,
+      visionUsed: safe.meta.visionUsed,
+      imageInputCount: safe.meta.imageInputCount,
+      figmaImagePrepared: safe.meta.figmaImagePrepared,
+      webImagePrepared: safe.meta.webImagePrepared,
       model: safe.meta.model,
+      aiReviewDurationMs: safe.meta.aiReviewDurationMs,
+      visionFailureReason: safe.meta.visionFailureReason,
       fallbackUsed: safe.meta.fallbackUsed,
     },
     review: safe.review,

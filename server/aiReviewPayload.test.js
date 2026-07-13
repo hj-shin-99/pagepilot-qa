@@ -16,6 +16,8 @@ test('AI Review payload is compact and excludes raw artifacts', () => {
   assert.equal(serialized.includes('secret-token'), false)
   assert.equal(serialized.includes('C:\\'), false)
   assert.equal(serialized.includes('.cache/'), false)
+  assert.equal(payload.visualAssets.figmaRenderId, 'render-1')
+  assert.equal(payload.visualAssets.webScreenshotFileName, 'aaaaaaaaaaaaaaaaaaaaaaaa.png')
 })
 
 test('AI Review payload dedupes visual and tech issue evidence', () => {
@@ -72,13 +74,14 @@ test('AI Review handler runs QA once and returns structured review with openAiCa
         calls.review += 1
         assert.equal(payload.meta.openAiCalled, false)
         return {
-          meta: { openAiCalled: true, model: 'test-model' },
+          meta: { openAiCalled: true, model: 'test-model', visionUsed: false, imageInputCount: 0, aiReviewDurationMs: 12 },
           review: {
             releaseDecision: 'caution',
             summary: 'Review summary',
             mustFix: ['Fix critical mismatch'],
             verify: ['Run regression'],
             developerNotes: ['No extra scan'],
+            visualDifferences: [],
             clientReplyDraft: 'We recommend a focused fix pass before release.',
           },
         }
@@ -92,6 +95,9 @@ test('AI Review handler runs QA once and returns structured review with openAiCa
   assert.equal(response.statusCode, 200)
   assert.equal(response.body.success, true)
   assert.equal(response.body.meta.openAiCalled, true)
+  assert.equal(response.body.meta.visionUsed, false)
+  assert.equal(response.body.meta.imageInputCount, 0)
+  assert.equal(response.body.meta.aiReviewDurationMs, 12)
   assert.equal(response.body.meta.webScanInvocationCount, 1)
   assert.equal(response.body.meta.browserLaunchCount, 1)
   assert.equal(response.body.meta.desktopPageCount, 1)
@@ -133,6 +139,7 @@ test('AI Review handler returns fallback review when OpenAI fails', async () => 
   assert.equal(response.body.success, true)
   assert.equal(response.body.meta.openAiCalled, true)
   assert.equal(response.body.meta.fallbackUsed, true)
+  assert.equal(response.body.meta.visionFailureReason, 'image-input-not-attached')
   assert.equal(response.body.review.releaseDecision, 'blocked')
   assert.equal(response.body.error.code, 'openai_review_failed')
 })
@@ -145,13 +152,14 @@ test('AI Review from-payload calls OpenAI once without QA scan', async () => {
         calls.review += 1
         assert.equal(payload.meta.webUrl, 'https://example.com')
         return {
-          meta: { openAiCalled: true, model: 'test-model' },
+          meta: { openAiCalled: true, model: 'test-model', visionUsed: false, imageInputCount: 0, aiReviewDurationMs: 8 },
           review: {
             releaseDecision: 'ready',
             summary: '배포 차단 이슈가 없습니다.',
             mustFix: [],
             verify: [],
             developerNotes: [],
+            visualDifferences: [],
             clientReplyDraft: '확인된 주요 차단 이슈는 없습니다.',
           },
         }
@@ -165,8 +173,43 @@ test('AI Review from-payload calls OpenAI once without QA scan', async () => {
   assert.equal(response.body.success, true)
   assert.equal(response.body.meta.openAiCalled, true)
   assert.equal(response.body.meta.fallbackUsed, false)
+  assert.equal(response.body.meta.visionUsed, false)
+  assert.equal(response.body.meta.imageInputCount, 0)
+  assert.equal(response.body.meta.visionFailureReason, 'image-input-not-attached')
   assert.equal(response.body.review.releaseDecision, 'ready')
   assert.equal(calls.review, 1)
+})
+
+test('AI Review from-payload prepares vision once and does not expose image data in response', async () => {
+  const calls = { review: 0, vision: 0 }
+  const handler = createAiReviewFromPayloadHandler({
+    visualVisionService: {
+      async attachVisionInput(payload) {
+        calls.vision += 1
+        return { payload: { ...payload, visionInput: { enabled: true, images: { figma: { dataUrl: 'data:image/jpeg;base64,AAA' }, web: { dataUrl: 'data:image/jpeg;base64,BBB' } } } }, meta: { visionPrepared: true, figmaImagePrepared: true, webImagePrepared: true } }
+      },
+    },
+    aiReviewService: {
+      async review(payload) {
+        calls.review += 1
+        assert.equal(payload.visionInput.images.figma.dataUrl.startsWith('data:image/jpeg'), true)
+        return { meta: { openAiCalled: true, model: 'test-model', visionUsed: true, imageInputCount: 2, aiReviewDurationMs: 25 }, review: { releaseDecision: 'caution', summary: 'Vision checked', mustFix: [], verify: [], developerNotes: [], visualDifferences: [{ area: 'Main Visual', category: 'Media', title: 'Hero media differs', summary: 'Image versus video.', figmaValue: 'Image', webValue: 'Video', severity: 'warning', confidence: 'high', order: 0 }], clientReplyDraft: '' } }
+      },
+    },
+  })
+  const response = createMockResponse()
+
+  await handler({ body: { payload: buildAiReviewPayloadFromQaResult(createQaResult()) } }, response)
+
+  assert.equal(calls.vision, 1)
+  assert.equal(calls.review, 1)
+  assert.equal(response.body.meta.visionPrepared, true)
+  assert.equal(response.body.meta.visionUsed, true)
+  assert.equal(response.body.meta.imageInputCount, 2)
+  assert.equal(response.body.meta.figmaImagePrepared, true)
+  assert.equal(response.body.meta.webImagePrepared, true)
+  assert.equal(JSON.stringify(response.body).includes('data:image'), false)
+  assert.equal(response.body.review.visualDifferences[0].title, 'Hero media differs')
 })
 
 function createQaResult() {
@@ -176,7 +219,7 @@ function createQaResult() {
       status: 'success',
       result: {
         meta: { payloadVersion: '1.0', webUrl: 'https://example.com', figmaNodeId: '1:2', openAiCalled: false },
-        figma: { displayImageUrl: '/api/figma/render/render-1', localImagePath: '.cache/figma/renders/render-1.png', figmaStructure: { raw: true } },
+        figma: { displayImageUrl: '/api/figma/render/render-1', localImagePath: '.cache/figma/renders/render-1.png', renderId: 'render-1', figmaStructure: { raw: true } },
         web: { displayImageUrl: '/api/visual/screenshot/aaaaaaaaaaaaaaaaaaaaaaaa.png', screenshot: { dataUrl: 'data:image/png;base64,AAAA' } },
         comparison: {
           differenceCount: 3,

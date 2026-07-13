@@ -60,6 +60,7 @@ test('history stores and restores combined sessions', () => {
         mustFix: [],
         verify: [{ category: 'media', title: '미디어 확인', description: '의도 확인', evidence: ['video'], severity: 'warning' }],
         developerNotes: [{ category: 'tech', title: '개발 확인', description: '확인', evidence: [], severity: 'check' }],
+        visualDifferences: [{ area: 'Main Visual', category: 'Media', title: 'Hero KV 비주얼 차이', summary: '이미지와 영상 차이', figmaValue: 'Image', webValue: 'Video', severity: 'warning', confidence: 'high', order: 0 }],
         clientReplyDraft: '확인 후 진행하겠습니다.',
       },
     },
@@ -77,4 +78,5 @@ test('history stores and restores combined sessions', () => {
   assert.equal(item.aiReview.meta.model, 'gpt-4.1-mini')
   assert.equal(item.aiReview.review.releaseDecision, 'caution')
   assert.equal(item.aiReview.review.verify[0].title, '미디어 확인')
+  assert.equal(item.aiReview.review.visualDifferences[0].title, 'Hero KV 비주얼 차이')
 })

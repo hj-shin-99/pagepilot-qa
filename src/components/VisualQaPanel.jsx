@@ -1,6 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
-  countIssueCards,
   createActionItems,
   createDifferenceItems,
   createFigmaImageUrl,
@@ -12,9 +11,10 @@ import {
   createWebDisplayImageUrl,
 } from '../utils/visualQa'
 
-function VisualQaPanel({ result, summary, copyStatus, onCopyResult, aiReview, aiReviewState = 'idle' }) {
+function VisualQaPanel({ result, summary, copyStatus, onCopyResult, aiReview }) {
+  const [selectedIssueId, setSelectedIssueId] = useState('')
+  const [highlight, setHighlight] = useState({ figma: null, web: null })
   const cards = createVisualIssueCards(result)
-  const counts = countIssueCards(cards)
   const meta = result.meta || {}
   const aiHints = result.aiHints || {}
   const comparison = result.comparison || {}
@@ -22,9 +22,12 @@ function VisualQaPanel({ result, summary, copyStatus, onCopyResult, aiReview, ai
   const media = createMediaSummary(aiHints)
   const figmaImage = createFigmaImageUrl(result.figma)
   const webImage = createWebDisplayImageUrl(result.web)
-  const displayReview = createDisplayReview(aiReview, cards, counts)
-  const displayIssues = createDisplayIssues(displayReview, cards)
-  const aiMeta = aiReview?.meta || {}
+  const differenceItems = createDifferenceListItems(result, aiReview)
+
+  const handleSelectIssue = (item) => {
+    setSelectedIssueId(item.id)
+    setHighlight({ figma: item.figmaYRatio, web: item.webYRatio })
+  }
 
   return (
     <section className="section-stack visual-qa-panel" aria-label="Visual QA 결과">
@@ -32,7 +35,7 @@ function VisualQaPanel({ result, summary, copyStatus, onCopyResult, aiReview, ai
         <div className="audit-header-top">
           <div>
             <p className="eyebrow">Visual QA · {formatDate(meta.createdAt)}</p>
-            <h2>{result.web?.page?.title || 'Canonical Visual QA 결과'}</h2>
+            <h2>{result.web?.page?.title || 'Visual QA 결과'}</h2>
             <p className="target-url">{meta.webUrl}</p>
           </div>
           <button className="secondary-button" type="button" onClick={onCopyResult}>
@@ -42,36 +45,15 @@ function VisualQaPanel({ result, summary, copyStatus, onCopyResult, aiReview, ai
         {copyStatus ? <p className="copy-status">{copyStatus}</p> : null}
       </header>
 
-      <ReleaseDecisionCard review={displayReview} counts={counts} meta={aiMeta} state={aiReviewState} />
+      <ImageComparisonCard figmaImage={figmaImage} webImage={webImage} highlight={highlight} />
 
-      <KeyIssueList issues={displayIssues} />
-
-      <ImageComparisonCard figmaImage={figmaImage} webImage={webImage} />
+      <DifferenceList items={differenceItems} selectedIssueId={selectedIssueId} onSelectIssue={handleSelectIssue} />
 
       <details className="detail-card visual-detail-accordion">
         <summary>
-          <span>세부 비교 보기</span>
+          <span>세부 정보 보기</span>
           <strong>Hero · CTA · Price · Media · Text Difference · System</strong>
         </summary>
-
-        <section className="visual-detail-section">
-          <h3>규칙 기반 검사 결과</h3>
-          <ul className="visual-card-list">
-            {cards.map((card) => (
-              <li className={`visual-issue-card ${card.severity}`} key={`${card.category}-${card.title}-${card.detail}-${card.entityKey}`}>
-                <span>{card.severity}</span>
-                <strong>{card.title}</strong>
-                <p>{card.detail}</p>
-                {card.technical ? (
-                  <details className="visual-technical-detail">
-                    <summary>상세 보기</summary>
-                    <small>{card.technical}</small>
-                  </details>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        </section>
 
         <section className="visual-two-column">
           <VisualSectionCard title="Hero" note="핵심 영역 요약">
@@ -108,194 +90,291 @@ function VisualQaPanel({ result, summary, copyStatus, onCopyResult, aiReview, ai
             <EntityList items={createDifferenceItems(comparison)} emptyText="문구 차이가 없습니다." />
           </VisualSectionCard>
 
-          <VisualSectionCard title="System" note="분석 요약 및 시스템 메타">
+          <VisualSectionCard title="System" note="개발 확인용 메타">
             <p className="panel-note relaxed-note">{summary}</p>
-            <KeyValue label="OpenAI 호출" value={aiMeta.openAiCalled === true ? '있음' : '없음'} />
-            <KeyValue label="OpenAI Model" value={aiMeta.model || '-'} />
-            <KeyValue label="Fallback" value={aiMeta.fallbackUsed ? '사용' : '미사용'} />
             <KeyValue label="Payload Version" value={meta.payloadVersion} />
             <KeyValue label="Playwright Runs" value={meta.playwrightRunCount} />
             <KeyValue label="Figma Cache" value={meta.figmaCacheSource} />
             <KeyValue label="Figma Render Cache" value={meta.figmaRenderCacheSource} />
           </VisualSectionCard>
         </section>
+
+        <section className="visual-detail-section">
+          <h3>규칙 기반 상세</h3>
+          <ul className="visual-card-list">
+            {cards.map((card) => (
+              <li className={`visual-issue-card ${card.severity}`} key={`${card.category}-${card.title}-${card.detail}-${card.entityKey}`}>
+                <span>{card.severity}</span>
+                <strong>{card.title}</strong>
+                <p>{card.detail}</p>
+                {card.technical ? (
+                  <details className="visual-technical-detail">
+                    <summary>상세 보기</summary>
+                    <small>{card.technical}</small>
+                  </details>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </section>
       </details>
     </section>
   )
 }
 
-function ReleaseDecisionCard({ review, counts, meta, state }) {
-  if (state === 'loading') {
-    return (
-      <article className="detail-card release-decision-card caution">
-        <div className="section-title-row">
-          <h3>배포 판단</h3>
-          <span>OpenAI 검토 중</span>
-        </div>
-        <p className="panel-note relaxed-note">규칙 기반 결과를 바탕으로 배포 판단을 생성하고 있습니다.</p>
-      </article>
-    )
-  }
-
+function ImageComparisonCard({ figmaImage, webImage, highlight }) {
   return (
-    <article className={`detail-card release-decision-card ${review.releaseDecision}`}>
-      <div className="section-title-row">
-        <div>
-          <h3>배포 판단</h3>
-          <p className="panel-note relaxed-note">{formatDecisionCopy(review.releaseDecision)}</p>
+    <article className="detail-card visual-image-card visual-image-card-primary">
+      <div className="compare-scroll-shell visual-compare-shell">
+        <div className="compare-grid">
+          <ImagePane imageAlt="Figma 시안" imageSrc={figmaImage} label="Figma 시안" placeholder="Figma render 이미지가 없습니다." highlightRatio={highlight.figma} />
+          <ImagePane imageAlt="Web 캡처" imageSrc={webImage} label="Web 캡처" placeholder="Web screenshot 이미지가 없습니다." highlightRatio={highlight.web} />
         </div>
-        <span>{formatDecision(review.releaseDecision)}</span>
       </div>
-      <p className="summary-box compact-summary">{review.summary}</p>
-      <div className="release-decision-metrics" aria-label="AI Review 및 규칙 기반 개수">
-        <MetricPill label="반드시 수정" value={review.mustFix.length} tone="critical" />
-        <MetricPill label="확인 필요" value={review.verify.length} tone="warning" />
-        <MetricPill label="Critical" value={counts.critical} tone="critical" />
-        <MetricPill label="Warning" value={counts.warning} tone="warning" />
-        <MetricPill label="Check" value={counts.check} tone="check" />
-      </div>
-      {meta.fallbackUsed ? <p className="panel-note relaxed-note">AI fallback 결과로, 규칙 기반 검사 결과를 우선 반영했습니다.</p> : null}
     </article>
   )
 }
 
-function MetricPill({ label, value, tone }) {
+function DifferenceList({ items, selectedIssueId, onSelectIssue }) {
   return (
-    <span className={`metric-pill ${tone}`}>
-      {label} <strong>{value}</strong>
-    </span>
-  )
-}
-
-function KeyIssueList({ issues }) {
-  return (
-    <article className="detail-card key-issues-card">
+    <article className="detail-card difference-list-card">
       <div className="section-title-row">
-        <h3>핵심 발견 문제</h3>
-        <span>{issues.length}개</span>
+        <h3>다른 부분</h3>
+        <span>{items.length}개</span>
       </div>
-      {issues.length > 0 ? (
-        <ul className="key-issue-list">
-          {issues.map((issue, index) => (
-            <li className={`key-issue-row ${issue.severity}`} key={`${index}-${issue.title}-${issue.description}`}>
-              <span>{formatIssueSeverity(issue.severity)}</span>
-              <strong>{issue.title || issue.category}</strong>
-              <p>{issue.description}</p>
-              <IssueEvidence evidence={issue.evidence} />
+      {items.length > 0 ? (
+        <ol className="difference-list">
+          {items.map((item, index) => (
+            <li key={item.id}>
+              <button className={`difference-item ${selectedIssueId === item.id ? 'is-selected' : ''}`} type="button" onClick={() => onSelectIssue(item)}>
+                <span className="difference-index">{index + 1}</span>
+                <span className="difference-copy">
+                  <strong>{item.area}</strong>
+                  <span>{item.message}</span>
+                  <DifferenceValues figmaValue={item.figmaValue} webValue={item.webValue} />
+                </span>
+              </button>
             </li>
           ))}
-        </ul>
-      ) : <p className="empty-row">기본 화면에 표시할 핵심 문제가 없습니다.</p>}
+        </ol>
+      ) : <p className="empty-row">표시할 차이를 찾지 못했습니다.</p>}
     </article>
   )
 }
 
-function IssueEvidence({ evidence = [] }) {
-  if (!evidence.length) return null
+function DifferenceValues({ figmaValue, webValue }) {
+  if (!figmaValue && !webValue) return null
   return (
-    <dl className="key-issue-evidence">
-      {evidence.map((item, index) => {
-        const [label, ...rest] = String(item).split(':')
-        return <div key={`${index}-${item}`}><dt>{rest.length ? label : '근거'}</dt><dd>{rest.length ? rest.join(':').trim() : item}</dd></div>
-      })}
+    <dl className="difference-values">
+      {figmaValue ? <div><dt>Figma</dt><dd>{figmaValue}</dd></div> : null}
+      {webValue ? <div><dt>Web</dt><dd>{webValue}</dd></div> : null}
     </dl>
   )
 }
 
-function formatDecision(value) {
-  if (value === 'ready') return 'Ready'
-  if (value === 'blocked') return 'Blocked'
-  return 'Caution'
-}
+function ImagePane({ imageAlt, imageSrc, label, placeholder, highlightRatio }) {
+  const [failed, setFailed] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+  const frameRef = useRef(null)
+  const showImage = imageSrc && !failed
 
-function formatDecisionCopy(value) {
-  if (value === 'ready') return '배포 가능'
-  if (value === 'blocked') return '배포 전 수정 필요'
-  return '확인 후 배포 권장'
-}
+  useEffect(() => {
+    if (!Number.isFinite(Number(highlightRatio)) || !frameRef.current) return
+    const frame = frameRef.current
+    const maxScroll = Math.max(0, frame.scrollHeight - frame.clientHeight)
+    frame.scrollTo({ top: maxScroll * Math.max(0, Math.min(1, Number(highlightRatio))), behavior: 'smooth' })
+  }, [highlightRatio])
 
-function formatIssueSeverity(value) {
-  if (value === 'critical') return '수정 필요'
-  if (value === 'check') return '참고'
-  return '확인 필요'
-}
-
-function ImageComparisonCard({ figmaImage, webImage }) {
   return (
-    <article className="detail-card visual-image-card">
-      <div className="section-title-row">
-        <div>
-          <h3>이미지 비교</h3>
-          <p className="panel-note relaxed-note">Figma render와 Web screenshot을 나란히 확인합니다.</p>
-        </div>
+    <section className="comparison-pane" aria-label={label}>
+      <div className="comparison-pane-head">
+        <strong>{label}</strong>
       </div>
-      <div className="compare-scroll-shell visual-compare-shell">
-        <div className="compare-grid">
-          <ImagePane imageAlt="Figma render" imageSrc={figmaImage} label="Figma" placeholder="Figma render 이미지가 없습니다." />
-          <ImagePane imageAlt="Web screenshot" imageSrc={webImage} label="Web" placeholder="Web screenshot 이미지가 없습니다." />
-        </div>
+      <div ref={frameRef} className={`comparison-image-frame mockup-ai-image-frame ${showImage ? '' : 'is-empty'}`}>
+        {Number.isFinite(Number(highlightRatio)) ? <span className="image-highlight-band" style={{ top: `${Math.max(0, Math.min(1, Number(highlightRatio))) * 100}%` }} /> : null}
+        {showImage ? (
+          <div className="comparison-image-stage mockup-ai-image-stage">
+            {!loaded ? <span className="comparison-image-loading">이미지 로딩 중...</span> : null}
+            <a href={imageSrc} target="_blank" rel="noreferrer" aria-label={`${label} 이미지 새 탭에서 열기`}>
+              <img src={imageSrc} alt={imageAlt} onLoad={() => setLoaded(true)} onError={() => setFailed(true)} />
+            </a>
+          </div>
+        ) : (
+          <div className="comparison-placeholder mockup-ai-image-placeholder">
+            <span>{failed ? '이미지를 불러오지 못했습니다.' : placeholder}</span>
+            {imageSrc ? (
+              <details className="visual-technical-detail">
+                <summary>HTTP 확인용 URL</summary>
+                <small>{imageSrc}</small>
+              </details>
+            ) : null}
+          </div>
+        )}
       </div>
-    </article>
+    </section>
   )
 }
 
-function createDisplayReview(aiReview, cards, counts) {
-  const review = aiReview?.review
-  if (review && !aiReview?.meta?.fallbackUsed) return review
+function createDifferenceListItems(result = {}, aiReview = null) {
+  const comparison = result.comparison || {}
+  const aiHints = result.aiHints || {}
+  const items = []
 
-  const criticalCards = cards.filter((card) => card.severity === 'critical')
-  const warningCards = cards.filter((card) => card.severity === 'warning')
-  const releaseDecision = criticalCards.length > 0 ? 'blocked' : warningCards.length > 0 ? 'caution' : 'ready'
-
-  return {
-    releaseDecision,
-    summary: createRuleBasedSummary(releaseDecision, counts),
-    mustFix: criticalCards.slice(0, 4).map((card) => createIssueFromCard(card, 'critical')),
-    verify: warningCards.concat(cards.filter((card) => card.severity === 'check')).slice(0, 6).map((card) => createIssueFromCard(card, card.severity === 'check' ? 'check' : 'warning')),
-    developerNotes: [],
-  }
-}
-
-function createDisplayIssues(review, cards) {
-  const aiIssues = [...(review.mustFix || []), ...(review.verify || [])]
-  if (aiIssues.length > 0) return dedupeIssues(aiIssues.map(normalizeIssueForDisplay))
-  return dedupeIssues(cards.filter((card) => card.severity !== 'check').slice(0, 6).map((card) => createIssueFromCard(card, card.severity === 'critical' ? 'critical' : 'warning')))
-}
-
-function createRuleBasedSummary(decision, counts) {
-  if (decision === 'blocked') return `규칙 기반 검사에서 Critical ${counts.critical}건이 확인되어 배포 전 수정이 필요합니다.`
-  if (decision === 'caution') return `규칙 기반 검사에서 Warning ${counts.warning}건이 확인되었습니다. 확인 후 배포를 권장합니다.`
-  return '규칙 기반 검사에서 배포를 막는 주요 문제가 확인되지 않았습니다.'
-}
-
-function createIssueFromCard(card, severity) {
-  return normalizeIssueForDisplay({
-    category: card.category,
-    title: card.title,
-    description: card.detail,
-    evidence: [card.figmaText ? `Figma: ${card.figmaText}` : '', card.webText ? `Web: ${card.webText}` : ''].filter(Boolean),
-    severity,
+  const differences = Array.isArray(comparison.differences) ? comparison.differences : []
+  differences.forEach((difference, index) => {
+    items.push({
+      id: `difference-${index}-${normalizeKey(difference.figmaText || difference.text)}-${normalizeKey(difference.webText)}`,
+      type: classifyDifferenceType(difference),
+      area: inferIssueArea(difference),
+      message: createShortDifferenceMessage(difference),
+      figmaValue: difference.figmaText || difference.text || '',
+      webValue: difference.webText || '',
+      figmaYRatio: getYRatio(difference.figmaYRatio ?? difference.yRatio ?? difference.figmaNode?.yRatio),
+      webYRatio: getYRatio(difference.webYRatio ?? difference.webElement?.yRatio ?? difference.webElement?.positionRatio),
+      sortRank: getIssueSortRank(difference),
+    })
   })
-}
 
-function normalizeIssueForDisplay(issue = {}) {
-  return {
-    category: issue.category || 'tech',
-    title: issue.title || issue.category || '확인 필요 항목',
-    description: issue.description || issue.detail || '',
-    evidence: Array.isArray(issue.evidence) ? issue.evidence.filter(Boolean).slice(0, 4) : [],
-    severity: issue.severity === 'critical' ? 'critical' : issue.severity === 'check' ? 'check' : 'warning',
+  const heroCtaGroup = aiHints.heroCtaGroup || {}
+  if (Number(heroCtaGroup.countDifference || 0) > 0) {
+    items.push({
+      id: 'hero-cta-count',
+      type: 'cta',
+      area: 'Hero CTA',
+      message: createCtaCountMessage(heroCtaGroup),
+      figmaValue: String(heroCtaGroup.figma?.count ?? ''),
+      webValue: String(heroCtaGroup.web?.count ?? ''),
+      sortRank: 15,
+    })
   }
+
+  const heroMediaGroup = aiHints.heroMediaGroup || {}
+  if (heroMediaGroup.comparisonHint) {
+    items.push({
+      id: 'hero-media-type',
+      type: 'media',
+      area: 'Hero Media',
+      message: createMediaMessage(heroMediaGroup),
+      figmaValue: formatList(heroMediaGroup.figma?.mediaTypes),
+      webValue: formatList(heroMediaGroup.web?.mediaTypes),
+      sortRank: 40,
+    })
+  }
+
+  const aiIssues = [...(aiReview?.review?.mustFix || []), ...(aiReview?.review?.verify || [])]
+  aiIssues.forEach((issue, index) => {
+    if (!isVisualAiIssue(issue)) return
+    items.push({
+      id: `ai-${index}-${normalizeKey(issue.title)}`,
+      type: issue.category || 'check',
+      area: formatIssueArea(issue.category),
+      message: createShortAiIssueMessage(issue),
+      figmaValue: extractEvidenceValue(issue.evidence, 'figma'),
+      webValue: extractEvidenceValue(issue.evidence, 'web'),
+      sortRank: getAiIssueSortRank(issue),
+    })
+  })
+
+  return dedupeDifferenceItems(items)
+    .sort((first, second) => first.sortRank - second.sortRank)
+    .slice(0, 12)
 }
 
-function dedupeIssues(issues) {
+function isVisualAiIssue(issue = {}) {
+  return ['price', 'text', 'cta', 'media'].includes(issue.category)
+}
+
+function classifyDifferenceType(item = {}) {
+  const text = `${item.figmaText || ''} ${item.webText || ''} ${item.text || ''}`
+  if (/[0-9][0-9,._%원$€£年月日-]*/.test(text)) return 'price'
+  if (/cta|button|action/i.test(`${item.role || ''} ${item.sectionRole || ''} ${item.category || ''}`)) return 'cta'
+  return 'text'
+}
+
+function createShortDifferenceMessage(item = {}) {
+  const type = classifyDifferenceType(item)
+  if (type === 'price') return '금액이 다릅니다.'
+  if (type === 'cta') return 'CTA 문구가 다릅니다.'
+  return '문구가 다릅니다.'
+}
+
+function createCtaCountMessage(group = {}) {
+  const figmaCount = Number(group.figma?.count || 0)
+  const webCount = Number(group.web?.count || 0)
+  if (figmaCount > webCount) return `Web에 CTA가 ${figmaCount - webCount}개 부족합니다.`
+  return 'CTA 개수가 다릅니다.'
+}
+
+function createMediaMessage(group = {}) {
+  const figmaTypes = formatList(group.figma?.mediaTypes)
+  const webTypes = formatList(group.web?.mediaTypes)
+  if (figmaTypes !== '-' && webTypes !== '-') return `Figma는 ${figmaTypes}, Web은 ${webTypes}입니다.`
+  return '미디어 구성이 다릅니다.'
+}
+
+function createShortAiIssueMessage(issue = {}) {
+  if (issue.category === 'price') return '금액이 다릅니다.'
+  if (issue.category === 'cta') return 'CTA 문구가 다릅니다.'
+  if (issue.category === 'media') return '미디어 구성이 다릅니다.'
+  return '문구가 다릅니다.'
+}
+
+function inferIssueArea(item = {}) {
+  const text = `${item.sectionRole || ''} ${item.section || ''} ${item.sectionPath || ''} ${item.role || ''}`.toLowerCase()
+  if (/hero|main|kv|top/.test(text)) return '메인 KV'
+  if (/cta|button|action/.test(text)) return 'CTA'
+  if (classifyDifferenceType(item) === 'price') return '금액'
+  return '콘텐츠'
+}
+
+function formatIssueArea(category) {
+  if (category === 'price') return '금액'
+  if (category === 'cta') return 'CTA'
+  if (category === 'media') return '미디어'
+  return '콘텐츠'
+}
+
+function getIssueSortRank(item = {}) {
+  const yRatio = getYRatio(item.yRatio ?? item.figmaYRatio ?? item.webYRatio ?? item.figmaNode?.yRatio ?? item.webElement?.yRatio)
+  if (yRatio !== null) return yRatio * 100
+  const type = classifyDifferenceType(item)
+  if (inferIssueArea(item) === '메인 KV') return 10
+  if (type === 'cta') return 20
+  if (type === 'price') return 50
+  return 30
+}
+
+function getAiIssueSortRank(issue = {}) {
+  if (issue.category === 'text') return 30
+  if (issue.category === 'cta') return 20
+  if (issue.category === 'price') return 50
+  if (issue.category === 'media') return 40
+  return 80
+}
+
+function dedupeDifferenceItems(items) {
   const seen = new Set()
-  return issues.filter((issue) => {
-    const key = `${issue.title}:${issue.description}`.toLowerCase()
+  return items.filter((item) => {
+    const key = `${normalizeKey(item.type)}:${normalizeKey(item.figmaValue)}:${normalizeKey(item.webValue)}:${normalizeKey(item.message)}`
     if (seen.has(key)) return false
     seen.add(key)
     return true
   })
+}
+
+function extractEvidenceValue(evidence = [], side) {
+  if (!Array.isArray(evidence)) return ''
+  const match = evidence.find((item) => new RegExp(`^${side}:`, 'i').test(String(item)))
+  return match ? String(match).replace(/^\w+:/, '').trim() : ''
+}
+
+function getYRatio(value) {
+  const number = Number(value)
+  return Number.isFinite(number) && number >= 0 && number <= 1 ? number : null
+}
+
+function normalizeKey(value) {
+  return String(value || '').toLowerCase().replace(/[\s\u00a0.,:;!?"'()[\]{}<>_/\\-]/g, '')
 }
 
 function VisualSectionCard({ title, note, children }) {
@@ -351,40 +430,6 @@ function OtherInteractions({ items }) {
       <summary>기타 인터랙션 {items.length}개</summary>
       <EntityList items={items} emptyText="기타 인터랙션이 없습니다." />
     </details>
-  )
-}
-
-function ImagePane({ imageAlt, imageSrc, label, placeholder }) {
-  const [failed, setFailed] = useState(false)
-  const [loaded, setLoaded] = useState(false)
-  const showImage = imageSrc && !failed
-
-  return (
-    <section className="comparison-pane" aria-label={label}>
-      <div className="comparison-pane-head">
-        <strong>{label}</strong>
-      </div>
-      <div className={`comparison-image-frame mockup-ai-image-frame ${showImage ? '' : 'is-empty'}`}>
-        {showImage ? (
-          <div className="comparison-image-stage mockup-ai-image-stage">
-            {!loaded ? <span className="comparison-image-loading">이미지 로딩 중...</span> : null}
-            <a href={imageSrc} target="_blank" rel="noreferrer" aria-label={`${label} 이미지 새 탭에서 열기`}>
-              <img src={imageSrc} alt={imageAlt} onLoad={() => setLoaded(true)} onError={() => setFailed(true)} />
-            </a>
-          </div>
-        ) : (
-          <div className="comparison-placeholder mockup-ai-image-placeholder">
-            <span>{failed ? '이미지를 불러오지 못했습니다.' : placeholder}</span>
-            {imageSrc ? (
-              <details className="visual-technical-detail">
-                <summary>HTTP 확인용 URL</summary>
-                <small>{imageSrc}</small>
-              </details>
-            ) : null}
-          </div>
-        )}
-      </div>
-    </section>
   )
 }
 

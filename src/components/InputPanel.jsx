@@ -29,7 +29,7 @@ function InputPanel({
 
           <h1>PagePilot QA v0.3</h1>
           <p className="lead-text">
-            Web URL을 입력하면 Tech QA를 실행합니다. Figma Frame URL을 함께 입력하면 Visual QA도 동시에 실행합니다.
+            Web URL을 입력하면 Tech QA를 실행합니다. Figma Frame URL을 함께 입력하면 Visual QA도 실행합니다.
           </p>
 
           <form className="scan-form" onSubmit={handleSubmit}>
@@ -64,15 +64,6 @@ function InputPanel({
             </button>
           </form>
 
-          <section className="panel-section" aria-label="QA 안내">
-            <div className="section-title-row compact-title-row">
-              <h3>실행 범위</h3>
-              <span>MVP</span>
-            </div>
-            <p className="panel-note">
-              Figma Frame URL이 비어 있으면 기존 `/api/scan`만 실행합니다. Figma Frame URL이 있으면 `/api/scan`과 `/api/visual/payload`를 함께 실행합니다.
-            </p>
-          </section>
         </>
       )}
     </aside>

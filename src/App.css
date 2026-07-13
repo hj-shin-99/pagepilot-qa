@@ -2595,6 +2595,245 @@
   }
 }
 
+/* Final Visual QA card padding overrides. */
+.detail-card.visual-image-card-primary {
+  padding: 16px;
+}
+
+.detail-card.difference-list-card {
+  padding: 18px;
+}
+
+.detail-card.visual-detail-accordion {
+  padding: 0;
+}
+
+/* Visual QA simplified result screen. */
+.visual-image-card-primary {
+  padding: 16px;
+}
+
+.visual-image-card-primary .visual-compare-shell {
+  height: auto;
+  min-height: 0;
+  overflow: visible;
+  border: 0;
+  background: transparent;
+}
+
+.visual-image-card-primary .compare-grid {
+  padding: 0;
+}
+
+.visual-image-card-primary .comparison-pane {
+  overflow: hidden;
+  border: 1px solid #e5edf6;
+  border-radius: 16px;
+  background: #f8fafc;
+}
+
+.visual-image-card-primary .comparison-pane-head {
+  position: static;
+  padding: 11px 13px;
+  border-bottom: 1px solid #e5edf6;
+  background: #ffffff;
+}
+
+.visual-image-card-primary .comparison-image-frame {
+  position: relative;
+  max-height: min(560px, 62vh);
+  min-height: 260px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 0;
+  border-radius: 0;
+  background: #f8fafc;
+}
+
+.visual-image-card-primary .mockup-ai-image-stage {
+  padding: 10px;
+}
+
+.visual-image-card-primary .mockup-ai-image-stage img {
+  border: 1px solid #e5edf6;
+  border-radius: 12px;
+}
+
+.image-highlight-band {
+  position: absolute;
+  right: 8px;
+  left: 8px;
+  z-index: 2;
+  height: 42px;
+  border: 2px solid #1c69d4;
+  border-radius: 12px;
+  background: rgba(28, 105, 212, 0.13);
+  box-shadow: 0 0 0 9999px rgba(15, 23, 42, 0.08);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.difference-list-card {
+  padding: 18px;
+}
+
+.difference-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.difference-item {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  border: 1px solid #e5edf6;
+  border-radius: 14px;
+  padding: 13px;
+  color: inherit;
+  background: #ffffff;
+  text-align: left;
+}
+
+.difference-item:hover,
+.difference-item.is-selected {
+  border-color: rgba(28, 105, 212, 0.36);
+  background: #f5f9ff;
+}
+
+.difference-index {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: #1c69d4;
+  background: #eaf2ff;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.difference-copy {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.difference-copy > strong {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 850;
+}
+
+.difference-copy > span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.difference-values {
+  display: grid;
+  gap: 5px;
+  margin: 4px 0 0;
+}
+
+.difference-values div {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.difference-values dt {
+  color: #667085;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.difference-values dd {
+  margin: 0;
+  color: #101828;
+  font-size: 12px;
+  font-weight: 760;
+  overflow-wrap: anywhere;
+}
+
+.visual-detail-accordion {
+  padding: 0;
+  overflow: hidden;
+}
+
+.visual-detail-accordion > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px;
+  list-style: none;
+}
+
+.visual-detail-accordion > summary::-webkit-details-marker {
+  display: none;
+}
+
+.visual-detail-accordion > summary span {
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 850;
+}
+
+.visual-detail-accordion > summary strong {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.visual-detail-accordion[open] > summary {
+  border-bottom: 1px solid #eef0f3;
+}
+
+.visual-detail-accordion > .visual-two-column,
+.visual-detail-accordion > .visual-detail-section {
+  margin: 18px;
+}
+
+.empty-state .scan-stage-list {
+  width: min(100%, 320px);
+  margin: 18px auto 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.empty-state .scan-stage-list li {
+  width: fit-content;
+  min-width: 210px;
+  margin: 0 auto;
+}
+
+@media (max-width: 760px) {
+  .visual-detail-accordion > summary {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .difference-item,
+  .difference-values div {
+    grid-template-columns: 1fr;
+  }
+
+  .difference-index {
+    width: 26px;
+    height: 26px;
+  }
+}
+
 .visual-qa-panel {
   padding-bottom: 28px;
 }

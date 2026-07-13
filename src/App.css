@@ -3626,20 +3626,131 @@
   font-size: 12px;
 }
 
+.release-decision-card.blocked,
 .ai-review-card.blocked {
   border-color: rgba(180, 35, 24, 0.24);
 }
 
+.release-decision-card.caution,
 .ai-review-card.caution {
   border-color: rgba(181, 71, 8, 0.24);
 }
 
+.release-decision-card.ready,
 .ai-review-card.ready {
   border-color: rgba(2, 122, 72, 0.24);
 }
 
 .ai-review-columns {
   align-items: start;
+}
+
+.release-decision-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.metric-pill {
+  align-items: center;
+  border: 1px solid #e4e7ec;
+  border-radius: 999px;
+  color: #475467;
+  display: inline-flex;
+  font-size: 12px;
+  gap: 6px;
+  padding: 6px 10px;
+}
+
+.metric-pill.critical {
+  background: #fff4f3;
+  border-color: #fecdca;
+  color: #b42318;
+}
+
+.metric-pill.warning {
+  background: #fff8eb;
+  border-color: #fedf89;
+  color: #b54708;
+}
+
+.metric-pill.check {
+  background: #f0f9ff;
+  border-color: #b9e6fe;
+  color: #026aa2;
+}
+
+.key-issue-list {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.key-issue-row {
+  border: 1px solid #eaecf0;
+  border-radius: 14px;
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+}
+
+.key-issue-row > span {
+  color: #667085;
+  font-size: 12px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.key-issue-row.critical > span {
+  color: #b42318;
+}
+
+.key-issue-row.warning > span {
+  color: #b54708;
+}
+
+.key-issue-row.check > span {
+  color: #026aa2;
+}
+
+.key-issue-row p {
+  color: #475467;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.key-issue-evidence {
+  display: grid;
+  gap: 4px;
+  margin: 4px 0 0;
+}
+
+.key-issue-evidence div {
+  display: grid;
+  gap: 2px;
+}
+
+.key-issue-evidence dt {
+  color: #667085;
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.key-issue-evidence dd {
+  color: #101828;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.visual-detail-accordion > summary {
+  cursor: pointer;
+}
+
+.visual-detail-section {
+  margin-top: 18px;
 }
 
 @keyframes loading-bar-sweep {

@@ -21,7 +21,23 @@ test('app default scan flow calls integrated qa endpoint only', () => {
 
 test('visual panel renders AI Review from review object', () => {
   const source = fs.readFileSync('src/components/VisualQaPanel.jsx', 'utf8')
-  assert.equal(source.includes('AI 종합 검토'), true)
+  assert.equal(source.includes('배포 판단'), true)
   assert.equal(source.includes('aiReview?.review'), true)
-  assert.equal(source.includes('회신 초안 보기'), true)
+  assert.equal(source.includes('회신 초안 보기'), false)
+  assert.equal(source.includes('clientReplyDraft'), false)
+})
+
+test('visual panel keeps detailed comparison behind accordion', () => {
+  const source = fs.readFileSync('src/components/VisualQaPanel.jsx', 'utf8')
+  const imageIndex = source.indexOf('<ImageComparisonCard')
+  const detailIndex = source.indexOf('세부 비교 보기')
+  assert.equal(source.includes('핵심 발견 문제'), true)
+  assert.equal(detailIndex > imageIndex, true)
+  assert.equal(source.indexOf('title="Hero"') > detailIndex, true)
+  assert.equal(source.indexOf('title="CTA"') > detailIndex, true)
+  assert.equal(source.indexOf('title="Price"') > detailIndex, true)
+  assert.equal(source.indexOf('title="Media"') > detailIndex, true)
+  assert.equal(source.indexOf('title="Text Difference"') > detailIndex, true)
+  assert.equal(source.indexOf('title="System"') > detailIndex, true)
+  assert.equal(source.includes('Payload Version'), true)
 })

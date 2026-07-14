@@ -34,6 +34,7 @@ export function createAiReviewService(options = {}) {
             model,
             visionUsed: imageInputCount > 0,
             imageInputCount,
+            visionInputSummary: createVisionInputSummary(payload),
             aiReviewDurationMs: Date.now() - startedAt,
           },
           review: normalizeAiReview(parseJsonObject(rawText), payload),
@@ -48,6 +49,7 @@ export function createAiReviewService(options = {}) {
         const wrapped = createAiReviewError('openai_review_failed', error instanceof Error ? error.message : 'AI Review 호출에 실패했습니다.', true)
         wrapped.visionUsed = imageInputCount > 0
         wrapped.imageInputCount = imageInputCount
+        wrapped.visionInputSummary = createVisionInputSummary(payload)
         wrapped.aiReviewDurationMs = Date.now() - startedAt
         wrapped.cause = error
         throw wrapped
@@ -64,7 +66,7 @@ export function normalizeAiReview(value, payload = {}) {
     mustFix: normalizeIssueArray(input.mustFix, 'critical'),
     verify: normalizeIssueArray(input.verify, 'warning'),
     developerNotes: normalizeIssueArray(input.developerNotes, 'check'),
-    visualDifferences: normalizeVisualDifferenceArray(input.visualDifferences),
+    visualDifferences: normalizeVisualDifferenceArray(input.visualDifferences, payload),
     clientReplyDraft: normalizeKoreanText(input.clientReplyDraft, createFallbackClientReply(payload)),
   }
 
@@ -116,21 +118,25 @@ function normalizeIssueArray(value, defaultSeverity) {
   return dedupeIssues(value.map((item) => normalizeIssue(item, defaultSeverity)).filter(Boolean)).slice(0, 10)
 }
 
-function normalizeVisualDifferenceArray(value) {
+function normalizeVisualDifferenceArray(value, payload = {}) {
   if (!Array.isArray(value)) return []
-  return dedupeVisualDifferences(value.map(normalizeVisualDifference).filter(Boolean)).slice(0, 10)
+  const normalized = value.map(normalizeVisualDifference).filter(Boolean)
+  return dedupeVisualDifferences(normalized.filter((item) => isUsefulVisualDifference(item, payload))).slice(0, 6)
 }
 
 function normalizeVisualDifference(item, index) {
   if (!item || typeof item !== 'object') return null
   const category = normalizeVisualDifferenceCategory(item.category)
+  const area = normalizeVisualArea(item.area)
+  const figmaValue = normalizeKoreanVisualText(item.figmaValue || item.figma, category, 'figma')
+  const webValue = normalizeKoreanVisualText(item.webValue || item.web, category, 'web')
   return {
-    area: normalizeString(item.area).slice(0, 80) || 'Page Content',
+    area,
     category,
-    title: normalizeString(item.title).slice(0, 160) || `${category} 차이 확인`,
-    summary: normalizeString(item.summary || item.description).slice(0, 500),
-    figmaValue: normalizeString(item.figmaValue || item.figma).slice(0, 500),
-    webValue: normalizeString(item.webValue || item.web).slice(0, 500),
+    title: normalizeVisualTitle(item.title, category, area),
+    summary: normalizeVisualSummary(item.summary || item.description, category),
+    figmaValue,
+    webValue,
     severity: normalizeSeverity(item.severity),
     confidence: normalizeConfidence(item.confidence),
     order: Number.isFinite(Number(item.order)) ? Number(item.order) : index,
@@ -235,6 +241,69 @@ function normalizeVisualDifferenceCategory(value) {
   return 'Layout'
 }
 
+function normalizeVisualArea(value) {
+  const text = normalizeString(value).slice(0, 80)
+  const lower = text.toLowerCase()
+  if (/hero|main visual|kv|key visual|메인|히어로/.test(lower)) return '메인 비주얼'
+  if (/navigation|nav|gnb|header|헤더|내비/.test(lower)) return '상단 내비게이션'
+  if (/footer|legal|푸터|하단/.test(lower)) return '푸터'
+  if (/card|product|content|section|본문|콘텐츠/.test(lower)) return '본문 콘텐츠'
+  return text || '페이지 콘텐츠'
+}
+
+function normalizeVisualTitle(value, category, area) {
+  const text = normalizeString(value).slice(0, 160)
+  if (text && hasKorean(text) && !isGenericEnglishVisualText(text)) return text
+  if (category === 'Media' || category === 'Image') return area === '메인 비주얼' ? '히어로/KV 비주얼이 다릅니다.' : '이미지 콘텐츠가 다릅니다.'
+  if (category === 'CTA') return area === '메인 비주얼' ? '히어로 CTA 구성이 다릅니다.' : 'CTA 구성이 다릅니다.'
+  if (category === 'Price') return '가격 정보가 다릅니다.'
+  if (category === 'Text') return area === '메인 비주얼' ? '히어로 주요 문구가 다릅니다.' : '주요 문구가 다릅니다.'
+  if (category === 'Missing') return '주요 콘텐츠 노출이 다릅니다.'
+  return '레이아웃 구성이 다릅니다.'
+}
+
+function normalizeVisualSummary(value, category) {
+  const text = normalizeString(value).slice(0, 500)
+  if (text && hasKorean(text) && !isGenericEnglishVisualText(text)) return text
+  if (category === 'Media' || category === 'Image') return 'Figma와 Web에서 보이는 주요 시각 콘텐츠가 서로 다릅니다.'
+  if (category === 'CTA') return 'Figma와 Web의 CTA 구성 또는 노출 값이 다릅니다.'
+  if (category === 'Price') return 'Figma와 Web의 가격 또는 핵심 숫자 값이 다릅니다.'
+  if (category === 'Text') return 'Figma와 Web의 주요 문구 값이 다릅니다.'
+  if (category === 'Missing') return '한쪽에서 확인되는 주요 콘텐츠가 다른 쪽에는 보이지 않습니다.'
+  return 'Figma와 Web의 주요 배치 또는 섹션 구성이 다릅니다.'
+}
+
+function normalizeKoreanVisualText(value, category, side) {
+  const text = normalizeString(value).slice(0, 500)
+  if (!text) return side === 'figma' ? 'Figma에서 확인되지 않음' : 'Web에서 확인되지 않음'
+  if (hasKorean(text)) return replaceCommonEnglishTerms(text)
+  const replaced = replaceCommonEnglishTerms(text)
+  if (hasKorean(replaced)) return replaced
+  if (category === 'Media' || category === 'Image') return `${replaced} 시각 콘텐츠`
+  if (category === 'CTA') return `${replaced} CTA`
+  if (category === 'Price') return `${replaced} 가격 정보`
+  if (category === 'Text') return `${replaced} 문구`
+  return replaced
+}
+
+function replaceCommonEnglishTerms(value) {
+  return normalizeString(value)
+    .replace(/hero\s*\/\s*kv|hero|key visual|main visual/gi, 'Hero/KV')
+    .replace(/vehicle exterior|car exterior|exterior/gi, '차량 외관')
+    .replace(/vehicle interior|car interior|interior/gi, '차량 실내')
+    .replace(/vehicle|car/gi, '차량')
+    .replace(/video/gi, '영상')
+    .replace(/image|photo/gi, '이미지')
+    .replace(/background/gi, '배경')
+    .replace(/person|people/gi, '인물')
+    .replace(/product/gi, '제품')
+    .replace(/text|headline|copy/gi, '문구')
+    .replace(/button/gi, '버튼')
+    .replace(/price|amount/gi, '가격')
+    .replace(/layout/gi, '레이아웃')
+    .replace(/missing/gi, '누락')
+}
+
 function normalizeSeverity(value) {
   const severity = normalizeString(value).toLowerCase()
   return ['critical', 'warning', 'check'].includes(severity) ? severity : 'warning'
@@ -251,13 +320,82 @@ function dedupeIssues(items) {
 }
 
 function dedupeVisualDifferences(items) {
-  const seen = new Set()
-  return items.filter((item) => {
-    const key = `${item.area}:${item.category}:${item.title}:${item.figmaValue}:${item.webValue}`.toLowerCase()
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
+  const selected = new Map()
+  items.forEach((item) => {
+    const key = createVisualDifferenceKey(item)
+    const current = selected.get(key)
+    if (!current || scoreVisualDifference(item) > scoreVisualDifference(current)) selected.set(key, item)
   })
+  return Array.from(selected.values()).sort((first, second) => first.order - second.order)
+}
+
+function isUsefulVisualDifference(item, payload = {}) {
+  const searchable = `${item.title} ${item.summary} ${item.figmaValue} ${item.webValue}`
+  if (isMinorVisualDifference(searchable)) return false
+  if (item.area === '메인 비주얼' && !hasHeroEvidence(payload) && ['Media', 'Image', 'Text', 'CTA'].includes(item.category)) return false
+  if (item.category === 'Text' && normalizeLooseVisualText(item.figmaValue) === normalizeLooseVisualText(item.webValue)) return false
+  if (item.category === 'CTA' && !isSupportedCtaDifference(item, payload)) return false
+  return true
+}
+
+function hasHeroEvidence(payload = {}) {
+  const hero = payload.visualEvidence?.hero || {}
+  return Array.isArray(hero.sections) && hero.sections.length > 0
+    || Number(hero.figmaTextCount || 0) > 0
+    || Number(hero.webTextCount || 0) > 0
+    || Number(hero.figmaCtaCount || 0) > 0
+    || Number(hero.webCtaCount || 0) > 0
+    || Number(hero.webPrimaryMediaCount || 0) > 0
+}
+
+function isMinorVisualDifference(value) {
+  return /minor|spacing|line\s*break|punctuation|whitespace|공백|줄\s*바꿈|줄바꿈|문장부호|마침표|쉼표|미세|자간|matched\s*count|text\s*node\s*count/i.test(String(value || ''))
+}
+
+function isSupportedCtaDifference(item, payload = {}) {
+  if (item.confidence === 'low') return false
+  if (Number(payload.visualEvidence?.cta?.countDifference || 0) > 0) return true
+  const figmaActions = (payload.visualEvidence?.cta?.figmaActions || []).map((action) => normalizeLooseVisualText(action.text))
+  const webActions = (payload.visualEvidence?.cta?.webActions || []).map((action) => normalizeLooseVisualText(action.text))
+  const figmaValue = normalizeLooseVisualText(item.figmaValue)
+  const webValue = normalizeLooseVisualText(item.webValue)
+  return figmaActions.some((text) => figmaValue.includes(text) || text.includes(figmaValue))
+    && webActions.some((text) => webValue.includes(text) || text.includes(webValue))
+}
+
+function createVisualDifferenceKey(item) {
+  const area = normalizeLooseVisualText(item.area)
+  const category = item.category
+  const valueKey = `${normalizeLooseVisualText(item.figmaValue)}:${normalizeLooseVisualText(item.webValue)}`
+  if (/메인|hero|kv/.test(area) && (category === 'Media' || category === 'Image')) return 'hero-media'
+  if (/메인|hero|kv/.test(area) && category === 'Text') return 'hero-text'
+  if (/메인|hero|kv/.test(area) && category === 'CTA') return 'hero-cta'
+  if (category === 'Price') return `price:${extractNumericTokens(valueKey).join('|') || valueKey}`
+  if (category === 'Layout') return `layout:${area}:${valueKey}`
+  return `${area}:${category}:${valueKey}`
+}
+
+function scoreVisualDifference(item) {
+  const confidenceScore = { high: 30, medium: 20, low: 10 }[item.confidence] || 0
+  const severityScore = { critical: 20, warning: 12, check: 4 }[item.severity] || 0
+  const koreanScore = hasKorean(`${item.title} ${item.summary} ${item.figmaValue} ${item.webValue}`) ? 10 : 0
+  return confidenceScore + severityScore + koreanScore + Math.min(20, `${item.summary} ${item.figmaValue} ${item.webValue}`.length / 50)
+}
+
+function normalizeLooseVisualText(value) {
+  return normalizeString(value).toLowerCase().replace(/(?:\s|\u00a0|\u200b|\u200c|\u200d|[.,:;!?"'“”‘’()[\]{}<>_/\\-])/g, '')
+}
+
+function extractNumericTokens(value) {
+  return String(value || '').match(/\d+(?:[.,]\d+)?\s*(?:%|원|만원|개월|년)?/g) || []
+}
+
+function hasKorean(value) {
+  return /[가-힣]/.test(String(value || ''))
+}
+
+function isGenericEnglishVisualText(value) {
+  return /headline text mismatch|hero media type mismatch|minor spacing|cta role swap|layout mismatch|image mismatch/i.test(String(value || ''))
 }
 
 function normalizeConfidence(value) {
@@ -266,7 +404,7 @@ function normalizeConfidence(value) {
 }
 
 function hasVisionInput(payload = {}) {
-  return Boolean(payload.visionInput?.images?.figma?.dataUrl && payload.visionInput?.images?.web?.dataUrl)
+  return getVisionImages(payload).length > 0
 }
 
 function countImageInputs(messages = []) {
@@ -274,6 +412,22 @@ function countImageInputs(messages = []) {
     if (!Array.isArray(message.content)) return count
     return count + message.content.filter((part) => part?.type === 'image_url' && part.image_url?.url).length
   }, 0)
+}
+
+function createVisionInputSummary(payload = {}) {
+  return getVisionImages(payload).map((image) => ({
+    label: normalizeString(image.label).slice(0, 80) || 'image',
+    width: Number(image.width || 0),
+    height: Number(image.height || 0),
+    detail: ['low', 'high', 'auto'].includes(image.detail) ? image.detail : 'auto',
+  }))
+}
+
+function getVisionImages(payload = {}) {
+  const images = payload.visionInput?.images
+  if (Array.isArray(images)) return images.filter((image) => image?.dataUrl)
+  if (images && typeof images === 'object') return Object.entries(images).map(([label, image]) => ({ label, ...(image || {}) })).filter((image) => image?.dataUrl)
+  return []
 }
 
 function arrayHasItems(value) {

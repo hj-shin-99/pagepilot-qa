@@ -190,6 +190,7 @@ function createAiReviewResponseMeta({ qaMeta, preparedMeta = {}, resultMeta, err
     openAiCalled,
     visionUsed,
     imageInputCount,
+    visionInputSummary: normalizeVisionInputSummary(preparedMeta.visionInputSummary || resultMeta?.visionInputSummary || error?.visionInputSummary),
     figmaImagePrepared: preparedMeta.figmaImagePrepared === true,
     webImagePrepared: preparedMeta.webImagePrepared === true,
     fallbackUsed: fallbackUsed === true,
@@ -201,10 +202,21 @@ function createAiReviewResponseMeta({ qaMeta, preparedMeta = {}, resultMeta, err
 
 function getVisionFailureReason({ preparedMeta = {}, imageInputCount, openAiCalled, fallbackUsed, error }) {
   if (typeof preparedMeta.visionFailureReason === 'string' && preparedMeta.visionFailureReason) return preparedMeta.visionFailureReason
-  if (preparedMeta.visionPrepared === true && imageInputCount !== 2) return 'image-input-not-attached'
+  const expectedImageCount = Array.isArray(preparedMeta.visionInputSummary) ? preparedMeta.visionInputSummary.length : 0
+  if (preparedMeta.visionPrepared === true && imageInputCount !== expectedImageCount) return 'image-input-not-attached'
   if (fallbackUsed && openAiCalled && imageInputCount > 0) return 'openai-failed'
   if (fallbackUsed && error) return typeof error?.code === 'string' ? error.code : 'openai-failed'
   return ''
+}
+
+function normalizeVisionInputSummary(value) {
+  if (!Array.isArray(value)) return []
+  return value.map((item) => ({
+    label: safeText(item?.label, 80),
+    width: numberValue(item?.width),
+    height: numberValue(item?.height),
+    detail: ['low', 'high', 'auto'].includes(item?.detail) ? item.detail : 'auto',
+  })).filter((item) => item.label).slice(0, 4)
 }
 
 function logAiReviewMeta(meta = {}) {
@@ -295,12 +307,32 @@ function normalizeKoreanParticles(value) {
 
 function createHeroEvidence(visual = {}) {
   const hero = visual.aiHints?.evidenceSummary?.hero || {}
+  const heroSection = visual.aiHints?.heroSection || {}
   return {
+    figmaSectionId: safeText(heroSection.figmaSectionId),
+    webSectionId: safeText(heroSection.webSectionId),
     figmaTextCount: numberValue(hero.figmaTextCount),
     webTextCount: numberValue(hero.webTextCount),
     figmaCtaCount: numberValue(hero.figmaCtaCount ?? visual.aiHints?.heroCtaGroup?.figma?.count),
     webCtaCount: numberValue(hero.webCtaCount ?? visual.aiHints?.heroCtaGroup?.web?.count),
     webPrimaryMediaCount: numberValue(hero.webPrimaryMediaCount),
+    confidence: safeText(heroSection.confidence),
+    sections: arrayOfObjects(heroSection.sections).map(compactHeroSection).filter(Boolean).slice(0, 4),
+  }
+}
+
+function compactHeroSection(section = {}) {
+  const source = safeText(section.source)
+  if (!['figma', 'web'].includes(source)) return null
+  return {
+    sectionId: safeText(section.sectionId, 220),
+    source,
+    role: safeText(section.role),
+    xRatio: nullableNumber(section.xRatio),
+    yRatio: nullableNumber(section.yRatio),
+    widthRatio: nullableNumber(section.widthRatio),
+    heightRatio: nullableNumber(section.heightRatio),
+    confidence: safeText(section.confidence),
   }
 }
 
@@ -398,6 +430,11 @@ function arrayOfStrings(value) {
 function numberValue(value) {
   const number = Number(value)
   return Number.isFinite(number) ? number : 0
+}
+
+function nullableNumber(value) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
 }
 
 function safeText(value, maxLength = 180) {

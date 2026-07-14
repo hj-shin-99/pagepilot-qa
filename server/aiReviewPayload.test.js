@@ -18,6 +18,8 @@ test('AI Review payload is compact and excludes raw artifacts', () => {
   assert.equal(serialized.includes('.cache/'), false)
   assert.equal(payload.visualAssets.figmaRenderId, 'render-1')
   assert.equal(payload.visualAssets.webScreenshotFileName, 'aaaaaaaaaaaaaaaaaaaaaaaa.png')
+  assert.equal(payload.visualEvidence.hero.sections.length, 2)
+  assert.equal(payload.visualEvidence.hero.sections[0].source, 'figma')
 })
 
 test('AI Review payload dedupes visual and tech issue evidence', () => {
@@ -186,14 +188,24 @@ test('AI Review from-payload prepares vision once and does not expose image data
     visualVisionService: {
       async attachVisionInput(payload) {
         calls.vision += 1
-        return { payload: { ...payload, visionInput: { enabled: true, images: { figma: { dataUrl: 'data:image/jpeg;base64,AAA' }, web: { dataUrl: 'data:image/jpeg;base64,BBB' } } } }, meta: { visionPrepared: true, figmaImagePrepared: true, webImagePrepared: true } }
+        return { payload: { ...payload, visionInput: { enabled: true, images: [
+          { label: 'figma-overview', dataUrl: 'data:image/jpeg;base64,AAA', width: 100, height: 300, detail: 'low' },
+          { label: 'web-overview', dataUrl: 'data:image/jpeg;base64,BBB', width: 100, height: 300, detail: 'low' },
+          { label: 'figma-hero', dataUrl: 'data:image/jpeg;base64,CCC', width: 160, height: 90, detail: 'high' },
+          { label: 'web-hero', dataUrl: 'data:image/jpeg;base64,DDD', width: 160, height: 90, detail: 'high' },
+        ] } }, meta: { visionPrepared: true, figmaImagePrepared: true, webImagePrepared: true, visionInputSummary: [
+          { label: 'figma-overview', width: 100, height: 300, detail: 'low' },
+          { label: 'web-overview', width: 100, height: 300, detail: 'low' },
+          { label: 'figma-hero', width: 160, height: 90, detail: 'high' },
+          { label: 'web-hero', width: 160, height: 90, detail: 'high' },
+        ] } }
       },
     },
     aiReviewService: {
       async review(payload) {
         calls.review += 1
-        assert.equal(payload.visionInput.images.figma.dataUrl.startsWith('data:image/jpeg'), true)
-        return { meta: { openAiCalled: true, model: 'test-model', visionUsed: true, imageInputCount: 2, aiReviewDurationMs: 25 }, review: { releaseDecision: 'caution', summary: 'Vision checked', mustFix: [], verify: [], developerNotes: [], visualDifferences: [{ area: 'Main Visual', category: 'Media', title: 'Hero media differs', summary: 'Image versus video.', figmaValue: 'Image', webValue: 'Video', severity: 'warning', confidence: 'high', order: 0 }], clientReplyDraft: '' } }
+        assert.equal(payload.visionInput.images[0].dataUrl.startsWith('data:image/jpeg'), true)
+        return { meta: { openAiCalled: true, model: 'test-model', visionUsed: true, imageInputCount: 4, aiReviewDurationMs: 25 }, review: { releaseDecision: 'caution', summary: 'Vision checked', mustFix: [], verify: [], developerNotes: [], visualDifferences: [{ area: 'Main Visual', category: 'Media', title: 'Hero media differs', summary: 'Image versus video.', figmaValue: 'Image', webValue: 'Video', severity: 'warning', confidence: 'high', order: 0 }], clientReplyDraft: '' } }
       },
     },
   })
@@ -205,7 +217,8 @@ test('AI Review from-payload prepares vision once and does not expose image data
   assert.equal(calls.review, 1)
   assert.equal(response.body.meta.visionPrepared, true)
   assert.equal(response.body.meta.visionUsed, true)
-  assert.equal(response.body.meta.imageInputCount, 2)
+  assert.equal(response.body.meta.imageInputCount, 4)
+  assert.equal(response.body.meta.visionInputSummary.length, 4)
   assert.equal(response.body.meta.figmaImagePrepared, true)
   assert.equal(response.body.meta.webImagePrepared, true)
   assert.equal(JSON.stringify(response.body).includes('data:image'), false)
@@ -232,6 +245,7 @@ function createQaResult() {
         aiHints: {
           evidenceSummary: { hero: { figmaTextCount: 2, webTextCount: 2, figmaCtaCount: 2, webCtaCount: 2, webPrimaryMediaCount: 1 }, content: { figmaImageCount: 1, webImageCount: 1, webVideoCount: 1 } },
           heroCtaGroup: { countDifference: 0, figma: { count: 2, actions: [{ text: 'Apply', role: 'primary-action', href: '/apply' }] }, web: { count: 2, actions: [{ text: 'Apply', role: 'primary-action', href: '/apply' }] } },
+          heroSection: { figmaSectionId: 'figma-hero', webSectionId: 'web-hero', confidence: 'high', sections: [{ sectionId: 'figma-hero', source: 'figma', role: 'hero', xRatio: 0, yRatio: 0, widthRatio: 1, heightRatio: 0.2, confidence: 'high' }, { sectionId: 'web-hero', source: 'web', role: 'hero', xRatio: 0, yRatio: 0, widthRatio: 1, heightRatio: 0.2, confidence: 'high' }] },
           prices: Array.from({ length: 12 }, (_, index) => ({ source: 'web', numericType: 'amount', displayText: `Price ${index}` })),
           heroMediaGroup: { comparisonHint: 'figma-image-vs-web-video', figma: { mediaTypes: ['image'] }, web: { mediaTypes: ['video'] } },
           canonicalEvidence: { raw: '<html>raw</html>' },

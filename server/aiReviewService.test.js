@@ -47,7 +47,7 @@ test('AI review service calls OpenAI client exactly once and normalizes structur
   assert.deepEqual(Object.keys(result.review).sort(), ['clientReplyDraft', 'developerNotes', 'mustFix', 'releaseDecision', 'summary', 'verify', 'visualDifferences'])
 })
 
-test('AI review service sends two images in a single multimodal call when vision input exists', async () => {
+test('AI review service sends four images with request detail in a single multimodal call when vision input exists', async () => {
   const calls = { create: 0, request: null }
   const service = createAiReviewService({
     client: {
@@ -63,17 +63,73 @@ test('AI review service sends two images in a single multimodal call when vision
     },
   })
   const payload = createPayload()
-  payload.visionInput = { enabled: true, images: { figma: { dataUrl: 'data:image/jpeg;base64,AAA' }, web: { dataUrl: 'data:image/jpeg;base64,BBB' } } }
+  payload.visualEvidence.hero = { sections: [{ source: 'figma' }, { source: 'web' }] }
+  payload.visionInput = { enabled: true, images: [
+    { label: 'figma-overview', dataUrl: 'data:image/jpeg;base64,AAA', width: 100, height: 300, detail: 'low' },
+    { label: 'web-overview', dataUrl: 'data:image/jpeg;base64,BBB', width: 100, height: 320, detail: 'low' },
+    { label: 'figma-hero', dataUrl: 'data:image/jpeg;base64,CCC', width: 160, height: 90, detail: 'high' },
+    { label: 'web-hero', dataUrl: 'data:image/jpeg;base64,DDD', width: 160, height: 90, detail: 'high' },
+  ] }
 
   const result = await service.review(payload)
   const imageParts = calls.request.messages[1].content.filter((item) => item.type === 'image_url')
 
   assert.equal(calls.create, 1)
-  assert.equal(imageParts.length, 2)
+  assert.equal(imageParts.length, 4)
+  assert.deepEqual(imageParts.map((item) => item.image_url.detail), ['low', 'low', 'high', 'high'])
   assert.equal(result.meta.openAiCalled, true)
   assert.equal(result.meta.visionUsed, true)
-  assert.equal(result.meta.imageInputCount, 2)
+  assert.equal(result.meta.imageInputCount, 4)
+  assert.deepEqual(result.meta.visionInputSummary.map((item) => item.label), ['figma-overview', 'web-overview', 'figma-hero', 'web-hero'])
   assert.equal(result.review.visualDifferences[0].category, 'Media')
+})
+
+test('AI review normalizes Korean visual differences and removes minor/generic duplicates', () => {
+  const payload = createPayload()
+  payload.visualEvidence.hero = { sections: [{ source: 'figma' }, { source: 'web' }] }
+  payload.visualEvidence.cta = { countDifference: 0, figmaActions: [{ text: '신청하기' }], webActions: [{ text: '상담하기' }] }
+  const normalized = normalizeAiReview({
+    releaseDecision: 'caution',
+    summary: '확인 필요',
+    mustFix: [],
+    verify: [],
+    developerNotes: [],
+    clientReplyDraft: '확인하겠습니다.',
+    visualDifferences: [
+      { area: 'Main Visual', category: 'Media', title: 'Hero media type mismatch', summary: 'Figma image differs from Web video.', figmaValue: 'vehicle exterior image', webValue: 'vehicle interior video', severity: 'warning', confidence: 'high', order: 0 },
+      { area: 'Hero', category: 'Image', title: 'Image mismatch', summary: 'same hero issue', figmaValue: 'vehicle exterior image', webValue: 'vehicle interior video', severity: 'warning', confidence: 'medium', order: 1 },
+      { area: 'Hero', category: 'Text', title: 'Minor spacing differences', summary: 'line break only', figmaValue: 'Hello World', webValue: 'HelloWorld', severity: 'check', confidence: 'low', order: 2 },
+      { area: 'Hero', category: 'CTA', title: 'CTA role swap', summary: 'CTA differs', figmaValue: '신청하기', webValue: '상담하기', severity: 'warning', confidence: 'high', order: 3 },
+      { area: 'Hero', category: 'CTA', title: 'CTA unclear', summary: 'CTA differs', figmaValue: 'A', webValue: 'B', severity: 'warning', confidence: 'low', order: 4 },
+    ],
+  }, payload)
+
+  assert.equal(normalized.visualDifferences.length, 2)
+  assert.equal(normalized.visualDifferences[0].title, '히어로/KV 비주얼이 다릅니다.')
+  assert.equal(normalized.visualDifferences[0].figmaValue.includes('차량 외관'), true)
+  assert.equal(normalized.visualDifferences.some((item) => /Minor spacing|CTA role swap/i.test(item.title)), false)
+})
+
+test('AI review synthetic fixture gates avoid hero false positives and repeated price merge', () => {
+  const noHeroPayload = createPayload()
+  noHeroPayload.visualEvidence.textDifferences = []
+  noHeroPayload.visualEvidence.media = {}
+  const noHero = normalizeAiReview({
+    releaseDecision: 'ready', summary: '정상', mustFix: [], verify: [], developerNotes: [], clientReplyDraft: '정상',
+    visualDifferences: [{ area: 'Hero', category: 'Media', title: 'Hero media type mismatch', summary: 'image vs video', figmaValue: 'image', webValue: 'video', severity: 'warning', confidence: 'high', order: 0 }],
+  }, noHeroPayload)
+  assert.equal(noHero.visualDifferences.length, 0)
+
+  const pricePayload = createPayload()
+  const price = normalizeAiReview({
+    releaseDecision: 'blocked', summary: '가격 확인', mustFix: [], verify: [], developerNotes: [], clientReplyDraft: '확인',
+    visualDifferences: [
+      { area: 'Card A', category: 'Price', title: 'Price mismatch', summary: 'A', figmaValue: '월 10만원', webValue: '월 11만원', severity: 'critical', confidence: 'high', order: 0 },
+      { area: 'Card B', category: 'Price', title: 'Price mismatch', summary: 'B', figmaValue: '월 20만원', webValue: '월 21만원', severity: 'critical', confidence: 'high', order: 1 },
+      { area: 'Card A', category: 'Price', title: 'Price mismatch', summary: 'A duplicate', figmaValue: '월 10만원', webValue: '월 11만원', severity: 'critical', confidence: 'medium', order: 2 },
+    ],
+  }, pricePayload)
+  assert.equal(price.visualDifferences.length, 2)
 })
 
 test('AI review service marks OpenAI failures as attempted calls', async () => {

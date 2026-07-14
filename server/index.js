@@ -1017,7 +1017,7 @@ function createMockupAiQaVerificationPrompt(payload, firstPassResult) {
     '작은 글씨/OCR 추정으로 만든 이슈는 제거하거나 확인 필요로 낮추세요.',
     'Figma JSON/Web DOM/Vision 중 한 소스만 다르게 읽은 문구 이슈는 오탐 가능성으로 제거하거나 확인 필요 이하로 낮추세요.',
     'Hero KV와 Footer/Disclaimer/약관성 장문처럼 영역이 크게 다른 문구끼리 매칭된 이슈는 오탐으로 제거하거나 확인 필요 이하로 낮추세요.',
-    '숫자/금액 차이는 유지하세요. 예: 47만원 vs 50만원은 유지합니다.',
+    '숫자/금액 차이는 유지하세요. 단, 모델명이나 상품명에 포함된 숫자는 가격으로 오분류하지 마세요.',
     '최종적으로 실제 수정이 필요한 핵심 이슈만 최대 5개 남기세요.',
     '반드시 아래 JSON 형식으로만 응답하세요.',
     '{"issues":[{"status":"수정 필요 | 확인 필요 | 무시 가능","priority":1,"area":"top | middle | bottom | unknown","type":"문구 | 이미지 | CTA | 레이아웃 | 섹션 | 금액","title":"...","figma":"...","web":"...","memo":"...","confidence":0.9,"verification":"kept | downgraded | removed"}],"removedIssues":[{"title":"...","reason":"figma/web text hints are identical, likely OCR false positive"}]}',

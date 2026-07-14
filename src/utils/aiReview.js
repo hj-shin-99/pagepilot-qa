@@ -71,6 +71,7 @@ export function sanitizeAiReviewResponse(response = {}) {
       model: getString(response.meta?.model),
       aiReviewDurationMs: numberValue(response.meta?.aiReviewDurationMs),
       visionFailureReason: getString(response.meta?.visionFailureReason),
+      visionInputSummary: sanitizeVisionInputSummary(response.meta?.visionInputSummary),
     },
     review: {
       releaseDecision: normalizeDecision(review.releaseDecision),
@@ -114,12 +115,32 @@ function classifyCategory(item = {}) {
 
 function createHeroEvidence(visual = {}) {
   const hero = visual.aiHints?.evidenceSummary?.hero || {}
+  const heroSection = visual.aiHints?.heroSection || {}
   return {
+    figmaSectionId: getString(heroSection.figmaSectionId),
+    webSectionId: getString(heroSection.webSectionId),
     figmaTextCount: numberValue(hero.figmaTextCount),
     webTextCount: numberValue(hero.webTextCount),
     figmaCtaCount: numberValue(hero.figmaCtaCount ?? visual.aiHints?.heroCtaGroup?.figma?.count),
     webCtaCount: numberValue(hero.webCtaCount ?? visual.aiHints?.heroCtaGroup?.web?.count),
     webPrimaryMediaCount: numberValue(hero.webPrimaryMediaCount),
+    confidence: getString(heroSection.confidence),
+    sections: arrayOfObjects(heroSection.sections).map(compactHeroSection).filter(Boolean).slice(0, 4),
+  }
+}
+
+function compactHeroSection(section = {}) {
+  const source = getString(section.source)
+  if (!['figma', 'web'].includes(source)) return null
+  return {
+    sectionId: getString(section.sectionId),
+    source,
+    role: getString(section.role),
+    xRatio: nullableNumber(section.xRatio),
+    yRatio: nullableNumber(section.yRatio),
+    widthRatio: nullableNumber(section.widthRatio),
+    heightRatio: nullableNumber(section.heightRatio),
+    confidence: getString(section.confidence),
   }
 }
 
@@ -199,6 +220,17 @@ function sanitizeVisualDifferenceArray(value) {
   return Array.isArray(value) ? value.map(sanitizeVisualDifference).filter(Boolean).slice(0, 10) : []
 }
 
+function sanitizeVisionInputSummary(value) {
+  return Array.isArray(value)
+    ? value.map((item) => ({
+      label: getString(item?.label),
+      width: numberValue(item?.width),
+      height: numberValue(item?.height),
+      detail: ['low', 'high', 'auto'].includes(item?.detail) ? item.detail : 'auto',
+    })).filter((item) => item.label).slice(0, 4)
+    : []
+}
+
 function sanitizeVisualDifference(item, index) {
   if (!item || typeof item !== 'object') return null
   return {
@@ -265,6 +297,11 @@ function arrayOfStrings(value) {
 function numberValue(value) {
   const number = Number(value)
   return Number.isFinite(number) ? number : 0
+}
+
+function nullableNumber(value) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
 }
 
 function getSafeUrl(value) {

@@ -353,6 +353,14 @@ function createPriceEvidence(visual = {}) {
     type: safeText(item.numericType),
     text: safeText(item.displayText || item.text),
     role: safeText(item.role),
+    sectionId: safeText(item.sectionId, 220),
+    sectionRootId: safeText(item.sectionRootId, 220),
+    sectionPath: safeText(item.sectionPath || item.contextPath || item.context, 260),
+    comparisonScope: safeText(item.comparisonScope),
+    xRatio: nullableNumber(item.xRatio),
+    yRatio: nullableNumber(item.yRatio),
+    numericTokens: arrayOfStrings(item.numericTokens).slice(0, 6),
+    unitTokens: arrayOfStrings(item.unitTokens).slice(0, 4),
   }))).slice(0, MAX_VISUAL_ITEMS)
 }
 
@@ -406,6 +414,12 @@ function limitActions(items) {
     text: safeText(item.text || item.displayText),
     role: safeText(item.role),
     href: safeUrl(item.href),
+    sectionId: safeText(item.sectionId, 220),
+    sectionPath: safeText(item.sectionPath || item.contextPath || item.parentSelector, 260),
+    comparisonScope: safeText(item.comparisonScope),
+    xRatio: nullableNumber(item.xRatio),
+    yRatio: nullableNumber(item.yRatio),
+    isHeroAction: item.isHeroAction === true,
   }))).slice(0, 6)
 }
 

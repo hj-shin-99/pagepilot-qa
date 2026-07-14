@@ -161,6 +161,14 @@ function createPriceEvidence(visual = {}) {
     type: getString(item.numericType),
     text: getString(item.displayText || item.text),
     role: getString(item.role),
+    sectionId: getString(item.sectionId),
+    sectionRootId: getString(item.sectionRootId),
+    sectionPath: getString(item.sectionPath || item.contextPath || item.context),
+    comparisonScope: getString(item.comparisonScope),
+    xRatio: nullableNumber(item.xRatio),
+    yRatio: nullableNumber(item.yRatio),
+    numericTokens: arrayOfStrings(item.numericTokens).slice(0, 6),
+    unitTokens: arrayOfStrings(item.unitTokens).slice(0, 4),
   }))).slice(0, MAX_ITEMS)
 }
 
@@ -209,7 +217,17 @@ function countTechChecks(tech = {}, status) {
 }
 
 function limitActions(items) {
-  return dedupe(arrayOfObjects(items).map((item) => ({ text: getString(item.text || item.displayText), role: getString(item.role), href: getSafeUrl(item.href) }))).slice(0, 6)
+  return dedupe(arrayOfObjects(items).map((item) => ({
+    text: getString(item.text || item.displayText),
+    role: getString(item.role),
+    href: getSafeUrl(item.href),
+    sectionId: getString(item.sectionId),
+    sectionPath: getString(item.sectionPath || item.contextPath || item.parentSelector),
+    comparisonScope: getString(item.comparisonScope),
+    xRatio: nullableNumber(item.xRatio),
+    yRatio: nullableNumber(item.yRatio),
+    isHeroAction: item.isHeroAction === true,
+  }))).slice(0, 6)
 }
 
 function sanitizeIssueArray(value) {

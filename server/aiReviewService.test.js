@@ -43,7 +43,7 @@ test('AI review service calls OpenAI client exactly once and normalizes structur
   assert.equal(result.meta.imageInputCount, 0)
   assert.equal(Number.isFinite(result.meta.aiReviewDurationMs), true)
   assert.equal(result.review.releaseDecision, 'blocked')
-  assert.equal(result.review.mustFix[0].category, 'price')
+  assert.equal(result.review.mustFix[0].category, 'Price')
   assert.deepEqual(Object.keys(result.review).sort(), ['clientReplyDraft', 'developerNotes', 'mustFix', 'releaseDecision', 'summary', 'verify', 'visualDifferences'])
 })
 
@@ -132,6 +132,71 @@ test('AI review synthetic fixture gates avoid hero false positives and repeated 
   assert.equal(price.visualDifferences.length, 2)
 })
 
+test('AI review corrects price area from canonical product section and keeps canonical values', () => {
+  const payload = createPayload()
+  payload.visualEvidence.prices = [
+    { source: 'figma', type: 'monthly-payment', text: 'Basic plan, 월 47만원', sectionPath: 'Product cards / Basic card', yRatio: 0.42, numericTokens: ['47'], unitTokens: ['만원'] },
+    { source: 'web', type: 'monthly-payment', text: 'Basic plan, 월 50만원', sectionPath: 'section.pricing > div.product-card.basic', yRatio: 0.43, numericTokens: ['50'], unitTokens: ['만원'] },
+  ]
+  const normalized = normalizeAiReview({
+    releaseDecision: 'blocked', summary: '가격 확인', mustFix: [], verify: [], developerNotes: [], clientReplyDraft: '확인',
+    visualDifferences: [{ area: 'Main Visual', category: 'Price', title: '월 납입금 차이', summary: '가격이 다릅니다.', figmaValue: '월 47만원', webValue: '월 50만원', severity: 'critical', confidence: 'high', order: 0 }],
+  }, payload)
+  assert.equal(normalized.visualDifferences[0].area, 'Product Card')
+  assert.equal(normalized.visualDifferences[0].figmaValue, 'Basic plan, 월 47만원')
+  assert.equal(normalized.visualDifferences[0].webValue, 'Basic plan, 월 50만원')
+})
+
+test('AI review downgrades uncertain CTA pairing but keeps clear missing CTA count', () => {
+  const uncertainPayload = createPayload()
+  uncertainPayload.visualEvidence.hero = { sections: [{ source: 'figma' }, { source: 'web' }] }
+  uncertainPayload.visualEvidence.cta = {
+    countDifference: 0,
+    figmaActions: [{ text: 'Start trial', role: 'primary-action', sectionPath: 'Hero', yRatio: 0.1, xRatio: 0.1 }, { text: 'See plans', role: 'secondary-action', sectionPath: 'Hero', yRatio: 0.1, xRatio: 0.25 }],
+    webActions: [{ text: 'Contact sales', role: 'primary-action', sectionPath: 'Hero', yRatio: 0.1, xRatio: 0.75 }, { text: 'Download', role: 'secondary-action', sectionPath: 'Hero', yRatio: 0.1, xRatio: 0.9 }],
+  }
+  const uncertain = normalizeAiReview({
+    releaseDecision: 'caution', summary: '확인', mustFix: [], verify: [], developerNotes: [], clientReplyDraft: '확인',
+    visualDifferences: [{ area: 'Hero', category: 'CTA', title: 'CTA text mismatch', summary: 'CTA differs', figmaValue: 'Start trial / See plans', webValue: 'Contact sales / Download', severity: 'critical', confidence: 'high', order: 0 }],
+  }, uncertainPayload)
+  assert.equal(uncertain.visualDifferences[0].severity, 'check')
+  assert.equal(uncertain.visualDifferences[0].title, 'CTA 구성 확인이 필요합니다.')
+
+  const missingPayload = createPayload()
+  missingPayload.visualEvidence.hero = { sections: [{ source: 'figma' }, { source: 'web' }] }
+  missingPayload.visualEvidence.cta = { countDifference: 1, figmaActions: [{ text: 'Start', role: 'primary-action' }], webActions: [] }
+  const missing = normalizeAiReview({
+    releaseDecision: 'blocked', summary: '확인', mustFix: [], verify: [], developerNotes: [], clientReplyDraft: '확인',
+    visualDifferences: [{ area: 'Hero', category: 'CTA', title: 'CTA 누락', summary: 'Web에 CTA가 없습니다.', figmaValue: 'Start', webValue: '', severity: 'critical', confidence: 'high', order: 0 }],
+  }, missingPayload)
+  assert.equal(missing.visualDifferences[0].severity, 'critical')
+})
+
+test('AI review excludes transient cookie overlay but keeps explicit designed modal', () => {
+  const payload = createPayload()
+  payload.visualEvidence.textDifferences = []
+  const normalized = normalizeAiReview({
+    releaseDecision: 'caution', summary: '확인', mustFix: [], verify: [], developerNotes: [], clientReplyDraft: '확인',
+    visualDifferences: [
+      { area: 'Cookie consent popup', category: 'Missing', title: '쿠키 동의 팝업이 Web에만 표시됩니다.', summary: '세션 상태 팝업입니다.', figmaValue: '없음', webValue: '쿠키 동의 팝업', severity: 'warning', confidence: 'high', order: 0 },
+      { area: 'Signup modal', category: 'Layout', title: '회원가입 모달 레이아웃이 다릅니다.', summary: 'Figma dialog와 Web modal 양쪽에 존재합니다.', figmaValue: '시안 팝업', webValue: 'Web 팝업', severity: 'warning', confidence: 'high', order: 1 },
+    ],
+  }, payload)
+  assert.equal(normalized.visualDifferences.length, 1)
+  assert.equal(normalized.visualDifferences[0].title, '회원가입 모달 레이아웃이 다릅니다.')
+})
+
+test('AI review normalizes mustFix and verify visual categories', () => {
+  const normalized = normalizeAiReview({
+    releaseDecision: 'blocked', summary: '확인',
+    mustFix: [{ title: '월 납입금 수정', description: 'Figma 47만원 Web 50만원', severity: 'critical' }],
+    verify: [{ title: 'CTA 링크 확인', description: 'href 목적지가 다릅니다.', severity: 'warning' }, { title: '콘솔 오류', description: 'console error', severity: 'warning' }],
+    developerNotes: [], clientReplyDraft: '확인', visualDifferences: [],
+  }, createPayload())
+  assert.deepEqual(normalized.mustFix.map((item) => item.category), ['Price'])
+  assert.deepEqual(normalized.verify.map((item) => item.category), ['CTA', 'Tech'])
+})
+
 test('AI review service marks OpenAI failures as attempted calls', async () => {
   const service = createAiReviewService({
     client: {
@@ -199,7 +264,7 @@ test('AI review puts image versus video composition into verify instead of block
   const normalized = normalizeAiReview({ releaseDecision: 'blocked', summary: '차단', mustFix: [{ category: 'media', title: '미디어', description: '미디어', severity: 'critical' }], verify: [{ category: 'media', title: '미디어 의도 확인', description: '확인', severity: 'warning' }], developerNotes: [], clientReplyDraft: '초안' }, payload)
 
   assert.equal(normalized.releaseDecision, 'caution')
-  assert.equal(normalized.verify[0].category, 'media')
+  assert.equal(normalized.verify[0].category, 'Media')
 })
 
 function createPayload() {

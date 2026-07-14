@@ -22,8 +22,10 @@ const VISUAL_VISION_SYSTEM_PROMPT = [
   'Then validate exact strings, prices, CTA text/count/href, and media type against canonical evidence.',
   'Use vision for image content, visual subject, page structure, layout, and visible missing content.',
   'Use canonical evidence for exact text, price, CTA, and media metadata when OCR or vision is uncertain.',
+  'For each hero crop, internally identify main subject, exterior/interior/product/person/scenery/abstract class, viewpoint, background, still image versus video frame, and dominant composition before writing any media issue.',
   'Create only practical differences a QA operator should verify or fix. Prefer 3 to 6 visualDifferences.',
-  'Omit trivial line breaks, tiny spacing, punctuation, same-meaning wording particles, weak spacing guesses, matched counts, total text-node counts, and repeated Hero issues.',
+  'Omit transient cookie/consent/privacy/preferences dialogs unless canonical evidence shows both Figma and Web intentionally contain the same dialog section.',
+  'Omit trivial line breaks, tiny spacing, punctuation, same-meaning wording particles, weak spacing guesses, matched counts, total text-node counts, generic content differs, and repeated Hero issues.',
   'All user-facing fields title, summary, figmaValue, and webValue must be natural Korean.',
   'Return only valid JSON. Do not include markdown, local paths, base64, prompts, selectors, or hidden reasoning.',
 ].join(' ')
@@ -33,6 +35,7 @@ function createVisualVisionInstructionPrompt(images) {
     '이미지 비교 절차:',
     '1단계: canonical evidence를 결론처럼 따라 쓰지 말고 Figma/Web 이미지에서 실제로 보이는 차이를 먼저 관찰하세요.',
     '관찰 대상은 Hero/KV 이미지 내용, 외관/실내/제품/인물/배경 등 시각적 주제, 이미지와 영상의 차이, 주요 레이아웃, 텍스트 블록 배치, CTA 개수와 배치, 큰 콘텐츠 누락, 섹션 순서입니다.',
+    'Hero crop별로 main subject, exterior/interior/product/person/scenery/abstract, viewpoint, background/scene, still image/video frame, dominant composition을 내부적으로 판단한 뒤 Media/Image issue에 반영하세요.',
     '2단계: 관찰 결과를 canonical evidence와 대조하세요. 정확한 텍스트, 가격/금액/퍼센트, CTA 문구/href/count, media type은 canonical 값을 우선합니다.',
     '3단계: 실제 사용자가 확인할 가치가 있는 차이만 최종 issue로 만드세요.',
     '',
@@ -45,9 +48,11 @@ function createVisualVisionInstructionPrompt(images) {
     'severity must be one of: critical, warning, check. confidence must be one of: high, medium, low.',
     'visualDifferences는 기본 3~6개로 제한하세요. 같은 Hero Text, Hero CTA, Hero Media, 같은 가격, 같은 Layout 문제는 각각 최대 1건만 남기세요.',
     'CTA 대응 관계가 명확하지 않으면 CTA mismatch를 만들지 마세요. count 차이, canonical pair, 또는 vision+canonical 동시 지지가 필요합니다.',
+    '양쪽 CTA 목록에 서로 다른 문구가 존재하거나 primary/secondary 배열 순서가 다르다는 이유만으로 1:1 mismatch를 만들지 마세요.',
     '가격/숫자 차이는 canonical 값을 그대로 쓰고, 모델명 숫자를 가격으로 오분류하지 마세요.',
     '이미지 내용 차이는 "이미지" 같은 일반어 대신 눈에 보이는 주제와 장면을 한국어로 구체적으로 설명하세요.',
-    '출력 금지 예: Headline text mismatch, Hero media type mismatch, Minor spacing differences, CTA role swap.',
+    '쿠키 동의, 개인정보 안내, 브라우저/세션 상태 팝업처럼 페이지 콘텐츠 흐름 밖 transient overlay는 기본 visualDifferences에서 제외하세요.',
+    '출력 금지 예: Headline text mismatch, Hero media type mismatch, Minor spacing differences, Text count difference, CTA role swap, generic content differs.',
   ].join('\n')
 }
 

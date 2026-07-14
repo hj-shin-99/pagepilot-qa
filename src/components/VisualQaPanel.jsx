@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import {
-  countIssueCards,
   createActionItems,
   createDifferenceItems,
   createFigmaImageUrl,
@@ -11,10 +10,10 @@ import {
   createVisualIssueCards,
   createWebDisplayImageUrl,
 } from '../utils/visualQa'
+import { createVisualDifferenceItems } from '../utils/visualIssueList'
 
 function VisualQaPanel({ result, summary, copyStatus, onCopyResult, aiReview, aiReviewState = 'idle' }) {
   const cards = createVisualIssueCards(result)
-  const counts = countIssueCards(cards)
   const meta = result.meta || {}
   const aiHints = result.aiHints || {}
   const comparison = result.comparison || {}
@@ -22,6 +21,7 @@ function VisualQaPanel({ result, summary, copyStatus, onCopyResult, aiReview, ai
   const media = createMediaSummary(aiHints)
   const figmaImage = createFigmaImageUrl(result.figma)
   const webImage = createWebDisplayImageUrl(result.web)
+  const differenceItems = createVisualDifferenceItems(result, aiReview)
 
   return (
     <section className="section-stack visual-qa-panel" aria-label="Visual QA 결과">
@@ -40,130 +40,125 @@ function VisualQaPanel({ result, summary, copyStatus, onCopyResult, aiReview, ai
         {copyStatus ? <p className="copy-status">{copyStatus}</p> : null}
       </header>
 
-      <AiVisualReviewPanel aiReview={aiReview} state={aiReviewState} />
-
-      <section className="visual-severity-grid" aria-label="Visual QA 상태 카드">
-        <SeverityCard label="Critical" value={counts.critical} tone="critical" description="핵심 숫자, Hero 문구, CTA 누락" />
-        <SeverityCard label="Warning" value={counts.warning} tone="warning" description="CTA/문구/개수 차이" />
-        <SeverityCard label="Check" value={counts.check} tone="check" description="사람 확인이 필요한 항목" />
-      </section>
-
-      <details className="detail-card visual-card-list-card" open>
-        <summary>
-          <span>Critical / Warning / Check</span>
-          <strong>{cards.length}개 항목</strong>
-        </summary>
-        <ul className="visual-card-list">
-          {cards.map((card) => (
-            <li className={`visual-issue-card ${card.severity}`} key={`${card.category}-${card.title}-${card.detail}-${card.entityKey}`}>
-              <span>{card.severity}</span>
-              <strong>{card.title}</strong>
-              <p>{card.detail}</p>
-              {card.technical ? (
-                <details className="visual-technical-detail">
-                  <summary>상세 보기</summary>
-                  <small>{card.technical}</small>
-                </details>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      </details>
-
-      <section className="visual-two-column">
-        <VisualSectionCard title="Hero" note="핵심 영역 요약">
-          <KeyValue label="Figma Hero Text" value={hero.figmaTextCount} />
-          <KeyValue label="Web Hero Text" value={hero.webTextCount} />
-          <KeyValue label="CTA Count" value={`Figma ${hero.figmaCtaCount} / Web ${hero.webCtaCount}`} />
-          <KeyValue label="대표 Media" value={`Figma ${formatList(hero.figmaMediaTypes)} / Web ${formatList(hero.webMediaTypes)}`} />
-        </VisualSectionCard>
-
-        <VisualSectionCard title="CTA" note="Primary/Secondary CTA만 표시">
-          <EntityList items={createActionItems(aiHints)} emptyText="표시할 핵심 CTA가 없습니다." />
-          <OtherInteractions items={createOtherInteractionItems(aiHints)} />
-        </VisualSectionCard>
-      </section>
-
-      <section className="visual-two-column">
-        <VisualSectionCard title="Price" note="금액/숫자 후보">
-          <EntityList items={createPriceItems(aiHints, comparison)} emptyText="수집된 가격/금액 후보가 없습니다." />
-        </VisualSectionCard>
-
-        <VisualSectionCard title="Media" note="Hero primary media와 주요 개수">
-          <KeyValue label="Hero Media" value={media.comparisonText} />
-          <KeyValue label="Content Media" value={`Figma 이미지 ${media.counts.figmaImage} / Web 이미지 ${media.counts.webImage} / Web 영상 ${media.counts.webVideo}`} />
-          <EntityList items={media.heroPrimary} emptyText="Hero primary media가 없습니다." />
-        </VisualSectionCard>
-      </section>
-
-      <article className="detail-card visual-image-card">
+      <article className="detail-card visual-image-card-primary">
         <div className="section-title-row">
           <div>
-            <h3>이미지 확인</h3>
-            <p className="panel-note relaxed-note">Figma render와 Web screenshot을 높이 제한 영역에서 확인합니다.</p>
+            <h3>Figma / Web 이미지 비교</h3>
+            <p className="panel-note relaxed-note">왼쪽은 Figma render, 오른쪽은 Web screenshot입니다. 이미지를 클릭하면 새 탭에서 원본을 확인할 수 있습니다.</p>
           </div>
         </div>
-        <div className="compare-scroll-shell visual-compare-shell">
-          <div className="compare-grid">
+        <div className="visual-comparison-viewport">
+          <div className="visual-comparison-columns">
             <ImagePane imageAlt="Figma render" imageSrc={figmaImage} label="Figma" placeholder="Figma render 이미지가 없습니다." />
             <ImagePane imageAlt="Web screenshot" imageSrc={webImage} label="Web" placeholder="Web screenshot 이미지가 없습니다." />
           </div>
         </div>
       </article>
 
-      <section className="visual-two-column">
-        <VisualSectionCard title="Difference Summary" note="문구 비교 요약">
-          <KeyValue label="Matched" value={comparison.matchedCount} />
-          <KeyValue label="Different" value={comparison.differenceCount} />
-          <KeyValue label="Figma Only" value={comparison.figmaOnlyCount} />
-          <KeyValue label="Web Only" value={comparison.webOnlyCount} />
-          <EntityList items={createDifferenceItems(comparison)} emptyText="문구 차이가 없습니다." />
-        </VisualSectionCard>
+      <article className="detail-card difference-list-card">
+        <div className="section-title-row">
+          <div>
+            <h3>다른 부분</h3>
+            <p className="panel-note relaxed-note">수정 또는 확인이 필요한 실무형 이슈만 합쳐서 표시합니다.</p>
+          </div>
+          <span>{differenceItems.length}개</span>
+        </div>
+        <DifferenceList items={differenceItems} />
+      </article>
 
-        <VisualSectionCard title="System" note="시스템 메타">
-          <KeyValue label="OpenAI 호출" value={aiReview?.meta?.openAiCalled === true ? '있음' : '없음'} />
-          <KeyValue label="Vision 사용" value={aiReview?.meta?.visionUsed === true ? '있음' : '없음'} />
-          <KeyValue label="Image Inputs" value={aiReview?.meta?.imageInputCount} />
-          <KeyValue label="Fallback" value={aiReview?.meta?.fallbackUsed === true ? '있음' : '없음'} />
-          <KeyValue label="Payload Version" value={meta.payloadVersion} />
-          <KeyValue label="Playwright Runs" value={meta.playwrightRunCount} />
-          <KeyValue label="Figma Cache" value={meta.figmaCacheSource} />
-          <KeyValue label="Figma Render Cache" value={meta.figmaRenderCacheSource} />
-        </VisualSectionCard>
-      </section>
+      <details className="detail-card visual-detail-accordion">
+        <summary>
+          <span>세부 정보 보기</span>
+          <strong>AI Vision, 규칙 기반 결과, 시스템 메타</strong>
+        </summary>
+
+        <AiVisionRawSummary aiReview={aiReview} state={aiReviewState} />
+
+        <section className="visual-detail-section">
+          <div className="section-title-row">
+            <div>
+              <h3>규칙 기반 Critical / Warning / Check</h3>
+              <p className="panel-note relaxed-note">Canonical 비교에서 생성된 원본 판정 목록입니다.</p>
+            </div>
+            <span>{cards.length}개</span>
+          </div>
+          <RuleIssueList cards={cards} />
+        </section>
+
+        <section className="visual-two-column">
+          <VisualSectionCard title="Hero" note="핵심 영역 요약">
+            <KeyValue label="Figma Hero Text" value={hero.figmaTextCount} />
+            <KeyValue label="Web Hero Text" value={hero.webTextCount} />
+            <KeyValue label="CTA Count" value={`Figma ${hero.figmaCtaCount} / Web ${hero.webCtaCount}`} />
+            <KeyValue label="대표 Media" value={`Figma ${formatList(hero.figmaMediaTypes)} / Web ${formatList(hero.webMediaTypes)}`} />
+          </VisualSectionCard>
+
+          <VisualSectionCard title="CTA" note="Primary/Secondary CTA만 표시">
+            <EntityList items={createActionItems(aiHints)} emptyText="표시할 핵심 CTA가 없습니다." />
+            <OtherInteractions items={createOtherInteractionItems(aiHints)} />
+          </VisualSectionCard>
+        </section>
+
+        <section className="visual-two-column">
+          <VisualSectionCard title="Price / Numeric" note="금액/숫자 후보">
+            <EntityList items={createPriceItems(aiHints, comparison)} emptyText="수집된 가격/금액 후보가 없습니다." />
+          </VisualSectionCard>
+
+          <VisualSectionCard title="Media" note="Hero primary media와 주요 개수">
+            <KeyValue label="Hero Media" value={media.comparisonText} />
+            <KeyValue label="Content Media" value={`Figma 이미지 ${media.counts.figmaImage} / Web 이미지 ${media.counts.webImage} / Web 영상 ${media.counts.webVideo}`} />
+            <EntityList items={media.heroPrimary} emptyText="Hero primary media가 없습니다." />
+          </VisualSectionCard>
+        </section>
+
+        <section className="visual-two-column">
+          <VisualSectionCard title="Text Difference" note="문구 비교 요약">
+            <KeyValue label="Matched" value={comparison.matchedCount} />
+            <KeyValue label="Different" value={comparison.differenceCount} />
+            <KeyValue label="Figma Only" value={comparison.figmaOnlyCount} />
+            <KeyValue label="Web Only" value={comparison.webOnlyCount} />
+            <EntityList items={createDifferenceItems(comparison)} emptyText="문구 차이가 없습니다." />
+          </VisualSectionCard>
+
+          <VisualSectionCard title="System" note="시스템 메타">
+            <KeyValue label="OpenAI 호출" value={aiReview?.meta?.openAiCalled === true ? '있음' : '없음'} />
+            <KeyValue label="Vision 사용" value={aiReview?.meta?.visionUsed === true ? '있음' : '없음'} />
+            <KeyValue label="Image Inputs" value={aiReview?.meta?.imageInputCount} />
+            <KeyValue label="Fallback" value={aiReview?.meta?.fallbackUsed === true ? '있음' : '없음'} />
+            <KeyValue label="Payload Version" value={meta.payloadVersion} />
+            <KeyValue label="Playwright Runs" value={meta.playwrightRunCount} />
+            <KeyValue label="Figma Cache" value={meta.figmaCacheSource} />
+            <KeyValue label="Figma Render Cache" value={meta.figmaRenderCacheSource} />
+          </VisualSectionCard>
+        </section>
+      </details>
     </section>
   )
 }
 
-function AiVisualReviewPanel({ aiReview, state }) {
+function AiVisionRawSummary({ aiReview, state }) {
   const review = aiReview?.review || null
   const meta = aiReview?.meta || {}
   const differences = Array.isArray(review?.visualDifferences) ? review.visualDifferences : []
-  const canShowVisionResults = meta.visionUsed === true && meta.fallbackUsed !== true
 
   if (state === 'loading') {
-    return (
-      <article className="detail-card ai-review-card">
-        <div className="section-title-row">
-          <h3>AI 시각 비교</h3>
-          <span>OpenAI Vision 검토 중</span>
-        </div>
-        <p className="panel-note relaxed-note">Figma PNG와 Web screenshot을 하나의 multimodal 요청으로 비교하고 있습니다.</p>
-      </article>
-    )
+    return <p className="visual-detail-section panel-note relaxed-note">OpenAI Vision 검토 중입니다.</p>
   }
 
-  if (!review && state !== 'fallback') return null
+  if (!review && state !== 'fallback') {
+    return <p className="visual-detail-section empty-row">AI Vision raw summary가 없습니다.</p>
+  }
 
   return (
-    <article className="detail-card ai-review-card">
+    <section className="visual-detail-section">
       <div className="section-title-row">
         <div>
-          <h3>AI 시각 비교</h3>
-          <p className="panel-note relaxed-note">검증된 Vision 입력으로 확인한 시각 차이만 표시합니다.</p>
+          <h3>AI Vision Raw Summary</h3>
+          <p className="panel-note relaxed-note">Vision 응답 원문 요약과 visualDifferences 원본입니다.</p>
         </div>
         <span>{meta.visionUsed ? `${meta.imageInputCount || 0} images` : 'Vision 미사용'}</span>
       </div>
+      {review?.summary ? <p className="visual-raw-summary">{review.summary}</p> : null}
       <div className="visual-two-column ai-review-columns">
         <div className="visual-key-value">
           <span>OpenAI</span>
@@ -185,12 +180,8 @@ function AiVisualReviewPanel({ aiReview, state }) {
       {meta.fallbackUsed || meta.visionFailureReason ? (
         <p className="panel-note relaxed-note">Vision 상태: {meta.visionFailureReason || 'fallback-used'}</p>
       ) : null}
-      {canShowVisionResults ? (
-        <AiVisualDifferenceList items={differences} />
-      ) : (
-        <p className="empty-row">Vision 결과가 없어 AI 시각 차이를 표시하지 않습니다.</p>
-      )}
-    </article>
+      <AiVisualDifferenceList items={differences} />
+    </section>
   )
 }
 
@@ -211,13 +202,60 @@ function AiVisualDifferenceList({ items = [] }) {
   )
 }
 
-function SeverityCard({ label, value, tone, description }) {
+function DifferenceList({ items = [] }) {
+  if (!items.length) return <p className="empty-row">표시할 다른 부분이 없습니다.</p>
+
   return (
-    <article className={`metric-card visual-severity-card ${tone}`}>
-      <p className="metric-label">{label}</p>
-      <p className="metric-value">{value}</p>
-      <span>{description}</span>
-    </article>
+    <ol className="difference-list">
+      {items.map((item, index) => (
+        <li className="difference-item" key={item.id || `${item.categoryLabel}-${item.title}-${index}`}>
+          <span className="difference-index">{index + 1}</span>
+          <div className="difference-copy">
+            <div className="difference-meta-row">
+              <span>{item.categoryLabel}</span>
+              {item.area && item.area !== 'Page Content' ? <span>{item.area}</span> : null}
+              <span className={`difference-severity ${item.severity}`}>{formatSeverity(item.severity)}</span>
+            </div>
+            <strong>{item.title}</strong>
+            <span>{item.description}</span>
+            {item.figmaValue || item.webValue ? (
+              <dl className="difference-values">
+                <div>
+                  <dt>Figma</dt>
+                  <dd>{formatValue(item.figmaValue)}</dd>
+                </div>
+                <div>
+                  <dt>Web</dt>
+                  <dd>{formatValue(item.webValue)}</dd>
+                </div>
+              </dl>
+            ) : null}
+          </div>
+        </li>
+      ))}
+    </ol>
+  )
+}
+
+function RuleIssueList({ cards = [] }) {
+  if (!cards.length) return <p className="empty-row">규칙 기반 이슈가 없습니다.</p>
+
+  return (
+    <ul className="visual-card-list">
+      {cards.map((card) => (
+        <li className={`visual-issue-card ${card.severity}`} key={`${card.category}-${card.title}-${card.detail}-${card.entityKey}`}>
+          <span>{card.severity}</span>
+          <strong>{card.title}</strong>
+          <p>{card.detail}</p>
+          {card.technical ? (
+            <details className="visual-technical-detail">
+              <summary>상세 보기</summary>
+              <small>{card.technical}</small>
+            </details>
+          ) : null}
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -319,6 +357,12 @@ function formatValue(value) {
   if (Array.isArray(value)) return formatList(value)
   if (value === undefined || value === null || value === '') return '-'
   return String(value)
+}
+
+function formatSeverity(value) {
+  if (value === 'critical') return 'Critical'
+  if (value === 'check') return 'Check'
+  return 'Warning'
 }
 
 function formatDate(value) {

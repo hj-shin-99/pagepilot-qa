@@ -2833,6 +2833,18 @@
   margin: 18px;
 }
 
+.visual-raw-summary {
+  margin: 12px 0;
+  border: 1px solid #eef0f3;
+  border-radius: 14px;
+  padding: 12px;
+  color: var(--ink);
+  background: #ffffff;
+  font-size: 13px;
+  font-weight: 740;
+  line-height: 1.55;
+}
+
 .empty-state .scan-stage-list {
   width: min(100%, 320px);
   margin: 18px auto 0;

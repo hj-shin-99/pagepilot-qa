@@ -4,32 +4,30 @@ const PRICE_NUMERIC_TYPES = new Set(['monthly-payment', 'amount', 'percentage', 
 const CATEGORY_LABELS = {
   text: 'Text',
   cta: 'CTA',
-  price: 'Price',
-  media: 'Media',
-  image: 'Image',
-  layout: 'Layout',
+  price: 'Text',
+  media: 'KV / Media',
+  image: 'KV / Media',
+  layout: 'KV / Media',
   missing: 'Missing',
-  count: 'Count',
-  other: 'Other',
+  count: 'Missing',
+  other: 'Text',
 }
 
 const CATEGORY_ORDER = {
   text: 1,
+  price: 1,
   cta: 2,
   media: 3,
   image: 3,
   layout: 3,
-  price: 4,
-  missing: 5,
-  count: 5,
-  other: 6,
+  missing: 4,
+  count: 4,
+  other: 5,
 }
 
 const AREA_ORDER = {
-  'Main Visual': 10,
+  'Main KV': 10,
   Navigation: 20,
-  'Product Promotion': 40,
-  'Product Card': 45,
   Footer: 80,
   'Page Content': 90,
 }
@@ -96,11 +94,9 @@ export function normalizeVisualArea(item = {}, fallback = 'Page Content') {
     Array.isArray(item.reasons) ? item.reasons.join(' ') : '',
   ].map(getString).filter(Boolean).join(' ').toLowerCase()
 
-  if (/hero|main.?visual|main|kv|key.?visual|visual/.test(raw)) return 'Main Visual'
+  if (/hero|main.?visual|main|kv|key.?visual|visual/.test(raw)) return 'Main KV'
   if (/nav|navigation|header|gnb|menu/.test(raw)) return 'Navigation'
   if (/footer|legal|copyright/.test(raw)) return 'Footer'
-  if (/promotion|promo|campaign|offer|benefit/.test(raw)) return 'Product Promotion'
-  if (/product|vehicle|model|card|tile|price|payment|amount|금액|가격|납입/.test(raw)) return 'Product Card'
   return fallback
 }
 
@@ -126,13 +122,13 @@ function createAiItems(aiReview = {}) {
         source: 'ai',
         category,
         categoryLabel: normalizeVisualCategoryLabel(category),
-        area: normalizeVisualArea(issue, category === 'media' || category === 'cta' ? 'Main Visual' : 'Page Content'),
+        area: normalizeVisualArea(issue, category === 'media' || category === 'cta' ? 'Main KV' : 'Page Content'),
         title: createIssueTitle(issue, category),
         description: createIssueDescription(issue, category),
         figmaValue: evidenceValues.figma,
         webValue: evidenceValues.web,
         severity: normalizeSeverity(issue.severity || (index < mustFix.length ? 'critical' : 'warning')),
-        sortRank: getAreaRank(normalizeVisualArea(issue, category === 'media' || category === 'cta' ? 'Main Visual' : 'Page Content')),
+        sortRank: getAreaRank(normalizeVisualArea(issue, category === 'media' || category === 'cta' ? 'Main KV' : 'Page Content')),
       }
     })
 }
@@ -148,9 +144,9 @@ function createCanonicalItems(result = {}) {
     items.push({
       id: 'canonical-hero-cta-count',
       source: 'canonical',
-      category: 'count',
-      categoryLabel: 'Count',
-      area: 'Main Visual',
+      category: 'cta',
+      categoryLabel: 'CTA',
+      area: 'Main KV',
       title: 'Hero CTA 개수가 다릅니다.',
       description: createCtaCountDescription(heroCtaGroup),
       figmaValue: formatCount(heroCtaGroup.figma?.count),
@@ -167,8 +163,8 @@ function createCanonicalItems(result = {}) {
       id: 'canonical-hero-media',
       source: 'canonical',
       category: 'media',
-      categoryLabel: 'Media',
-      area: 'Main Visual',
+      categoryLabel: normalizeVisualCategoryLabel('media'),
+      area: 'Main KV',
       title: 'Hero 미디어 구성이 다릅니다.',
       description: createMediaDescription(heroMediaGroup),
       figmaValue: formatMediaTypes(heroMediaGroup.figma?.mediaTypes),
@@ -184,7 +180,7 @@ function createCanonicalItems(result = {}) {
 
 function createCanonicalDifferenceItem(difference = {}, index, aiHints = {}) {
   const category = classifyVisualDifferenceItem(enrichDifferenceWithPriceSignals(difference, aiHints))
-  const area = normalizeVisualArea(difference, category === 'cta' ? 'Main Visual' : 'Page Content')
+  const area = normalizeVisualArea(difference, category === 'cta' ? 'Main KV' : 'Page Content')
   const figmaValue = getString(difference.figmaText || difference.text)
   const webValue = getString(difference.webText)
   return {
@@ -320,12 +316,12 @@ function createIssueDescription(issue, category) {
 }
 
 function createCanonicalTitle(category, area) {
-  if (category === 'price') return area === 'Product Promotion' ? '프로모션 금액이 다릅니다.' : '금액 또는 숫자 값이 다릅니다.'
-  if (category === 'cta') return area === 'Main Visual' ? 'Hero CTA 문구가 다릅니다.' : 'CTA 문구가 다릅니다.'
-  if (category === 'media') return area === 'Main Visual' ? 'Hero 미디어 구성이 다릅니다.' : '미디어 구성이 다릅니다.'
+  if (category === 'price') return '문구가 다릅니다.'
+  if (category === 'cta') return area === 'Main KV' ? 'Main KV CTA 문구가 다릅니다.' : 'CTA 문구가 다릅니다.'
+  if (category === 'media') return area === 'Main KV' ? 'Main KV 미디어 구성이 다릅니다.' : '미디어 구성이 다릅니다.'
   if (category === 'missing') return '한쪽에만 있는 항목입니다.'
   if (category === 'count') return '항목 개수가 다릅니다.'
-  return area === 'Main Visual' ? 'Hero 메인 문구가 다릅니다.' : '문구가 다릅니다.'
+  return area === 'Main KV' ? 'Main KV 문구가 다릅니다.' : '문구가 다릅니다.'
 }
 
 function createCanonicalDescription(category, figmaValue, webValue) {
@@ -427,7 +423,7 @@ function getAreaRank(area) {
 }
 
 function getDefaultAreaForCategory(category) {
-  return ['media', 'image', 'layout', 'cta'].includes(category) ? 'Main Visual' : 'Page Content'
+  return ['media', 'image', 'layout', 'cta'].includes(category) ? 'Main KV' : 'Page Content'
 }
 
 function categoriesAreCompatible(first, second) {

@@ -33,9 +33,9 @@ test('CTA and media categories are classified from evidence', () => {
 })
 
 test('area names are normalized for user-facing cards', () => {
-  assert.equal(normalizeVisualArea({ sectionPath: 'Hero / key visual / title' }), 'Main Visual')
+  assert.equal(normalizeVisualArea({ sectionPath: 'Hero / key visual / title' }), 'Main KV')
   assert.equal(normalizeVisualArea({ layerPath: 'footer / legal' }), 'Footer')
-  assert.equal(normalizeVisualArea({ sectionPath: 'promotion / card' }), 'Product Promotion')
+  assert.equal(normalizeVisualArea({ sectionPath: 'promotion / card' }), 'Page Content')
 })
 
 test('Vision visualDifferences drive default issue cards and merge with canonical media', () => {
@@ -61,7 +61,7 @@ test('canonical Figma and Web values override AI guesses for exact strings', () 
   const price = items.find((item) => item.title === 'Price mismatch')
   assert.equal(price.figmaValue, 'Starter plan, $47 per month')
   assert.equal(price.webValue, 'Starter plan, $50 per month')
-  assert.equal(price.area, 'Product Card')
+  assert.equal(price.area, 'Page Content')
 })
 
 test('fallback or missing AI uses canonical cards without vague content title', () => {
@@ -70,6 +70,7 @@ test('fallback or missing AI uses canonical cards without vague content title', 
   assert.equal(items.some((item) => item.title === '콘텐츠'), false)
   assert.equal(items.some((item) => item.area === '콘텐츠'), false)
   assert.equal(items.some((item) => item.categoryLabel === 'Text'), true)
+  assert.equal(items.every((item) => ['Text', 'CTA', 'KV / Media', 'Missing'].includes(item.categoryLabel)), true)
 })
 
 test('equivalent AI and canonical issues merge while distinct issues remain', () => {
@@ -85,12 +86,12 @@ test('equivalent AI and canonical issues merge while distinct issues remain', ()
   assert.equal(items.filter((item) => item.title === 'Monthly price must be fixed').length, 1)
   assert.equal(items.some((item) => item.title === 'Hero title copy should be checked'), true)
   assert.equal(items.some((item) => item.categoryLabel === 'CTA'), true)
-  assert.equal(items.filter((item) => item.categoryLabel === 'Media').length, 1)
+  assert.equal(items.filter((item) => item.categoryLabel === 'KV / Media').length, 1)
 })
 
 test('issue sorting follows page order before category order', () => {
   const items = createVisualDifferenceItems(landingResult)
-  assert.deepEqual(items.slice(0, 4).map((item) => item.categoryLabel), ['Text', 'CTA', 'Media', 'Price'])
+  assert.deepEqual(items.slice(0, 4).map((item) => item.categoryLabel), ['Text', 'CTA', 'KV / Media', 'Text'])
 })
 
 test('cards expose Figma and Web values when evidence exists', () => {
@@ -102,7 +103,7 @@ test('cards expose Figma and Web values when evidence exists', () => {
 
 test('page without hero does not invent a Hero issue', () => {
   const items = createVisualDifferenceItems({ comparison: { differences: [{ figmaText: 'Card A - $10', webText: 'Card A - $12', sectionPath: 'product card 1', yRatio: 0.4 }] }, aiHints: { prices: [{ numericType: 'amount', displayText: 'Card A - $12' }] } })
-  assert.equal(items.some((item) => item.area === 'Main Visual'), false)
+  assert.equal(items.some((item) => item.area === 'Main KV'), false)
 })
 
 test('same price in different cards stays separate when section evidence differs', () => {
@@ -113,12 +114,12 @@ test('same price in different cards stays separate when section evidence differs
     ] },
     aiHints: { prices: [{ numericType: 'amount', displayText: 'Basic $25' }, { numericType: 'amount', displayText: 'Pro $25' }] },
   })
-  assert.equal(items.filter((item) => item.categoryLabel === 'Price').length, 2)
+  assert.equal(items.filter((item) => item.categoryLabel === 'Text').length, 2)
 })
 
 test('image-equivalent page does not create a Vision issue without Vision evidence', () => {
   const items = createVisualDifferenceItems({ comparison: { differences: [] }, aiHints: { heroMediaGroup: { comparisonHint: '', figma: { mediaTypes: ['image'] }, web: { mediaTypes: ['image'] } } } })
-  assert.equal(items.some((item) => ['Image', 'Media'].includes(item.categoryLabel)), false)
+  assert.equal(items.some((item) => item.categoryLabel === 'KV / Media'), false)
 })
 
 test('text identical but Hero image different creates Vision-only issue', () => {
@@ -127,5 +128,5 @@ test('text identical but Hero image different creates Vision-only issue', () => 
     review: { visualDifferences: [{ area: 'Main Visual', category: 'Image', title: 'Hero image content differs', summary: 'The main visual subject is different.', figmaValue: 'Outdoor product photo', webValue: 'Indoor detail photo', severity: 'warning', confidence: 'high', order: 0 }], mustFix: [], verify: [] },
   })
   assert.equal(items.length, 1)
-  assert.equal(items[0].categoryLabel, 'Image')
+  assert.equal(items[0].categoryLabel, 'KV / Media')
 })

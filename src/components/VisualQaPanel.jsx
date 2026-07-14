@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   createActionItems,
   createDifferenceItems,
@@ -10,9 +10,10 @@ import {
   createVisualIssueCards,
   createWebDisplayImageUrl,
 } from '../utils/visualQa'
-import { createVisualDifferenceItems } from '../utils/visualIssueList'
+import { createVisualDifferenceReport, DEFAULT_VISUAL_ISSUE_DISPLAY_COUNT } from '../utils/visualIssueList'
+import { createVisualQaTitle } from '../utils/visualTitle'
 
-function VisualQaPanel({ result, summary, copyStatus, onCopyResult, aiReview, aiReviewState = 'idle' }) {
+function VisualQaPanel({ result, summary, copyStatus, onCopyResult, aiReview, aiReviewState = 'idle', pageTitle }) {
   const cards = createVisualIssueCards(result)
   const meta = result.meta || {}
   const aiHints = result.aiHints || {}
@@ -21,7 +22,14 @@ function VisualQaPanel({ result, summary, copyStatus, onCopyResult, aiReview, ai
   const media = createMediaSummary(aiHints)
   const figmaImage = createFigmaImageUrl(result.figma)
   const webImage = createWebDisplayImageUrl(result.web)
-  const differenceItems = createVisualDifferenceItems(result, aiReview)
+  const differenceReport = createVisualDifferenceReport(result, aiReview)
+  const differenceItems = differenceReport.items
+  const differenceMeta = differenceReport.meta
+  const visualTitle = createVisualQaTitle({ pageTitle, result })
+
+  useEffect(() => {
+    console.info(`[Visual QA Issues] rawVisionCount=${differenceMeta.rawVisionCount} canonicalSupplementCount=${differenceMeta.canonicalSupplementCount} mergedCount=${differenceMeta.mergedCount} dedupedCount=${differenceMeta.dedupedCount} displayCount=${differenceMeta.displayCount} invalidIssueDroppedCount=${differenceMeta.invalidIssueDroppedCount} crossCategoryMergeRejectedCount=${differenceMeta.crossCategoryMergeRejectedCount}`)
+  }, [differenceMeta.rawVisionCount, differenceMeta.canonicalSupplementCount, differenceMeta.mergedCount, differenceMeta.dedupedCount, differenceMeta.displayCount, differenceMeta.invalidIssueDroppedCount, differenceMeta.crossCategoryMergeRejectedCount])
 
   return (
     <section className="section-stack visual-qa-panel" aria-label="Visual QA 결과">
@@ -29,7 +37,7 @@ function VisualQaPanel({ result, summary, copyStatus, onCopyResult, aiReview, ai
         <div className="audit-header-top">
           <div>
             <p className="eyebrow">Visual QA · {formatDate(meta.createdAt)}</p>
-            <h2>{result.web?.page?.title || 'Canonical Visual QA 결과'}</h2>
+            <h2>{visualTitle}</h2>
             <p className="target-url">{meta.webUrl}</p>
           </div>
           <button className="secondary-button" type="button" onClick={onCopyResult}>
@@ -61,9 +69,9 @@ function VisualQaPanel({ result, summary, copyStatus, onCopyResult, aiReview, ai
             <h3>다른 부분</h3>
             <p className="panel-note relaxed-note">수정 또는 확인이 필요한 실무형 이슈만 합쳐서 표시합니다.</p>
           </div>
-          <span>{differenceItems.length}개</span>
+          <span>{differenceMeta.dedupedCount}개</span>
         </div>
-        <DifferenceList items={differenceItems} />
+        <DifferenceList items={differenceItems} initialCount={DEFAULT_VISUAL_ISSUE_DISPLAY_COUNT} />
       </article>
 
       <details className="detail-card visual-detail-accordion">
@@ -124,6 +132,13 @@ function VisualQaPanel({ result, summary, copyStatus, onCopyResult, aiReview, ai
             <KeyValue label="OpenAI 호출" value={aiReview?.meta?.openAiCalled === true ? '있음' : '없음'} />
             <KeyValue label="Vision 사용" value={aiReview?.meta?.visionUsed === true ? '있음' : '없음'} />
             <KeyValue label="Image Inputs" value={aiReview?.meta?.imageInputCount} />
+            <KeyValue label="Raw Vision Count" value={differenceMeta.rawVisionCount} />
+            <KeyValue label="Canonical Supplement Count" value={differenceMeta.canonicalSupplementCount} />
+            <KeyValue label="Merged Count" value={differenceMeta.mergedCount} />
+            <KeyValue label="Deduped Count" value={differenceMeta.dedupedCount} />
+            <KeyValue label="Display Count" value={differenceMeta.displayCount} />
+            <KeyValue label="Invalid Issue Dropped Count" value={differenceMeta.invalidIssueDroppedCount} />
+            <KeyValue label="Cross Category Merge Rejected Count" value={differenceMeta.crossCategoryMergeRejectedCount} />
             <KeyValue label="Fallback" value={aiReview?.meta?.fallbackUsed === true ? '있음' : '없음'} />
             <KeyValue label="Payload Version" value={meta.payloadVersion} />
             <KeyValue label="Playwright Runs" value={meta.playwrightRunCount} />
@@ -202,38 +217,47 @@ function AiVisualDifferenceList({ items = [] }) {
   )
 }
 
-function DifferenceList({ items = [] }) {
+function DifferenceList({ items = [], initialCount = DEFAULT_VISUAL_ISSUE_DISPLAY_COUNT }) {
+  const [expanded, setExpanded] = useState(false)
   if (!items.length) return <p className="empty-row">표시할 다른 부분이 없습니다.</p>
+  const visibleItems = expanded ? items : items.slice(0, initialCount)
+  const remainingCount = Math.max(0, items.length - visibleItems.length)
 
   return (
-    <ol className="difference-list">
-      {items.map((item, index) => (
-        <li className="difference-item" key={item.id || `${item.categoryLabel}-${item.title}-${index}`}>
-          <span className="difference-index">{index + 1}</span>
-          <div className="difference-copy">
-            <div className="difference-meta-row">
-              <span>{item.categoryLabel}</span>
-              {item.area && item.area !== 'Page Content' ? <span>{item.area}</span> : null}
-              <span className={`difference-severity ${item.severity}`}>{formatSeverity(item.severity)}</span>
+    <>
+      <ol className="difference-list">
+        {visibleItems.map((item, index) => (
+          <li className="difference-item" key={item.id || `${item.categoryLabel}-${item.title}-${index}`}>
+            <span className="difference-index">{index + 1}</span>
+            <div className="difference-copy">
+              <div className="difference-meta-row">
+                <span>{item.categoryLabel}</span>
+                {item.area && item.area !== 'Page Content' ? <span>{item.area}</span> : null}
+                <span className={`difference-severity ${item.severity}`}>{formatSeverity(item.severity)}</span>
+              </div>
+              <strong>{item.title}</strong>
+              {item.figmaValue || item.webValue ? (
+                <dl className="difference-values">
+                  <div>
+                    <dt>Figma</dt>
+                    <dd>{formatValue(item.figmaValue)}</dd>
+                  </div>
+                  <div>
+                    <dt>Web</dt>
+                    <dd>{formatValue(item.webValue)}</dd>
+                  </div>
+                </dl>
+              ) : null}
             </div>
-            <strong>{item.title}</strong>
-            <span>{item.description}</span>
-            {item.figmaValue || item.webValue ? (
-              <dl className="difference-values">
-                <div>
-                  <dt>Figma</dt>
-                  <dd>{formatValue(item.figmaValue)}</dd>
-                </div>
-                <div>
-                  <dt>Web</dt>
-                  <dd>{formatValue(item.webValue)}</dd>
-                </div>
-              </dl>
-            ) : null}
-          </div>
-        </li>
-      ))}
-    </ol>
+          </li>
+        ))}
+      </ol>
+      {remainingCount > 0 ? (
+        <button className="secondary-button difference-more-button" type="button" onClick={() => setExpanded(true)}>
+          나머지 {remainingCount}건 더보기
+        </button>
+      ) : null}
+    </>
   )
 }
 

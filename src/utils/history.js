@@ -83,6 +83,7 @@ function sanitizeAiReview(aiReview) {
     meta: {
       openAiCalled: aiReview.meta?.openAiCalled === true,
       model: getString(aiReview.meta?.model),
+      rawVisionCount: getNumber(aiReview.meta?.rawVisionCount),
       fallbackUsed: aiReview.meta?.fallbackUsed === true,
     },
     review: {

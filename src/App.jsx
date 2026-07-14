@@ -211,6 +211,7 @@ function App() {
             result={visualResult}
             aiReview={aiReview}
             aiReviewState={aiReviewState}
+            pageTitle={techResult?.pageTitle}
             summary={visualSummary}
             onCopyResult={handleCopyVisualResult}
           />
@@ -392,6 +393,7 @@ function sanitizeHistoryAiReview(aiReview) {
       openAiCalled: safe.meta.openAiCalled,
       visionUsed: safe.meta.visionUsed,
       imageInputCount: safe.meta.imageInputCount,
+      rawVisionCount: safe.meta.rawVisionCount,
       figmaImagePrepared: safe.meta.figmaImagePrepared,
       webImagePrepared: safe.meta.webImagePrepared,
       model: safe.meta.model,

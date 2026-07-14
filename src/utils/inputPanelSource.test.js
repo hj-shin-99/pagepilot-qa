@@ -17,7 +17,10 @@ test('input panel keeps scan scope copy out of the sidebar', () => {
   assert.equal(source.includes('MVP'), false)
   assert.equal(source.includes('/api/scan'), false)
   assert.equal(source.includes('/api/visual/payload'), false)
-  assert.equal(source.includes('Web URL을 입력하면 Tech QA를 실행합니다.'), true)
+  assert.equal(source.includes('Web URL을 입력하면 Tech QA를 실행합니다. Figma URL을 함께 입력하면 Visual QA도 실행합니다.'), true)
+  assert.equal(source.includes('Figma Frame URL을 함께 입력하면 Visual QA도 실행합니다.'), false)
+  assert.equal(source.includes('Figma URL <span className="field-label-note">Visual QA용</span>'), true)
+  assert.equal(source.includes('Figma Frame URL <span className="field-label-note">Visual QA용</span>'), false)
 })
 
 test('app default scan flow calls integrated qa endpoint only', () => {
@@ -26,6 +29,7 @@ test('app default scan flow calls integrated qa endpoint only', () => {
   assert.equal(source.includes("fetch('/api/ai-review/from-payload'"), true)
   assert.equal(source.includes("fetch('/api/scan'"), false)
   assert.equal(source.includes("fetch('/api/visual/payload'"), false)
+  assert.equal(source.includes('pageTitle={techResult?.pageTitle}'), true)
 })
 
 test('visual panel keeps AI review report UI out of the default view', () => {
@@ -35,7 +39,9 @@ test('visual panel keeps AI review report UI out of the default view', () => {
   assert.equal(source.includes('ReleaseDecisionCard'), false)
   assert.equal(source.includes('KeyIssueList'), false)
   assert.equal(source.includes('MetricPill'), false)
-  assert.equal(source.includes('createVisualDifferenceItems(result, aiReview)'), true)
+  assert.equal(source.includes('createVisualDifferenceReport(result, aiReview)'), true)
+  assert.equal(source.includes('rawVisionCount=${differenceMeta.rawVisionCount}'), true)
+  assert.equal(source.includes('createVisualQaTitle({ pageTitle, result })'), true)
   assert.equal(source.includes('AI 시각 비교'), false)
   assert.equal(source.includes('AI Vision Raw Summary'), true)
   assert.equal(source.includes('visualDifferences'), true)
@@ -82,4 +88,7 @@ test('visual panel renders simplified default sections and folded details', () =
   assert.equal(source.includes('title="Text Difference"'), true)
   assert.equal(source.includes('title="System"'), true)
   assert.equal(source.includes('Payload Version'), true)
+  assert.equal(source.includes('Raw Vision Count'), true)
+  assert.equal(source.includes('나머지 {remainingCount}건 더보기'), true)
+  assert.equal(source.includes('<span>{item.description}</span>'), false)
 })

@@ -1,5 +1,6 @@
 const VISUAL_AI_CATEGORIES = new Set(['price', 'text', 'cta', 'media'])
 const PRICE_NUMERIC_TYPES = new Set(['monthly-payment', 'amount', 'percentage', 'interest-rate', 'duration'])
+export const DEFAULT_VISUAL_ISSUE_DISPLAY_COUNT = 10
 
 const CATEGORY_LABELS = {
   text: 'Text',
@@ -13,18 +14,6 @@ const CATEGORY_LABELS = {
   other: 'Text',
 }
 
-const CATEGORY_ORDER = {
-  text: 1,
-  price: 1,
-  cta: 2,
-  media: 3,
-  image: 3,
-  layout: 3,
-  missing: 4,
-  count: 4,
-  other: 5,
-}
-
 const AREA_ORDER = {
   'Main KV': 10,
   Navigation: 20,
@@ -33,16 +22,77 @@ const AREA_ORDER = {
 }
 
 export function createVisualDifferenceItems(result = {}, aiReview = null) {
-  const canonicalItems = createCanonicalItems(result)
-  const visionItems = shouldUseAiReview(aiReview) ? createVisionItems(aiReview) : []
-  const aiItems = shouldUseAiReview(aiReview) ? createAiItems(aiReview) : []
-  const preferredItems = [...visionItems, ...aiItems]
-  const sourceItems = preferredItems.length > 0 ? mergeAiAndCanonicalItems(preferredItems, canonicalItems) : canonicalItems
+  return createVisualDifferenceReport(result, aiReview).items
+}
 
-  return dedupeItems(sourceItems)
-    .map((item, index) => ({ ...item, id: item.id || `visual-difference-${index}` }))
+export function createVisualDifferenceReport(result = {}, aiReview = null, options = {}) {
+  const displayLimit = Number.isFinite(Number(options.displayLimit)) && Number(options.displayLimit) > 0 ? Number(options.displayLimit) : DEFAULT_VISUAL_ISSUE_DISPLAY_COUNT
+  const stats = {
+    rawVisionCount: getRawVisionCount(aiReview),
+    canonicalSupplementCount: 0,
+    invalidIssueDroppedCount: 0,
+    crossCategoryMergeRejectedCount: 0,
+  }
+  const canonicalItems = createCanonicalItems(result).filter(isDefaultIssueCandidate)
+  let sourceItems
+
+  if (hasVisionPrimarySource(aiReview)) {
+    const visionItems = createVisionItems(aiReview).filter(isDefaultIssueCandidate)
+    const primaryItems = mergePrimaryItemsWithCanonical(visionItems, canonicalItems, stats)
+    const supplementalItems = createSupplementalCanonicalItems(canonicalItems, primaryItems, stats)
+    sourceItems = [...primaryItems, ...supplementalItems]
+  } else {
+    const visionItems = shouldUseAiReview(aiReview) ? createVisionItems(aiReview) : []
+    const aiItems = shouldUseAiReview(aiReview) ? createAiItems(aiReview) : []
+    const preferredItems = [...visionItems, ...aiItems]
+    sourceItems = preferredItems.length > 0 ? mergeAiAndCanonicalItems(preferredItems, canonicalItems, stats) : canonicalItems
+  }
+
+  return finalizeIssueItems(sourceItems, { stats, displayLimit, includeProvenance: options.includeProvenance === true })
+}
+
+function finalizeIssueItems(items, { stats, displayLimit, includeProvenance }) {
+  const candidateItems = []
+  items.forEach((item) => {
+    if (!isDefaultIssueCandidate(item)) return
+    if (!isConsistentIssue(item)) {
+      stats.invalidIssueDroppedCount += 1
+      return
+    }
+    candidateItems.push(item)
+  })
+  const mergedCount = candidateItems.length
+  const dedupedItems = dedupeItems(candidateItems)
+    .map((item, index) => includeProvenance ? { ...item, id: item.id || `visual-difference-${index}` } : stripProvenance({ ...item, id: item.id || `visual-difference-${index}` }))
     .sort(compareIssueItems)
-    .slice(0, 16)
+  return {
+    items: dedupedItems,
+    meta: {
+      rawVisionCount: stats.rawVisionCount,
+      canonicalSupplementCount: stats.canonicalSupplementCount,
+      mergedCount,
+      dedupedCount: dedupedItems.length,
+      displayCount: Math.min(displayLimit, dedupedItems.length),
+      invalidIssueDroppedCount: stats.invalidIssueDroppedCount,
+      crossCategoryMergeRejectedCount: stats.crossCategoryMergeRejectedCount,
+    },
+  }
+}
+
+function stripProvenance(item) {
+  const result = { ...item }
+  delete result.provenance
+  return result
+}
+
+function getRawVisionCount(aiReview) {
+  if (Number.isFinite(Number(aiReview?.meta?.rawVisionCount))) return Number(aiReview.meta.rawVisionCount)
+  return Array.isArray(aiReview?.review?.visualDifferences) ? aiReview.review.visualDifferences.length : 0
+}
+
+function hasVisionPrimarySource(aiReview) {
+  const differences = Array.isArray(aiReview?.review?.visualDifferences) ? aiReview.review.visualDifferences : []
+  return aiReview?.meta?.visionUsed === true && aiReview?.meta?.fallbackUsed !== true && differences.length > 0
 }
 
 function createVisionItems(aiReview = {}) {
@@ -59,13 +109,26 @@ function createVisionItems(aiReview = {}) {
         category,
         categoryLabel: normalizeVisualCategoryLabel(category),
         area,
-        title: getString(item.title) || createCanonicalTitle(category, area),
+        title: createDisplayTitle(category),
         description: getString(item.summary || item.description) || createCanonicalDescription(category, item.figmaValue, item.webValue),
         figmaValue: getString(item.figmaValue || item.figma),
         webValue: getString(item.webValue || item.web),
         severity: normalizeSeverity(item.severity),
         confidence: normalizeConfidence(item.confidence),
-        sortRank: Number.isFinite(Number(item.order)) ? Number(item.order) : getAreaRank(area),
+        sortRank: getSortRank(item, area),
+        sectionId: getString(item.sectionId),
+        sectionPath: getString(item.sectionPath || item.layerPath || item.contextPath),
+        yRatio: getNullableNumber(item.yRatio ?? item.sectionYRatio ?? item.figmaYRatio ?? item.webYRatio),
+        xRatio: getNullableNumber(item.xRatio ?? item.figmaXRatio ?? item.webXRatio),
+        sectionKey: createSectionKey(item),
+        provenance: {
+          origin: 'vision',
+          matchedVisionIndex: index,
+          matchedCanonicalEntityIds: [],
+          canonicalCategory: '',
+          canonicalSectionId: '',
+          mergeReason: '',
+        },
         mergeTokens: [item.area, item.category, item.title, item.summary, item.figmaValue, item.webValue].map(getString).filter(Boolean),
       }
     })
@@ -94,9 +157,9 @@ export function normalizeVisualArea(item = {}, fallback = 'Page Content') {
     Array.isArray(item.reasons) ? item.reasons.join(' ') : '',
   ].map(getString).filter(Boolean).join(' ').toLowerCase()
 
-  if (/hero|main.?visual|main|kv|key.?visual|visual/.test(raw)) return 'Main KV'
-  if (/nav|navigation|header|gnb|menu/.test(raw)) return 'Navigation'
-  if (/footer|legal|copyright/.test(raw)) return 'Footer'
+  if (/hero|main.?visual|main|kv|key.?visual|visual|히어로|메인|비주얼|키.?비주얼/.test(raw)) return 'Main KV'
+  if (/nav|navigation|header|gnb|menu|내비|네비|헤더|메뉴/.test(raw)) return 'Navigation'
+  if (/footer|legal|copyright|푸터|약관|저작권/.test(raw)) return 'Footer'
   return fallback
 }
 
@@ -128,7 +191,9 @@ function createAiItems(aiReview = {}) {
         figmaValue: evidenceValues.figma,
         webValue: evidenceValues.web,
         severity: normalizeSeverity(issue.severity || (index < mustFix.length ? 'critical' : 'warning')),
+        confidence: normalizeConfidence(issue.confidence),
         sortRank: getAreaRank(normalizeVisualArea(issue, category === 'media' || category === 'cta' ? 'Main KV' : 'Page Content')),
+        mergeTokens: [issue.title, issue.description, ...(Array.isArray(issue.evidence) ? issue.evidence : [])].map(getString).filter(Boolean),
       }
     })
 }
@@ -139,7 +204,7 @@ function createCanonicalItems(result = {}) {
   const differences = Array.isArray(comparison.differences) ? comparison.differences : []
   const items = differences.map((difference, index) => createCanonicalDifferenceItem(difference, index, aiHints))
 
-  const heroCtaGroup = aiHints.heroCtaGroup || {}
+  const heroCtaGroup = normalizeHeroCtaGroup(aiHints.heroCtaGroup || {})
   if (Number(heroCtaGroup.countDifference || 0) > 0) {
     items.push({
       id: 'canonical-hero-cta-count',
@@ -152,8 +217,18 @@ function createCanonicalItems(result = {}) {
       figmaValue: formatCount(heroCtaGroup.figma?.count),
       webValue: formatCount(heroCtaGroup.web?.count),
       severity: 'critical',
+      confidence: normalizeConfidence(heroCtaGroup.confidence || 'medium'),
       sortRank: 12,
-      mergeTokens: ['hero', 'cta', 'count'],
+      sectionKey: 'hero-cta',
+      provenance: {
+        origin: 'canonical',
+        matchedVisionIndex: null,
+        matchedCanonicalEntityIds: [...heroCtaGroup.figma.actions, ...heroCtaGroup.web.actions].map((item) => item.entityId || item.text).filter(Boolean),
+        canonicalCategory: 'cta',
+        canonicalSectionId: 'hero-cta',
+        mergeReason: '',
+      },
+      mergeTokens: ['hero', 'cta', 'count', formatCount(heroCtaGroup.figma?.count), formatCount(heroCtaGroup.web?.count)],
     })
   }
 
@@ -165,12 +240,22 @@ function createCanonicalItems(result = {}) {
       category: 'media',
       categoryLabel: normalizeVisualCategoryLabel('media'),
       area: 'Main KV',
-      title: 'Hero 미디어 구성이 다릅니다.',
+      title: createDisplayTitle('media'),
       description: createMediaDescription(heroMediaGroup),
       figmaValue: formatMediaTypes(heroMediaGroup.figma?.mediaTypes),
       webValue: formatMediaTypes(heroMediaGroup.web?.mediaTypes),
       severity: 'warning',
+      confidence: normalizeConfidence(heroMediaGroup.confidence || 'medium'),
       sortRank: 14,
+      sectionKey: 'hero-media',
+      provenance: {
+        origin: 'canonical',
+        matchedVisionIndex: null,
+        matchedCanonicalEntityIds: ['hero-media'],
+        canonicalCategory: 'media',
+        canonicalSectionId: 'hero-media',
+        mergeReason: '',
+      },
       mergeTokens: ['hero', 'media', formatMediaTypes(heroMediaGroup.figma?.mediaTypes), formatMediaTypes(heroMediaGroup.web?.mediaTypes)],
     })
   }
@@ -194,7 +279,21 @@ function createCanonicalDifferenceItem(difference = {}, index, aiHints = {}) {
     figmaValue,
     webValue,
     severity: normalizeCanonicalSeverity(difference, category),
-    sortRank: getSortRank(difference, area),
+    confidence: normalizeConfidence(difference.confidence || difference.matchConfidence),
+    sortRank: getSortRank({ ...difference, order: difference.order ?? index }, area),
+    sectionId: getString(difference.sectionId),
+    sectionPath: getString(difference.sectionPath || difference.layerPath || difference.contextPath),
+    yRatio: getNullableNumber(difference.yRatio ?? difference.sectionYRatio ?? difference.figmaYRatio ?? difference.webYRatio ?? difference.figmaNode?.yRatio ?? difference.webElement?.yRatio),
+    xRatio: getNullableNumber(difference.xRatio ?? difference.figmaXRatio ?? difference.webXRatio ?? difference.figmaNode?.xRatio ?? difference.webElement?.xRatio),
+    sectionKey: createSectionKey(difference),
+    provenance: {
+      origin: 'canonical',
+      matchedVisionIndex: null,
+      matchedCanonicalEntityIds: [difference.entityId, difference.sectionId, difference.figmaNodeId, difference.webSelector].map(getString).filter(Boolean),
+      canonicalCategory: category,
+      canonicalSectionId: createSectionKey(difference),
+      mergeReason: '',
+    },
     mergeTokens: createMergeTokens({ category, area, figmaValue, webValue, raw: difference }),
   }
 }
@@ -209,10 +308,10 @@ function enrichDifferenceWithPriceSignals(difference, aiHints) {
   return relatedPrice ? { ...difference, numericType: relatedPrice.numericType, priceSignal: true } : difference
 }
 
-function mergeAiAndCanonicalItems(aiItems, canonicalItems) {
+function mergeAiAndCanonicalItems(aiItems, canonicalItems, stats) {
   const usedCanonicalIndexes = new Set()
   const mergedAiItems = aiItems.map((aiItem) => {
-    const matchIndex = findBestCanonicalMatch(aiItem, canonicalItems, usedCanonicalIndexes)
+    const matchIndex = findBestCanonicalMatch(aiItem, canonicalItems, usedCanonicalIndexes, stats)
     if (matchIndex === -1) return aiItem
     usedCanonicalIndexes.add(matchIndex)
     return mergeIssueItem(aiItem, canonicalItems[matchIndex])
@@ -222,12 +321,40 @@ function mergeAiAndCanonicalItems(aiItems, canonicalItems) {
   return [...mergedAiItems, ...remainingCanonicalItems]
 }
 
-function findBestCanonicalMatch(aiItem, canonicalItems, usedIndexes) {
+function mergePrimaryItemsWithCanonical(primaryItems, canonicalItems, stats) {
+  const usedCanonicalIndexes = new Set()
+  return primaryItems.map((primaryItem) => {
+    const matchIndex = findBestCanonicalMatch(primaryItem, canonicalItems, usedCanonicalIndexes, stats)
+    if (matchIndex === -1) return primaryItem
+    usedCanonicalIndexes.add(matchIndex)
+    return mergeIssueItem(primaryItem, canonicalItems[matchIndex])
+  })
+}
+
+function createSupplementalCanonicalItems(canonicalItems, primaryItems, stats) {
+  const supplemental = []
+  canonicalItems.forEach((item) => {
+    if (!isHighConfidenceCanonicalSupplement(item)) return
+    if (primaryItems.some((primaryItem) => areDuplicateItems(primaryItem, item))) return
+    if (supplemental.some((existing) => areDuplicateItems(existing, item))) return
+    supplemental.push(item)
+    stats.canonicalSupplementCount += 1
+  })
+  return supplemental
+}
+
+function isHighConfidenceCanonicalSupplement(item) {
+  if (!getString(item.figmaValue) || !getString(item.webValue)) return false
+  if (isLowValueIssue(item)) return false
+  return normalizeConfidence(item.confidence) === 'high'
+}
+
+function findBestCanonicalMatch(aiItem, canonicalItems, usedIndexes, stats) {
   let bestIndex = -1
   let bestScore = 0
   canonicalItems.forEach((canonicalItem, index) => {
     if (usedIndexes.has(index)) return
-    const score = scoreIssueMatch(aiItem, canonicalItem)
+    const score = scoreIssueMatch(aiItem, canonicalItem, stats)
     if (score > bestScore) {
       bestScore = score
       bestIndex = index
@@ -236,12 +363,22 @@ function findBestCanonicalMatch(aiItem, canonicalItems, usedIndexes) {
   return bestScore >= 3 ? bestIndex : -1
 }
 
-function scoreIssueMatch(aiItem, canonicalItem) {
+function scoreIssueMatch(aiItem, canonicalItem, stats) {
   let score = 0
   const aiCategory = normalizeCategory(aiItem.category)
   const canonicalCategory = normalizeCategory(canonicalItem.category)
+  if (!canMergeIssueCategories(aiItem, canonicalItem)) {
+    if (hasMergeOverlapSignal(aiItem, canonicalItem)) stats.crossCategoryMergeRejectedCount += 1
+    return 0
+  }
+  if (!canMergeIssueSections(aiItem, canonicalItem)) return 0
+  if (aiCategory === 'cta' || canonicalCategory === 'cta') {
+    const ctaScore = scoreCtaMergeEvidence(aiItem, canonicalItem)
+    if (ctaScore < 3) return 0
+    score += ctaScore
+  }
   if (aiCategory === canonicalCategory) score += 2
-  if (categoriesAreCompatible(aiCategory, canonicalCategory)) score += 1
+  if (categoriesAreCompatible(aiCategory, canonicalCategory, aiItem, canonicalItem)) score += 1
   if (normalizeAreaForKey(aiItem.area) === normalizeAreaForKey(canonicalItem.area)) score += 1
 
   const aiText = normalizeKey(`${aiItem.title} ${aiItem.description} ${aiItem.figmaValue} ${aiItem.webValue}`)
@@ -258,6 +395,9 @@ function scoreIssueMatch(aiItem, canonicalItem) {
 
 function mergeIssueItem(aiItem, canonicalItem) {
   const category = normalizeCategory(canonicalItem.category) !== 'other' ? normalizeCategory(canonicalItem.category) : normalizeCategory(aiItem.category)
+  const aiProvenance = aiItem.provenance || {}
+  const canonicalProvenance = canonicalItem.provenance || {}
+  const canOverwriteValues = canUseCanonicalValues(aiItem, canonicalItem)
   return {
     ...aiItem,
     source: 'merged',
@@ -266,44 +406,167 @@ function mergeIssueItem(aiItem, canonicalItem) {
     area: preferSpecificArea(canonicalItem.area, aiItem.area),
     title: isGenericTitle(aiItem.title) ? canonicalItem.title : aiItem.title,
     description: aiItem.description || canonicalItem.description,
-    figmaValue: canonicalItem.figmaValue || aiItem.figmaValue,
-    webValue: canonicalItem.webValue || aiItem.webValue,
+    figmaValue: canOverwriteValues ? canonicalItem.figmaValue || aiItem.figmaValue : aiItem.figmaValue,
+    webValue: canOverwriteValues ? canonicalItem.webValue || aiItem.webValue : aiItem.webValue,
     severity: strongerSeverity(aiItem.severity, canonicalItem.severity),
-    sortRank: canonicalItem.sortRank ?? aiItem.sortRank,
+    sortRank: aiItem.source === 'vision' ? aiItem.sortRank : canonicalItem.sortRank ?? aiItem.sortRank,
+    sectionKey: canonicalItem.sectionKey || aiItem.sectionKey || '',
+    provenance: {
+      origin: 'merged',
+      matchedVisionIndex: aiProvenance.matchedVisionIndex ?? null,
+      matchedCanonicalEntityIds: canonicalProvenance.matchedCanonicalEntityIds || [],
+      canonicalCategory: normalizeCategory(canonicalItem.category),
+      canonicalSectionId: canonicalItem.sectionKey || '',
+      mergeReason: createMergeReason(aiItem, canonicalItem),
+    },
     mergeTokens: [...(aiItem.mergeTokens || []), ...(canonicalItem.mergeTokens || [])],
   }
 }
 
 function dedupeItems(items) {
   const seen = new Set()
-  return items.filter((item) => {
+  const deduped = []
+  items.forEach((item) => {
     const key = createDedupeKey(item)
-    if (seen.has(key)) return false
+    if (seen.has(key)) return
+    if (deduped.some((existing) => areDuplicateItems(existing, item))) return
     seen.add(key)
-    return true
+    deduped.push(item)
   })
+  return deduped
 }
 
 function createDedupeKey(item) {
-  const category = normalizeCategory(item.category)
+  const category = normalizeCategoryForDedupe(item.category)
   const area = normalizeAreaForKey(item.area)
+  const section = normalizeAreaForKey(item.sectionKey)
   const figma = normalizeKey(item.figmaValue)
   const web = normalizeKey(item.webValue)
   const numbers = numericTokens(`${item.figmaValue} ${item.webValue}`).join(',')
-  if (figma || web || numbers) return `${category}:${area}:${figma}:${web}:${numbers}`
-  return `${category}:${area}:${normalizeKey(item.title)}:${normalizeKey(item.description)}`
+  if (figma || web || numbers) return `${category}:${area}:${section}:${figma}:${web}:${numbers}`
+  return `${category}:${area}:${section}:${normalizeKey(item.title)}:${normalizeKey(item.description)}`
+}
+
+function areDuplicateItems(first, second) {
+  const firstCategory = normalizeCategoryForDedupe(first.category)
+  const secondCategory = normalizeCategoryForDedupe(second.category)
+  if (firstCategory !== secondCategory) return false
+  if (!canMergeIssueSections(first, second)) return false
+
+  if (normalizedValuesOverlap(first.figmaValue, second.figmaValue) && normalizedValuesOverlap(first.webValue, second.webValue)) return true
+
+  if (firstCategory === 'media' && mediaPairKey(first) && mediaPairKey(first) === mediaPairKey(second)) return true
+  if (firstCategory === 'cta' && ctaTokensOverlap(first, second)) return true
+
+  const firstText = normalizeKey(`${first.title} ${first.description} ${(first.mergeTokens || []).join(' ')}`)
+  const secondText = normalizeKey(`${second.title} ${second.description} ${(second.mergeTokens || []).join(' ')}`)
+  return Boolean(firstText && secondText && (firstText.includes(secondText) || secondText.includes(firstText)))
+}
+
+function isDefaultIssueCandidate(item = {}) {
+  if (!item || typeof item !== 'object') return false
+  if (normalizeConfidence(item.confidence) === 'low') return false
+  if (isLowValueIssue(item)) return false
+  return ['Text', 'CTA', 'KV / Media', 'Missing'].includes(normalizeVisualCategoryLabel(item.category))
+}
+
+function isConsistentIssue(item = {}) {
+  const category = normalizeCategory(item.category)
+  const searchable = `${item.title || ''} ${item.description || ''} ${item.figmaValue || ''} ${item.webValue || ''}`
+  const titleText = `${item.title || ''} ${item.description || ''}`
+  if (category === 'cta') return item.source !== 'vision' && hasCtaIssueEvidence(item)
+  if (category === 'price') {
+    if (/(layout|height|width|ratio|비율|높이|너비|레이아웃|이미지|영상|media)/i.test(titleText)) return false
+    return classifyPriceByText(`${item.figmaValue || ''} ${item.webValue || ''}`)
+  }
+  if (['layout', 'media', 'image'].includes(category) && classifyPriceByText(`${item.figmaValue || ''} ${item.webValue || ''}`) && !isMediaValue(`${item.figmaValue || ''} ${item.webValue || ''}`)) return false
+  if (['layout', 'media', 'image'].includes(category) && looksLikeUnrelatedLongTextPair(item)) return false
+  if (getString(item.figmaValue) && getString(item.webValue) && !valuesCanBeCompared(item)) return false
+  return Boolean(normalizeKey(searchable))
+}
+
+function hasCtaIssueEvidence(item = {}) {
+  if (item.id === 'canonical-hero-cta-count') return true
+  const provenance = item.provenance || {}
+  if (provenance.canonicalCategory === 'cta') return true
+  return /primary-action|secondary-action|button|cta|href|action/i.test(`${item.mergeTokens?.join(' ') || ''} ${item.description || ''}`)
+}
+
+function looksLikeUnrelatedLongTextPair(item = {}) {
+  const figma = getString(item.figmaValue)
+  const web = getString(item.webValue)
+  if (!figma || !web) return false
+  if (isMediaValue(figma) || isMediaValue(web)) return false
+  if (figma.length < 18 && web.length < 18) return false
+  const first = normalizeKey(figma)
+  const second = normalizeKey(web)
+  return first && second && !first.includes(second) && !second.includes(first) && !shareNumericToken(figma, web)
+}
+
+function valuesCanBeCompared(item = {}) {
+  const category = normalizeCategory(item.category)
+  if (['media', 'image', 'layout'].includes(category)) return isMediaValue(item.figmaValue) || isMediaValue(item.webValue) || !looksLikeUnrelatedLongTextPair(item)
+  return true
+}
+
+function isLowValueIssue(item = {}) {
+  const searchable = `${item.area || ''} ${item.category || ''} ${item.title || ''} ${item.description || ''} ${item.summary || ''} ${item.figmaValue || ''} ${item.webValue || ''} ${(item.mergeTokens || []).join(' ')}`
+  const normalized = normalizeKey(searchable)
+  const hasMeaningfulValuePair = normalizeKey(item.figmaValue).length > 5 && normalizeKey(item.webValue).length > 5 && /[a-z가-힣]/i.test(`${item.figmaValue || ''} ${item.webValue || ''}`)
+  if (!normalized) return true
+  if (/cookie|쿠키|session|세션|overlay|popup|팝업|modal|모달/.test(searchable)) return true
+  if (/system|cache|playwright|payload|openai/i.test(searchable)) return true
+  if (/text\s*node|텍스트\s*노드|matched|figma\s*only|web\s*only/i.test(searchable)) return true
+  if (/개수\s*차이|텍스트량|카운트/i.test(searchable) && normalizeCategory(item.category) !== 'cta' && !hasMeaningfulValuePair) return true
+  if (/줄바꿈|공백|띄어쓰기|zero.?width|punctuation|spacing|minor/i.test(searchable)) return true
+  if (/^(콘텐츠가?\s*다릅니다|content\s*differs)$/i.test(getString(item.title).trim())) return true
+  if (getString(item.figmaValue) && getString(item.webValue) && normalizeKey(item.figmaValue) === normalizeKey(item.webValue)) return true
+  return false
+}
+
+function normalizeCategoryForDedupe(category) {
+  const normalized = normalizeCategory(category)
+  if (normalized === 'price') return 'text'
+  if (['media', 'image', 'layout'].includes(normalized)) return 'media'
+  if (normalized === 'count') return 'cta'
+  return normalized || 'text'
+}
+
+function mediaPairKey(item = {}) {
+  const figma = normalizeMediaType(item.figmaValue)
+  const web = normalizeMediaType(item.webValue)
+  return figma || web ? `${figma}:${web}` : ''
+}
+
+function normalizeMediaType(value) {
+  const text = getString(value).toLowerCase()
+  if (/video|동영상|영상|비디오/.test(text)) return 'video'
+  if (/image|이미지|정지|photo|사진/.test(text)) return 'image'
+  return normalizeKey(value)
+}
+
+function ctaTokensOverlap(first, second) {
+  const firstTokens = ctaTokens(first)
+  const secondTokens = ctaTokens(second)
+  if (!firstTokens.length || !secondTokens.length) return normalizeAreaForKey(first.area) === normalizeAreaForKey(second.area)
+  return firstTokens.some((token) => secondTokens.includes(token))
+}
+
+function ctaTokens(item = {}) {
+  return `${item.figmaValue || ''} ${item.webValue || ''} ${(item.mergeTokens || []).join(' ')}`
+    .split(/[\s,/()[\]{}·|]+/)
+    .map(normalizeKey)
+    .filter((token) => token.length >= 2)
 }
 
 function compareIssueItems(first, second) {
   const sortDiff = (first.sortRank ?? getAreaRank(first.area)) - (second.sortRank ?? getAreaRank(second.area))
   if (sortDiff !== 0) return sortDiff
-  return (CATEGORY_ORDER[normalizeCategory(first.category)] || 99) - (CATEGORY_ORDER[normalizeCategory(second.category)] || 99)
+  return 0
 }
 
 function createIssueTitle(issue, category) {
-  const title = getString(issue.title)
-  if (title) return title
-  return createCanonicalTitle(category, normalizeVisualArea(issue))
+  return createDisplayTitle(category || issue.category)
 }
 
 function createIssueDescription(issue, category) {
@@ -316,12 +579,15 @@ function createIssueDescription(issue, category) {
 }
 
 function createCanonicalTitle(category, area) {
-  if (category === 'price') return '문구가 다릅니다.'
-  if (category === 'cta') return area === 'Main KV' ? 'Main KV CTA 문구가 다릅니다.' : 'CTA 문구가 다릅니다.'
-  if (category === 'media') return area === 'Main KV' ? 'Main KV 미디어 구성이 다릅니다.' : '미디어 구성이 다릅니다.'
-  if (category === 'missing') return '한쪽에만 있는 항목입니다.'
-  if (category === 'count') return '항목 개수가 다릅니다.'
-  return area === 'Main KV' ? 'Main KV 문구가 다릅니다.' : '문구가 다릅니다.'
+  return createDisplayTitle(category, area)
+}
+
+function createDisplayTitle(category) {
+  const normalized = normalizeCategory(category)
+  if (normalized === 'cta') return 'CTA 구성을 확인해주세요.'
+  if (['media', 'image', 'layout'].includes(normalized)) return 'KV 이미지가 다릅니다.'
+  if (['missing', 'count'].includes(normalized)) return '요소 유무가 다릅니다.'
+  return '텍스트가 다릅니다.'
 }
 
 function createCanonicalDescription(category, figmaValue, webValue) {
@@ -342,7 +608,7 @@ function normalizeCanonicalSeverity(difference, category) {
 function classifyPriceByText(value) {
   const text = getString(value)
   if (!/\d/.test(text)) return false
-  return /(원|만원|억원|%|퍼센트|월\s*\d|개월|금리|이자|납입|납부|가격|금액|할인|price|amount|payment|rate|interest|percent|monthly)/i.test(text)
+  return hasStrongPriceEvidence(text)
 }
 
 function isPriceDifference(item = {}) {
@@ -357,7 +623,9 @@ function isPriceDifference(item = {}) {
 function isCtaDifference(item = {}) {
   const text = `${item.role || ''} ${item.sectionRole || ''} ${item.category || ''} ${item.kind || ''} ${item.entityType || ''}`
   if (/cta|button|action|primary-action|secondary-action/i.test(text)) return true
-  return /(사전예약|예약|상담|구매|신청|문의|apply|consult|reserve|buy|learn more)/i.test(`${item.figmaText || item.text || ''} ${item.webText || ''}`)
+  const valueText = `${item.figmaText || item.text || ''} ${item.webText || ''}`
+  if (looksLikeLongBodyValue(item.figmaText || item.text) || looksLikeLongBodyValue(item.webText)) return false
+  return /(사전예약|예약|상담|구매|신청|문의|apply|consult|reserve|buy|learn more)/i.test(valueText)
 }
 
 function isMediaDifference(item = {}) {
@@ -407,14 +675,16 @@ function createMediaDescription(group = {}) {
 }
 
 function createMergeTokens({ category, area, figmaValue, webValue, raw }) {
-  return [category, area, figmaValue, webValue, raw?.sectionRole, raw?.role, raw?.sectionPath]
+  return [category, area, figmaValue, webValue, raw?.sectionRole, raw?.role, raw?.sectionPath, raw?.href, raw?.entityId, raw?.sectionId]
     .map(getString)
     .filter(Boolean)
 }
 
 function getSortRank(item, area) {
-  const ratio = getYRatio(item.sectionYRatio ?? item.yRatio ?? item.figmaYRatio ?? item.webYRatio ?? item.figmaNode?.yRatio ?? item.webElement?.yRatio)
+  const ratio = getYRatio(item.yRatio ?? item.sectionYRatio ?? item.figmaYRatio ?? item.webYRatio ?? item.figmaNode?.yRatio ?? item.webElement?.yRatio)
   if (ratio !== null) return ratio * 100
+  const order = Number(item.order)
+  if (Number.isFinite(order)) return order
   return getAreaRank(area)
 }
 
@@ -426,9 +696,173 @@ function getDefaultAreaForCategory(category) {
   return ['media', 'image', 'layout', 'cta'].includes(category) ? 'Main KV' : 'Page Content'
 }
 
-function categoriesAreCompatible(first, second) {
+function categoriesAreCompatible(first, second, firstItem = {}, secondItem = {}) {
   if (first === second) return true
-  return (first === 'cta' && second === 'count') || (first === 'count' && second === 'cta') || (first === 'media' && second === 'image') || (first === 'image' && second === 'media')
+  if ((first === 'cta' && second === 'count') || (first === 'count' && second === 'cta')) return true
+  if (['media', 'image', 'layout'].includes(first) && ['media', 'image', 'layout'].includes(second)) return true
+  if ((first === 'text' && second === 'price') || (first === 'price' && second === 'text')) return hasComparableValuePair(firstItem, secondItem)
+  return false
+}
+
+function scoreCtaMergeEvidence(firstItem = {}, secondItem = {}) {
+  let score = 0
+  const firstIds = getCanonicalIds(firstItem)
+  const secondIds = getCanonicalIds(secondItem)
+  if (firstIds.length > 0 && secondIds.some((id) => firstIds.includes(id))) score += 5
+  if (ctaTextOverlap(firstItem, secondItem)) score += 4
+  if (hrefMatches(firstItem, secondItem)) score += 4
+  if (hasCtaActionEvidence(firstItem) && hasCtaActionEvidence(secondItem) && normalizeKey(firstItem.sectionKey) && normalizeKey(firstItem.sectionKey) === normalizeKey(secondItem.sectionKey)) score += 3
+  if (ctaRolesCompatible(firstItem, secondItem)) score += 1
+  if (positionsAreNear(firstItem, secondItem)) score += 2
+  if (isCtaCountItem(firstItem) || isCtaCountItem(secondItem)) score += 3
+  return score
+}
+
+function canUseCanonicalValues(aiItem = {}, canonicalItem = {}) {
+  if (normalizeCategory(aiItem.category) !== 'cta' && normalizeCategory(canonicalItem.category) !== 'cta') return true
+  return scoreCtaMergeEvidence(aiItem, canonicalItem) >= 3
+}
+
+function getCanonicalIds(item = {}) {
+  const provenanceIds = Array.isArray(item.provenance?.matchedCanonicalEntityIds) ? item.provenance.matchedCanonicalEntityIds : []
+  return [item.entityId, item.actionId, item.id, ...provenanceIds].map(getString).map(normalizeKey).filter(Boolean)
+}
+
+function ctaTextOverlap(firstItem = {}, secondItem = {}) {
+  const first = ctaLabelTokens(firstItem)
+  const second = ctaLabelTokens(secondItem)
+  if (!first.length || !second.length) return false
+  return first.some((token) => second.includes(token))
+}
+
+function ctaLabelTokens(item = {}) {
+  return [item.figmaValue, item.webValue, ...(item.mergeTokens || [])]
+    .map(getString)
+    .filter((value) => value && !looksLikeLongBodyValue(value))
+    .flatMap((value) => value.split(/[\s,/()[\]{}·|]+/))
+    .map(normalizeKey)
+    .filter((token) => token.length >= 2 && !/^\d{1,2}$/.test(token))
+}
+
+function hrefMatches(firstItem = {}, secondItem = {}) {
+  const first = (firstItem.mergeTokens || []).map(getString).filter((token) => /^https?:\/\//i.test(token) || token.startsWith('/'))
+  const second = (secondItem.mergeTokens || []).map(getString).filter((token) => /^https?:\/\//i.test(token) || token.startsWith('/'))
+  return first.length > 0 && second.some((token) => first.includes(token))
+}
+
+function hasCtaActionEvidence(item = {}) {
+  return /primary-action|secondary-action|button|cta|href|action/i.test(`${item.mergeTokens?.join(' ') || ''} ${item.description || ''} ${item.id || ''}`)
+}
+
+function ctaRolesCompatible(firstItem = {}, secondItem = {}) {
+  const text = `${firstItem.mergeTokens?.join(' ') || ''} ${secondItem.mergeTokens?.join(' ') || ''}`
+  return /primary-action|secondary-action|cta|button|action/i.test(text)
+}
+
+function positionsAreNear(firstItem = {}, secondItem = {}) {
+  const firstY = Number(firstItem.yRatio)
+  const secondY = Number(secondItem.yRatio)
+  const firstX = Number(firstItem.xRatio)
+  const secondX = Number(secondItem.xRatio)
+  const yNear = Number.isFinite(firstY) && Number.isFinite(secondY) && Math.abs(firstY - secondY) <= 0.06
+  const xNear = Number.isFinite(firstX) && Number.isFinite(secondX) && Math.abs(firstX - secondX) <= 0.12
+  return yNear && (!Number.isFinite(firstX) || !Number.isFinite(secondX) || xNear)
+}
+
+function isCtaCountItem(item = {}) {
+  return normalizeCategory(item.category) === 'cta' && /count|개수|부족|누락/i.test(`${item.id || ''} ${item.title || ''} ${item.description || ''} ${(item.mergeTokens || []).join(' ')}`)
+}
+
+function canMergeIssueCategories(firstItem = {}, secondItem = {}) {
+  const first = normalizeCategory(firstItem.category)
+  const second = normalizeCategory(secondItem.category)
+  if (categoriesAreCompatible(first, second, firstItem, secondItem)) return true
+  return false
+}
+
+function canMergeIssueSections(firstItem = {}, secondItem = {}) {
+  const firstSection = normalizeKey(firstItem.sectionKey)
+  const secondSection = normalizeKey(secondItem.sectionKey)
+  if (firstSection && secondSection && firstSection !== secondSection) return false
+  const firstArea = normalizeAreaForKey(firstItem.area)
+  const secondArea = normalizeAreaForKey(secondItem.area)
+  if (firstArea && secondArea && firstArea !== secondArea) {
+    return normalizeCategoryForDedupe(firstItem.category) === 'media' && normalizeCategoryForDedupe(secondItem.category) === 'media'
+  }
+  return true
+}
+
+function hasComparableValuePair(firstItem = {}, secondItem = {}) {
+  return normalizedValuesOverlap(firstItem.figmaValue, secondItem.figmaValue) && normalizedValuesOverlap(firstItem.webValue, secondItem.webValue)
+}
+
+function hasMergeOverlapSignal(firstItem = {}, secondItem = {}) {
+  return normalizedValuesOverlap(firstItem.figmaValue, secondItem.figmaValue)
+    || normalizedValuesOverlap(firstItem.webValue, secondItem.webValue)
+    || shareNumericToken(`${firstItem.figmaValue || ''} ${firstItem.webValue || ''}`, `${secondItem.figmaValue || ''} ${secondItem.webValue || ''}`)
+}
+
+function shareNumericToken(first, second) {
+  const secondTokens = numericTokens(second)
+  return numericTokens(first).some((token) => secondTokens.includes(token))
+}
+
+function createMergeReason(aiItem = {}, canonicalItem = {}) {
+  const reasons = []
+  if (normalizeCategory(aiItem.category) === normalizeCategory(canonicalItem.category)) reasons.push('same-category')
+  else reasons.push('compatible-category')
+  if (hasComparableValuePair(aiItem, canonicalItem)) reasons.push('same-values')
+  if (normalizeKey(aiItem.sectionKey) && normalizeKey(aiItem.sectionKey) === normalizeKey(canonicalItem.sectionKey)) reasons.push('same-section')
+  return reasons.join('+')
+}
+
+function createSectionKey(item = {}) {
+  const explicit = [item.sectionId, item.sectionRootId, item.sectionPath, item.layerPath, item.contextPath, item.selector, item.webSelector, item.figmaNodeId].map(getString).find(Boolean)
+  if (explicit) return normalizeKey(explicit)
+  const ratio = getYRatio(item.sectionYRatio ?? item.yRatio ?? item.figmaYRatio ?? item.webYRatio)
+  return ratio === null ? '' : `y${Math.round(ratio * 100)}`
+}
+
+function hasStrongPriceEvidence(value) {
+  const text = getString(value)
+  if (!/\d/.test(text)) return false
+  if (/(₩|\$|€|£|¥)\s*\d|\d[\d.,]*\s*(원|만원|천원|억원|krw|usd|eur|jpy)/i.test(text)) return true
+  if (/\d(?:[.,]\d+)?\s*(%|퍼센트)/i.test(text)) return true
+  if (/(금리|이율|interest|rate|apr)\s*\d|\d(?:[.,]\d+)?\s*%/.test(text) && /(금리|이율|interest|rate|apr)/i.test(text)) return true
+  if (/(월\s*납입|월납입|monthly|payment|per\s*month)/i.test(text) && /(₩|\$|€|£|¥|\d[\d.,]*\s*(원|만원|천원|억원|krw|usd|eur|jpy))/i.test(text)) return true
+  if (/(계약기간|약정|리스|렌트|period|term)/i.test(text) && /\d+\s*(개월|년|months?|years?)/i.test(text)) return true
+  return false
+}
+
+function looksLikeLongBodyValue(value) {
+  const text = getString(value)
+  return text.length >= 36 || /[.!?]|다\.?|요\.?|니다\.?/.test(text)
+}
+
+function normalizeHeroCtaGroup(group = {}) {
+  const figmaActions = filterHeroCtaActions(group.figma?.actions)
+  const webActions = filterHeroCtaActions(group.web?.actions)
+  return {
+    ...group,
+    figma: { ...(group.figma || {}), count: figmaActions.length, actions: figmaActions },
+    web: { ...(group.web || {}), count: webActions.length, actions: webActions },
+    countDifference: Math.abs(figmaActions.length - webActions.length),
+  }
+}
+
+function filterHeroCtaActions(actions) {
+  return (Array.isArray(actions) ? actions : []).filter((item) => {
+    if (!item || typeof item !== 'object') return false
+    if (!['primary-action', 'secondary-action'].includes(getString(item.role))) return false
+    if (!['primary', ''].includes(getString(item.comparisonScope))) return false
+    if (/reference|navigation|tab|media-control|carousel|utility/i.test(`${item.comparisonScope || ''} ${item.role || ''} ${item.sectionRole || ''}`)) return false
+    if (!getString(item.text || item.displayText)) return false
+    return true
+  })
+}
+
+function isMediaValue(value) {
+  return /image|video|media|photo|이미지|영상|비디오|사진|미디어/i.test(getString(value))
 }
 
 function preferSpecificArea(first, second) {
@@ -462,6 +896,11 @@ function numericTokens(value) {
 function getYRatio(value) {
   const number = Number(value)
   return Number.isFinite(number) && number >= 0 && number <= 1 ? number : null
+}
+
+function getNullableNumber(value) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
 }
 
 function formatCount(value) {

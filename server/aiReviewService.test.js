@@ -80,6 +80,7 @@ test('AI review service sends four images with request detail in a single multim
   assert.equal(result.meta.openAiCalled, true)
   assert.equal(result.meta.visionUsed, true)
   assert.equal(result.meta.imageInputCount, 4)
+  assert.equal(result.meta.rawVisionCount, 1)
   assert.deepEqual(result.meta.visionInputSummary.map((item) => item.label), ['figma-overview', 'web-overview', 'figma-hero', 'web-hero'])
   assert.equal(result.review.visualDifferences[0].category, 'Media')
 })
@@ -147,6 +148,38 @@ test('AI review corrects price area from canonical product section and keeps can
   assert.equal(normalized.visualDifferences[0].webValue, 'Basic plan, 월 50만원')
 })
 
+test('AI review rejects Price category when title and values describe layout', () => {
+  const payload = createPayload()
+  payload.visualEvidence.hero = { sections: [{ source: 'figma' }, { source: 'web' }] }
+  payload.visualEvidence.prices = [
+    { source: 'figma', type: 'monthly-payment', text: '월 47만원', sectionPath: 'Product card', yRatio: 0.52, unitTokens: ['만원'] },
+    { source: 'web', type: 'monthly-payment', text: '월 50만원', sectionPath: 'Product card', yRatio: 0.52, unitTokens: ['만원'] },
+  ]
+  const normalized = normalizeAiReview({
+    releaseDecision: 'caution', summary: '확인', mustFix: [], verify: [], developerNotes: [], clientReplyDraft: '확인',
+    visualDifferences: [{ area: 'Hero', category: 'Price', title: '히어로 섹션 높이 및 비율 차이', summary: 'Layout height differs.', figmaValue: '02 낮은 월납입금으로 이용', webValue: '잔존가치 상품 설명 장문입니다.', severity: 'warning', confidence: 'high', order: 0 }],
+  }, payload)
+
+  assert.equal(normalized.visualDifferences.length, 0)
+})
+
+test('AI review rejects ordinal monthly-payment benefit text as Price but keeps real amounts and rates', () => {
+  const payload = createPayload()
+  payload.visualEvidence.hero = { sections: [{ source: 'figma' }, { source: 'web' }] }
+  const normalized = normalizeAiReview({
+    releaseDecision: 'blocked', summary: '가격 확인', mustFix: [], verify: [], developerNotes: [], clientReplyDraft: '확인',
+    visualDifferences: [
+      { area: 'Content', category: 'Price', title: 'Price mismatch', summary: 'Ordinal benefit text', figmaValue: '02 낮은 월납입금으로 BMW 이용', webValue: '02 낮은 월납입금으로 이용', severity: 'critical', confidence: 'high', order: 0 },
+      { area: 'Product card', category: 'Price', title: '월 납입금 차이', summary: 'Amount differs.', figmaValue: 'BMW 뉴 iX 월 50만원', webValue: 'BMW 뉴 iX 월 55만원', severity: 'critical', confidence: 'high', order: 1 },
+      { area: 'Product card', category: 'Price', title: '금리 차이', summary: 'Rate differs.', figmaValue: '금리 4.9%', webValue: '금리 5.1%', severity: 'critical', confidence: 'high', order: 2 },
+    ],
+  }, payload)
+
+  assert.equal(normalized.visualDifferences.length, 2)
+  assert.deepEqual(normalized.visualDifferences.map((item) => item.category), ['Price', 'Price'])
+  assert.equal(normalized.visualDifferences.some((item) => item.figmaValue.includes('02 낮은')), false)
+})
+
 test('AI review downgrades uncertain CTA pairing but keeps clear missing CTA count', () => {
   const uncertainPayload = createPayload()
   uncertainPayload.visualEvidence.hero = { sections: [{ source: 'figma' }, { source: 'web' }] }
@@ -160,7 +193,7 @@ test('AI review downgrades uncertain CTA pairing but keeps clear missing CTA cou
     visualDifferences: [{ area: 'Hero', category: 'CTA', title: 'CTA text mismatch', summary: 'CTA differs', figmaValue: 'Start trial / See plans', webValue: 'Contact sales / Download', severity: 'critical', confidence: 'high', order: 0 }],
   }, uncertainPayload)
   assert.equal(uncertain.visualDifferences[0].severity, 'check')
-  assert.equal(uncertain.visualDifferences[0].title, 'CTA 구성 확인이 필요합니다.')
+  assert.equal(uncertain.visualDifferences[0].title, 'CTA 구성을 확인해주세요.')
 
   const missingPayload = createPayload()
   missingPayload.visualEvidence.hero = { sections: [{ source: 'figma' }, { source: 'web' }] }
@@ -170,6 +203,58 @@ test('AI review downgrades uncertain CTA pairing but keeps clear missing CTA cou
     visualDifferences: [{ area: 'Hero', category: 'CTA', title: 'CTA 누락', summary: 'Web에 CTA가 없습니다.', figmaValue: 'Start', webValue: '', severity: 'critical', confidence: 'high', order: 0 }],
   }, missingPayload)
   assert.equal(missing.visualDifferences[0].severity, 'critical')
+})
+
+test('AI review downgrades Vision missing CTA when canonical Web CTA exists', () => {
+  const payload = createPayload()
+  payload.visualEvidence.hero = { sections: [{ source: 'figma' }, { source: 'web' }] }
+  payload.visualEvidence.cta = {
+    countDifference: 0,
+    figmaActions: [{ text: 'Start', role: 'primary-action', sectionPath: 'Hero', yRatio: 0.2, xRatio: 0.1 }],
+    webActions: [{ text: 'Start', role: 'primary-action', sectionPath: 'Hero', yRatio: 0.2, xRatio: 0.1 }],
+  }
+  Object.defineProperty(payload, '__visionCropSummary', { value: [
+    { label: 'figma-hero', cropDiagnostics: { cropQualityPassed: true, descendantUnionHeight: 120, finalCropHeight: 900 } },
+    { label: 'web-hero', cropDiagnostics: { cropQualityPassed: true, descendantUnionHeight: 120, finalCropHeight: 900 } },
+  ], enumerable: false })
+
+  const normalized = normalizeAiReview({
+    releaseDecision: 'blocked', summary: 'CTA 확인', mustFix: [], verify: [], developerNotes: [], clientReplyDraft: '확인',
+    visualDifferences: [{ area: 'Hero', category: 'CTA', title: 'CTA missing', summary: 'Web CTA missing.', figmaValue: 'Start', webValue: 'Web CTA 없음', severity: 'critical', confidence: 'high', order: 0 }],
+  }, payload)
+
+  assert.equal(normalized.visualDifferences[0].title, 'CTA 구성을 확인해주세요.')
+  assert.equal(normalized.visualDifferences[0].severity, 'check')
+  assert.equal(normalized.visualDifferences[0].webValue, 'Start')
+})
+
+test('AI review downgrades CTA critical when hero crop quality fails but keeps normal CTA count behavior', () => {
+  const unsafePayload = createPayload()
+  unsafePayload.visualEvidence.hero = { sections: [{ source: 'figma' }, { source: 'web' }] }
+  unsafePayload.visualEvidence.cta = { countDifference: 1, figmaActions: [{ text: 'Start', role: 'primary-action' }], webActions: [] }
+  Object.defineProperty(unsafePayload, '__visionCropSummary', { value: [
+    { label: 'figma-hero', cropDiagnostics: { cropQualityPassed: true, descendantUnionHeight: 120, finalCropHeight: 900 } },
+    { label: 'web-hero', cropDiagnostics: { cropQualityPassed: false, descendantUnionHeight: 0, finalCropHeight: 200 } },
+  ], enumerable: false })
+  const unsafe = normalizeAiReview({
+    releaseDecision: 'blocked', summary: 'CTA 확인', mustFix: [], verify: [], developerNotes: [], clientReplyDraft: '확인',
+    visualDifferences: [{ area: 'Hero', category: 'CTA', title: 'CTA missing', summary: 'Web CTA missing.', figmaValue: 'Start', webValue: '', severity: 'critical', confidence: 'high', order: 0 }],
+  }, unsafePayload)
+
+  const safePayload = createPayload()
+  safePayload.visualEvidence.hero = { sections: [{ source: 'figma' }, { source: 'web' }] }
+  safePayload.visualEvidence.cta = { countDifference: 1, figmaActions: [{ text: 'Start', role: 'primary-action' }], webActions: [] }
+  Object.defineProperty(safePayload, '__visionCropSummary', { value: [
+    { label: 'figma-hero', cropDiagnostics: { cropQualityPassed: true, descendantUnionHeight: 120, finalCropHeight: 900 } },
+    { label: 'web-hero', cropDiagnostics: { cropQualityPassed: true, descendantUnionHeight: 120, finalCropHeight: 900 } },
+  ], enumerable: false })
+  const safe = normalizeAiReview({
+    releaseDecision: 'blocked', summary: 'CTA 확인', mustFix: [], verify: [], developerNotes: [], clientReplyDraft: '확인',
+    visualDifferences: [{ area: 'Hero', category: 'CTA', title: 'CTA missing', summary: 'Web CTA missing.', figmaValue: 'Start', webValue: '', severity: 'critical', confidence: 'high', order: 0 }],
+  }, safePayload)
+
+  assert.equal(unsafe.visualDifferences[0].severity, 'check')
+  assert.equal(safe.visualDifferences[0].severity, 'critical')
 })
 
 test('AI review excludes transient cookie overlay but keeps explicit designed modal', () => {
@@ -184,6 +269,24 @@ test('AI review excludes transient cookie overlay but keeps explicit designed mo
   }, payload)
   assert.equal(normalized.visualDifferences.length, 1)
   assert.equal(normalized.visualDifferences[0].title, '회원가입 모달 레이아웃이 다릅니다.')
+})
+
+test('AI review removes transient cookie overlay from summary mustFix and developerNotes', () => {
+  const normalized = normalizeAiReview({
+    releaseDecision: 'blocked',
+    summary: 'Cookie consent popup is the key visual difference.',
+    mustFix: [{ category: 'missing', title: 'Cookie consent popup', description: 'Web cookie consent overlay appears.', severity: 'critical' }],
+    verify: [{ category: 'tech', title: 'Cookie consent state', description: 'Session cookie overlay should be checked.', severity: 'warning' }],
+    developerNotes: [{ category: 'tech', title: 'Cookie overlay debug', description: 'Consent popup appeared in screenshot.', severity: 'check' }],
+    clientReplyDraft: '확인',
+    visualDifferences: [],
+  }, createPayload())
+
+  assert.equal(/cookie|consent/i.test(normalized.summary), false)
+  assert.equal(normalized.mustFix.length, 0)
+  assert.equal(normalized.developerNotes.length, 0)
+  assert.equal(normalized.verify.length <= 1, true)
+  if (normalized.verify.length === 1) assert.equal(normalized.verify[0].severity, 'check')
 })
 
 test('AI review normalizes mustFix and verify visual categories', () => {
@@ -212,7 +315,192 @@ test('AI review service marks OpenAI failures as attempted calls', async () => {
 
   await assert.rejects(
     service.review(createPayload()),
-    (error) => error.openAiCalled === true && error.code === 'openai_review_failed' && Number.isFinite(error.aiReviewDurationMs),
+    (error) => error.openAiCalled === true && error.code === 'openai_request_failed' && error.fallbackStage === 'openai-request' && Number.isFinite(error.aiReviewDurationMs),
+  )
+})
+
+test('AI review diagnostics mark normal response as received and parsed', async () => {
+  const service = createAiReviewService({ client: createMockOpenAiClient(validAiResponse()) })
+
+  const result = await service.review(createPayload())
+
+  assert.equal(result.meta.fallbackStage, '')
+  assert.equal(result.meta.fallbackReason, '')
+  assert.equal(result.meta.openAiResponseReceived, true)
+  assert.equal(result.meta.openAiResponseParsed, true)
+  assert.equal(Number.isFinite(result.meta.openAiRequestDurationMs), true)
+})
+
+test('AI review diagnostics classify timeout fallback', async () => {
+  const timeoutError = new Error('request timed out')
+  timeoutError.code = 'ETIMEDOUT'
+  const service = createAiReviewService({ client: createMockOpenAiClient(null, timeoutError) })
+
+  await assert.rejects(
+    service.review(createPayload()),
+    (error) => error.fallbackStage === 'openai-timeout'
+      && error.fallbackReason === 'timeout'
+      && error.openAiResponseReceived === false
+      && error.openAiResponseParsed === false
+      && Number.isFinite(error.openAiRequestDurationMs),
+  )
+})
+
+test('AI review diagnostics classify HTTP error fallback', async () => {
+  const httpError = new Error('server error')
+  httpError.status = 503
+  const service = createAiReviewService({ client: createMockOpenAiClient(null, httpError) })
+
+  await assert.rejects(
+    service.review(createPayload()),
+    (error) => error.fallbackStage === 'openai-http-error'
+      && error.fallbackReason === 'http-503'
+      && error.code === 'openai_http_error',
+  )
+})
+
+test('AI review diagnostics classify empty response fallback', async () => {
+  const service = createAiReviewService({ client: createMockOpenAiClient('') })
+
+  await assert.rejects(
+    service.review(createPayload()),
+    (error) => error.fallbackStage === 'openai-response-empty'
+      && error.fallbackReason === 'empty_ai_response'
+      && error.openAiResponseReceived === true
+      && error.openAiResponseParsed === false,
+  )
+})
+
+test('AI review diagnostics classify JSON parse fallback', async () => {
+  const service = createAiReviewService({ client: createMockOpenAiClient('not-json') })
+
+  await assert.rejects(
+    service.review(createPayload()),
+    (error) => error.fallbackStage === 'json-parse'
+      && error.fallbackReason === 'invalid_ai_json'
+      && error.openAiResponseReceived === true
+      && error.openAiResponseParsed === false,
+  )
+})
+
+test('AI review diagnostics classify schema validation fallback', async () => {
+  const service = createAiReviewService({ client: createMockOpenAiClient(JSON.stringify({ developerNotes: [] })), model: 'schema-model' })
+
+  await assert.rejects(
+    service.review(createPayload()),
+    (error) => error.fallbackStage === 'schema-validation'
+      && error.fallbackReason === 'invalid_ai_schema'
+      && error.model === 'schema-model'
+      && error.openAiResponseReceived === true
+      && error.openAiResponseParsed === true,
+  )
+})
+
+test('AI review sanitizes developerNotes string arrays without fallback', async () => {
+  const service = createAiReviewService({ client: createMockOpenAiClient(JSON.stringify({
+    releaseDecision: 'caution',
+    summary: '확인 필요',
+    mustFix: [],
+    verify: [],
+    developerNotes: ['개발 확인 필요', null, ''],
+    clientReplyDraft: '확인하겠습니다.',
+    visualDifferences: [{ area: 'Main Visual', category: 'Media', title: 'Hero media type mismatch', summary: 'image vs video', figmaValue: 'image', webValue: 'video', severity: 'warning', confidence: 'high', order: 0 }],
+  })) })
+  const payload = createPayload()
+  payload.visualEvidence.hero = { sections: [{ source: 'figma' }, { source: 'web' }], webPrimaryMediaCount: 1 }
+
+  const result = await service.review(payload)
+
+  assert.equal(result.meta.fallbackStage, '')
+  assert.equal(result.review.developerNotes.length, 1)
+  assert.equal(result.review.developerNotes[0].title, '개발 확인 필요')
+  assert.equal(result.review.developerNotes[0].severity, 'check')
+  assert.equal(result.review.visualDifferences.length, 1)
+})
+
+test('AI review sanitizes partial developerNotes objects evidence and invalid enums', async () => {
+  const result = normalizeAiReview({
+    releaseDecision: 'caution',
+    summary: '확인 필요',
+    mustFix: [],
+    verify: [],
+    developerNotes: [
+      { description: '캐시 확인', evidence: 'render cache hit', severity: 'note', category: 'unknown-kind' },
+      { title: '', description: '', evidence: [] },
+    ],
+    clientReplyDraft: '확인하겠습니다.',
+    visualDifferences: [],
+  }, createPayload())
+
+  assert.equal(result.developerNotes.length, 1)
+  assert.equal(result.developerNotes[0].title, '캐시 확인')
+  assert.deepEqual(result.developerNotes[0].evidence, ['render cache hit'])
+  assert.equal(result.developerNotes[0].category, 'Other')
+  assert.equal(result.developerNotes[0].severity, 'check')
+})
+
+test('AI review sanitizes mustFix and verify partial invalid items', () => {
+  const result = normalizeAiReview({
+    releaseDecision: 'blocked',
+    summary: '확인 필요',
+    mustFix: ['가격 확인', { evidence: '월 47 / 월 50', severity: 'blocker' }, null],
+    verify: [{ message: 'CTA 링크 확인', category: 'bad-category', severity: 'maybe' }, undefined],
+    developerNotes: [],
+    clientReplyDraft: 12345,
+    visualDifferences: [],
+  }, createPayload())
+
+  assert.equal(result.mustFix.length, 2)
+  assert.equal(result.mustFix[0].severity, 'critical')
+  assert.equal(result.mustFix[1].title, '월 47 / 월 50')
+  assert.equal(result.mustFix[1].severity, 'critical')
+  assert.equal(result.verify.length, 1)
+  assert.equal(result.verify[0].category, 'CTA')
+  assert.equal(result.verify[0].severity, 'warning')
+  assert.equal(typeof result.clientReplyDraft, 'string')
+})
+
+test('AI review keeps visualDifferences when auxiliary fields are malformed', async () => {
+  const service = createAiReviewService({ client: createMockOpenAiClient(JSON.stringify({
+    releaseDecision: 'caution',
+    summary: '확인 필요',
+    mustFix: { title: '가격 확인', evidence: '월 47 / 월 50', severity: 'blocker' },
+    verify: 'CTA 확인',
+    developerNotes: 'developer note as string',
+    clientReplyDraft: { text: 'not string' },
+    visualDifferences: [
+      { area: 'Main Visual', category: 'Media', title: 'Hero media type mismatch', summary: 'image vs video', figmaValue: 'image', webValue: 'video', severity: 'warning', confidence: 'high', order: 0 },
+      null,
+      {},
+    ],
+  })) })
+  const payload = createPayload()
+  payload.visualEvidence.hero = { sections: [{ source: 'figma' }, { source: 'web' }], webPrimaryMediaCount: 1 }
+
+  const result = await service.review(payload)
+
+  assert.equal(result.meta.fallbackStage, '')
+  assert.equal(result.review.mustFix.length, 1)
+  assert.equal(result.review.verify.length, 1)
+  assert.equal(result.review.developerNotes.length, 1)
+  assert.equal(result.review.visualDifferences.length, 1)
+  assert.equal(result.review.visualDifferences[0].category, 'Media')
+})
+
+test('AI review diagnostics classify post-process fallback', async () => {
+  const service = createAiReviewService({
+    client: createMockOpenAiClient(validAiResponse()),
+    normalizeReview() {
+      throw new Error('post process failed')
+    },
+  })
+
+  await assert.rejects(
+    service.review(createPayload()),
+    (error) => error.fallbackStage === 'post-process'
+      && error.fallbackReason === 'post_process_failed'
+      && error.openAiResponseReceived === true
+      && error.openAiResponseParsed === true,
   )
 })
 
@@ -231,7 +519,7 @@ test('AI review JSON parsing and normalization are robust', () => {
 
   assert.equal(normalized.releaseDecision, 'caution')
   assert.equal(normalized.mustFix[0].title, 'A')
-  assert.deepEqual(normalized.verify, [])
+  assert.equal(normalized.verify[0].title, 'not-array')
 })
 
 test('AI review decision is not blocked for spacing-only, meta-only, or alt-only warnings', () => {
@@ -274,5 +562,30 @@ function createPayload() {
     visualEvidence: { textDifferences: [{ kind: 'text-difference', severity: 'critical', category: 'numeric', figmaText: 'Monthly 47', webText: 'Monthly 50', confidence: 'high' }], hero: {}, cta: {}, prices: [], media: {} },
     techEvidence: { access: {}, httpStatus: {}, consoleErrors: [], brokenLinks: [], metaIssues: [], altIssues: [], externalLinkIssues: [], networkIssues: [] },
     requestedOutputSchema: { releaseDecision: 'ready | caution | blocked', summary: '', mustFix: [], verify: [], developerNotes: [], clientReplyDraft: '' },
+  }
+}
+
+function validAiResponse() {
+  return JSON.stringify({
+    releaseDecision: 'caution',
+    summary: '확인 필요 항목이 있습니다.',
+    mustFix: [],
+    verify: [],
+    developerNotes: [],
+    clientReplyDraft: '확인 후 진행하겠습니다.',
+    visualDifferences: [],
+  })
+}
+
+function createMockOpenAiClient(content, error = null) {
+  return {
+    chat: {
+      completions: {
+        async create() {
+          if (error) throw error
+          return { choices: [{ message: { content } }] }
+        },
+      },
+    },
   }
 }

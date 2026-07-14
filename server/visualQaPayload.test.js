@@ -187,6 +187,22 @@ test('500x168 content frame is rejected as CTA', () => {
   assert.equal(payload.aiHints.ctaButtons.some((item) => item.source === 'figma'), false)
 })
 
+test('enumerated hero benefit text is rejected as CTA without action semantics', () => {
+  const { payload } = buildVisualQaPayloadArtifacts(createBaseInput({
+    figmaAnalysis: {
+      textNodes: [],
+      flatNodes: [
+        createFigmaFlatNode({ id: 'benefit-frame', nodeId: 'benefit-frame', name: 'Benefit Copy', type: 'FRAME', layerPath: 'Hero / Benefits / Item 02', widthRatio: 0.22, heightRatio: 0.04, absoluteBoundingBox: { width: 360, height: 72 }, isInteractiveCandidate: true }),
+        createFigmaFlatNode({ id: 'benefit-text', nodeId: 'benefit-text', type: 'TEXT', layerPath: 'Hero / Benefits / Item 02 / Label', parentId: 'benefit-frame', characters: '02 Lower monthly payment' }),
+      ],
+    },
+    webAnalysis: { textNodes: [] },
+  }))
+
+  assert.equal(payload.aiHints.heroCtaGroup.figma.actions.some((item) => item.text === '02 Lower monthly payment'), false)
+  assert.equal(payload.aiHints.ctaButtons.some((item) => item.text === '02 Lower monthly payment'), false)
+})
+
 test('interaction instance with child text becomes one canonical action', () => {
   const { payload, payloadQuality } = buildVisualQaPayloadArtifacts(createBaseInput({
     figmaAnalysis: {

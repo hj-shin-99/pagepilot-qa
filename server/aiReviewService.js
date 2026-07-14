@@ -11,6 +11,7 @@ export function createAiReviewService(options = {}) {
   const model = typeof options.model === 'string' && options.model.trim() ? options.model.trim() : DEFAULT_MODEL
   const timeout = Number.isFinite(Number(options.timeoutMs)) && Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : DEFAULT_TIMEOUT_MS
   const client = options.client || (apiKey ? new OpenAI({ apiKey, timeout }) : null)
+  const normalizeReview = typeof options.normalizeReview === 'function' ? options.normalizeReview : normalizeAiReview
 
   return {
     async review(payload) {
@@ -18,32 +19,109 @@ export function createAiReviewService(options = {}) {
 
       const startedAt = Date.now()
       let imageInputCount = 0
+      let requestStartedAt = 0
+      let openAiRequestDurationMs = 0
+      let openAiResponseReceived = false
+      let openAiResponseParsed = false
       try {
         const messages = hasVisionInput(payload) ? createVisualVisionReviewMessages(payload) : createAiReviewMessages(payload)
         imageInputCount = countImageInputs(messages)
-        const completion = await client.chat.completions.create({
-          model,
-          messages,
-          response_format: { type: 'json_object' },
-          max_completion_tokens: imageInputCount > 0 ? 1800 : 1400,
-        })
+        let completion
+        try {
+          requestStartedAt = Date.now()
+          completion = await client.chat.completions.create({
+            model,
+            messages,
+            response_format: { type: 'json_object' },
+            max_completion_tokens: imageInputCount > 0 ? 1800 : 1400,
+          })
+          openAiRequestDurationMs = Date.now() - requestStartedAt
+          openAiResponseReceived = true
+        } catch (error) {
+          throw decorateAiReviewError(error, classifyOpenAiRequestStage(error), {
+            startedAt,
+            requestStartedAt,
+            openAiRequestDurationMs,
+            openAiResponseReceived,
+            openAiResponseParsed,
+            imageInputCount,
+            payload,
+            model,
+          })
+        }
         const rawText = completion.choices?.[0]?.message?.content || ''
+        let parsed
+        try {
+          parsed = parseJsonObject(rawText)
+          openAiResponseParsed = true
+        } catch (error) {
+          throw decorateAiReviewError(error, getParseFailureStage(error), {
+            startedAt,
+            requestStartedAt,
+            openAiRequestDurationMs,
+            openAiResponseReceived,
+            openAiResponseParsed,
+            imageInputCount,
+            payload,
+            model,
+          })
+        }
+        try {
+          validateAiReviewSchema(parsed)
+        } catch (error) {
+          throw decorateAiReviewError(error, 'schema-validation', {
+            startedAt,
+            requestStartedAt,
+            openAiRequestDurationMs,
+            openAiResponseReceived,
+            openAiResponseParsed,
+            imageInputCount,
+            payload,
+            model,
+          })
+        }
+        let review
+        try {
+          review = normalizeReview(parsed, payload)
+        } catch (error) {
+          throw decorateAiReviewError(error, 'post-process', {
+            startedAt,
+            requestStartedAt,
+            openAiRequestDurationMs,
+            openAiResponseReceived,
+            openAiResponseParsed,
+            imageInputCount,
+            payload,
+            model,
+          })
+        }
         return {
           meta: {
             openAiCalled: true,
             model,
             visionUsed: imageInputCount > 0,
             imageInputCount,
+            rawVisionCount: getRawVisionCount(parsed),
             visionInputSummary: createVisionInputSummary(payload),
+            fallbackStage: '',
+            fallbackReason: '',
+            openAiRequestDurationMs,
+            openAiResponseReceived,
+            openAiResponseParsed,
             aiReviewDurationMs: Date.now() - startedAt,
           },
-          review: normalizeAiReview(parseJsonObject(rawText), payload),
+          review,
         }
       } catch (error) {
         if (error?.openAiCalled === true) {
           error.visionUsed = error.visionUsed ?? false
           error.imageInputCount = error.imageInputCount ?? 0
           error.aiReviewDurationMs = error.aiReviewDurationMs ?? Date.now() - startedAt
+          error.openAiRequestDurationMs = Number(error.openAiRequestDurationMs || 0)
+          error.openAiResponseReceived = error.openAiResponseReceived === true
+          error.openAiResponseParsed = error.openAiResponseParsed === true
+          error.fallbackStage = normalizeFallbackStage(error.fallbackStage)
+          error.fallbackReason = normalizeFallbackReason(error.fallbackReason || error.code || error.status)
           throw error
         }
         const wrapped = createAiReviewError('openai_review_failed', error instanceof Error ? error.message : 'AI Review 호출에 실패했습니다.', true)
@@ -51,6 +129,11 @@ export function createAiReviewService(options = {}) {
         wrapped.imageInputCount = imageInputCount
         wrapped.visionInputSummary = createVisionInputSummary(payload)
         wrapped.aiReviewDurationMs = Date.now() - startedAt
+        wrapped.openAiRequestDurationMs = requestStartedAt ? Date.now() - requestStartedAt : 0
+        wrapped.openAiResponseReceived = openAiResponseReceived
+        wrapped.openAiResponseParsed = openAiResponseParsed
+        wrapped.fallbackStage = 'unknown'
+        wrapped.fallbackReason = 'openai_review_failed'
         wrapped.cause = error
         throw wrapped
       }
@@ -62,10 +145,10 @@ export function normalizeAiReview(value, payload = {}) {
   const input = value && typeof value === 'object' ? value : {}
   const review = {
     releaseDecision: normalizeReleaseDecision(input.releaseDecision),
-    summary: normalizeKoreanText(input.summary, createFallbackSummary(payload)),
-    mustFix: normalizeIssueArray(input.mustFix, 'critical'),
-    verify: normalizeIssueArray(input.verify, 'warning'),
-    developerNotes: normalizeIssueArray(input.developerNotes, 'check'),
+    summary: normalizeSummary(input.summary, payload),
+    mustFix: normalizeIssueArray(input.mustFix, 'critical', { dropTransientOverlay: true }),
+    verify: normalizeIssueArray(input.verify, 'warning', { limitTransientOverlayTech: true }),
+    developerNotes: normalizeIssueArray(input.developerNotes, 'check', { dropTransientOverlay: true }),
     visualDifferences: normalizeVisualDifferenceArray(input.visualDifferences, payload),
     clientReplyDraft: normalizeKoreanText(input.clientReplyDraft, createFallbackClientReply(payload)),
   }
@@ -96,8 +179,29 @@ export function parseJsonObject(rawText) {
   } catch {
     const match = text.match(/\{[\s\S]*\}/)
     if (!match) throw createAiReviewError('invalid_ai_json', 'AI Review 응답 JSON을 찾지 못했습니다.', true)
-    return JSON.parse(match[0])
+    try {
+      return JSON.parse(match[0])
+    } catch {
+      throw createAiReviewError('invalid_ai_json', 'AI Review 응답 JSON을 파싱하지 못했습니다.', true)
+    }
   }
+}
+
+function validateAiReviewSchema(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw createAiReviewError('invalid_ai_schema', 'AI Review 응답 스키마가 올바르지 않습니다.', true)
+  }
+  if (!hasRecoverableReviewData(value)) throw createAiReviewError('invalid_ai_schema', 'AI Review 응답 스키마가 올바르지 않습니다.', true)
+}
+
+function hasRecoverableReviewData(value = {}) {
+  if (VALID_RELEASE_DECISIONS.has(normalizeString(value.releaseDecision).toLowerCase())) return true
+  if (normalizeString(value.summary)) return true
+  if (normalizeString(value.clientReplyDraft)) return true
+  if (coerceArray(value.mustFix).some(hasRecoverableIssueItem)) return true
+  if (coerceArray(value.verify).some(hasRecoverableIssueItem)) return true
+  if (coerceArray(value.visualDifferences).some(hasRecoverableVisualDifferenceItem)) return true
+  return false
 }
 
 function normalizeReleaseDecision(value) {
@@ -113,22 +217,64 @@ function normalizeKoreanText(value, fallback) {
   return normalizeString(value) || fallback
 }
 
-function normalizeIssueArray(value, defaultSeverity) {
-  if (!Array.isArray(value)) return []
-  return dedupeIssues(value.map((item) => normalizeIssue(item, defaultSeverity)).filter(Boolean)).slice(0, 10)
+function coerceArray(value) {
+  if (Array.isArray(value)) return value
+  if (typeof value === 'string' && normalizeString(value)) return [value]
+  if (value && typeof value === 'object') return [value]
+  return []
+}
+
+function normalizeEvidence(value) {
+  if (Array.isArray(value)) return value.map(normalizeString).filter(Boolean).slice(0, 4)
+  const text = normalizeString(value)
+  return text ? [text] : []
+}
+
+function hasRecoverableIssueItem(item) {
+  if (typeof item === 'string') return Boolean(normalizeString(item))
+  if (!item || typeof item !== 'object') return false
+  return Boolean(normalizeString(item.title || item.summary || item.description || item.detail || item.message) || normalizeEvidence(item.evidence).length > 0)
+}
+
+function hasRecoverableVisualDifferenceItem(item) {
+  if (!item || typeof item !== 'object') return false
+  return Boolean(normalizeString(item.title || item.summary || item.description || item.figmaValue || item.figma || item.webValue || item.web || item.area || item.category))
+}
+
+function normalizeSummary(value, payload = {}) {
+  const text = normalizeString(value)
+  if (isTransientOverlayText(text)) return createFallbackSummary(payload)
+  return normalizeKoreanText(text, createFallbackSummary(payload))
+}
+
+function normalizeIssueArray(value, defaultSeverity, options = {}) {
+  const normalized = dedupeIssues(coerceArray(value).map((item) => normalizeIssue(item, defaultSeverity)).filter(Boolean))
+  const filtered = []
+  let transientTechKept = false
+  normalized.forEach((item) => {
+    if (!isTransientOverlayIssue(item)) {
+      filtered.push(item)
+      return
+    }
+    if (options.dropTransientOverlay) return
+    if (options.limitTransientOverlayTech && !transientTechKept && item.category === 'Tech') {
+      filtered.push({ ...item, severity: 'check' })
+      transientTechKept = true
+    }
+  })
+  return filtered.slice(0, 10)
 }
 
 function normalizeVisualDifferenceArray(value, payload = {}) {
-  if (!Array.isArray(value)) return []
-  const normalized = value.map((item, index) => normalizeVisualDifference(item, index, payload)).filter(Boolean)
-  return dedupeVisualDifferences(normalized.filter((item) => isUsefulVisualDifference(item, payload)))
+  const normalized = coerceArray(value).map((item, index) => normalizeVisualDifference(item, index, payload)).filter(Boolean)
+  return dedupeVisualDifferences(normalized.filter((item) => isUsefulVisualDifference(item, payload)).filter(isConsistentVisualDifference))
     .sort(compareVisualDifferences)
-    .slice(0, 6)
     .map(stripInternalVisualDifferenceFields)
 }
 
 function normalizeVisualDifference(item, index, payload = {}) {
   if (!item || typeof item !== 'object') return null
+  if (!hasRecoverableVisualDifferenceItem(item)) return null
   const canonicalPricePair = findCanonicalPricePair(item, payload)
   const rawCategory = canonicalPricePair ? 'Price' : item.category
   const category = normalizeVisualDifferenceCategory(rawCategory)
@@ -141,8 +287,8 @@ function normalizeVisualDifference(item, index, payload = {}) {
     category,
     title: ctaGate?.title || normalizeVisualTitle(item.title, category, area),
     summary: ctaGate?.summary || normalizeVisualSummary(item.summary || item.description, category),
-    figmaValue,
-    webValue,
+    figmaValue: ctaGate?.figmaValue || figmaValue,
+    webValue: ctaGate?.webValue || webValue,
     severity: ctaGate?.severity || normalizeSeverity(item.severity),
     confidence: ctaGate?.confidence || normalizeConfidence(item.confidence),
     order: canonicalPricePair ? getCanonicalOrder(canonicalPricePair.web || canonicalPricePair.figma, index) : Number.isFinite(Number(item.order)) ? Number(item.order) : index,
@@ -156,20 +302,23 @@ function normalizeIssue(item, defaultSeverity) {
   if (!item || typeof item !== 'object') return null
   return createIssueObject({
     category: item.category,
-    title: item.title || item.summary || item.description,
-    description: item.description || item.detail || item.title,
+    title: item.title || item.summary || item.description || item.message,
+    description: item.description || item.detail || item.summary || item.title || item.message,
     evidence: item.evidence,
-    severity: item.severity || defaultSeverity,
+    severity: isValidSeverity(item.severity) ? item.severity : defaultSeverity,
   })
 }
 
 function createIssueObject({ category = 'tech', title = '', description = '', evidence = [], severity = 'warning' } = {}) {
-  const safeEvidence = Array.isArray(evidence) ? evidence.map(normalizeString).filter(Boolean).slice(0, 4) : []
-  const resolvedCategory = normalizeCategory(category, `${title} ${description} ${safeEvidence.join(' ')}`)
+  const safeEvidence = normalizeEvidence(evidence)
+  const safeTitle = normalizeString(title).slice(0, 160)
+  const safeDescription = normalizeString(description).slice(0, 500)
+  if (!safeTitle && !safeDescription && safeEvidence.length === 0) return null
+  const resolvedCategory = normalizeCategory(category, `${safeTitle} ${safeDescription} ${safeEvidence.join(' ')}`)
   return {
     category: resolvedCategory,
-    title: normalizeString(title).slice(0, 160),
-    description: normalizeString(description).slice(0, 500),
+    title: safeTitle || safeDescription || safeEvidence[0] || '확인 필요',
+    description: safeDescription || safeTitle || safeEvidence[0] || '확인 필요',
     evidence: safeEvidence,
     severity: normalizeSeverity(severity),
   }
@@ -243,7 +392,7 @@ function normalizeCategory(value, context = '') {
   if (category.includes('missing')) return 'Missing'
   if (category.includes('text') || category.includes('copy')) return 'Text'
   const searchable = normalizeString(context).toLowerCase()
-  if (/(가격|금액|월\s*\d|만원|원|납입|납부|할부|%|price|amount|payment|monthly|rate|interest)/i.test(searchable)) return 'Price'
+  if (looksLikePriceText(searchable)) return 'Price'
   if (/(cta|button|버튼|링크|href|상담|신청|예약|문의|바로가기|action)/i.test(searchable)) return 'CTA'
   if (/(image|video|media|이미지|영상|비디오|미디어)/i.test(searchable)) return 'Media'
   if (/(문구|텍스트|headline|title|copy|text)/i.test(searchable)) return 'Text'
@@ -334,6 +483,10 @@ function normalizeSeverity(value) {
   return ['critical', 'warning', 'check'].includes(severity) ? severity : 'warning'
 }
 
+function isValidSeverity(value) {
+  return ['critical', 'warning', 'check'].includes(normalizeString(value).toLowerCase())
+}
+
 function dedupeIssues(items) {
   const seen = new Set()
   return items.filter((item) => {
@@ -361,6 +514,19 @@ function isUsefulVisualDifference(item, payload = {}) {
   if (item.area === '메인 비주얼' && !hasHeroEvidence(payload) && ['Media', 'Image', 'Text', 'CTA'].includes(item.category)) return false
   if (item.category === 'Text' && normalizeLooseVisualText(item.figmaValue) === normalizeLooseVisualText(item.webValue)) return false
   if (item.category === 'CTA' && !isSupportedCtaDifference(item, payload)) return false
+  return true
+}
+
+function isConsistentVisualDifference(item = {}) {
+  const titleText = `${item.title || ''} ${item.summary || ''}`
+  const valueText = `${item.figmaValue || ''} ${item.webValue || ''}`
+  if (item.category === 'Price') {
+    if (/(layout|height|width|ratio|spacing|레이아웃|높이|너비|비율|간격|이미지|영상|media)/i.test(titleText)) return false
+    return looksLikePriceText(valueText)
+  }
+  if (item.category === 'Layout' && looksLikePriceText(valueText)) return false
+  if ((item.category === 'Media' || item.category === 'Image') && looksLikeUnrelatedLongTextPair(item)) return false
+  if (item.category === 'CTA' && looksLikeLongBodyText(item.figmaValue) && looksLikeLongBodyText(item.webValue)) return false
   return true
 }
 
@@ -398,14 +564,17 @@ function createVisualDifferenceKey(item) {
 function findCanonicalPricePair(item, payload = {}) {
   const category = normalizeVisualDifferenceCategory(item.category)
   const searchable = `${item.title || ''} ${item.summary || item.description || ''} ${item.figmaValue || item.figma || ''} ${item.webValue || item.web || ''}`
+  if (/(layout|height|width|ratio|spacing|레이아웃|높이|너비|비율|간격)/i.test(`${item.title || ''} ${item.summary || item.description || ''}`)) return null
   if (category !== 'Price' && !/(가격|금액|만원|원|%|monthly|payment|price|amount)/i.test(searchable)) return null
   const prices = Array.isArray(payload.visualEvidence?.prices) ? payload.visualEvidence.prices : []
   const figmaPrices = prices.filter((price) => price.source === 'figma')
   const webPrices = prices.filter((price) => price.source === 'web')
   const figmaText = normalizeLooseVisualText(item.figmaValue || item.figma || searchable)
   const webText = normalizeLooseVisualText(item.webValue || item.web || searchable)
-  const figma = figmaPrices.find((price) => valueLooksRelated(figmaText, price.text)) || figmaPrices[0] || null
-  const web = webPrices.find((price) => valueLooksRelated(webText, price.text)) || webPrices.find((price) => shareUnitTokens(figma, price)) || webPrices[0] || null
+  const figma = figmaPrices.find((price) => valueLooksRelated(figmaText, price.text)) || null
+  const web = webPrices.find((price) => valueLooksRelated(webText, price.text)) || webPrices.find((price) => figma && shareUnitTokens(figma, price) && shareSectionOrPosition(figma, price)) || null
+  if (!figma && !web) return null
+  if (figma && web && !shareSectionOrPosition(figma, web) && !shareUnitTokens(figma, web)) return null
   return figma || web ? { figma, web } : null
 }
 
@@ -422,6 +591,32 @@ function shareUnitTokens(first, second) {
   const firstUnits = Array.isArray(first?.unitTokens) ? first.unitTokens : []
   const secondUnits = Array.isArray(second?.unitTokens) ? second.unitTokens : []
   return firstUnits.some((unit) => secondUnits.includes(unit))
+}
+
+function shareSectionOrPosition(first = {}, second = {}) {
+  const firstSection = normalizeLooseVisualText(first.sectionId || first.sectionRootId || first.sectionPath)
+  const secondSection = normalizeLooseVisualText(second.sectionId || second.sectionRootId || second.sectionPath)
+  if (firstSection && secondSection && firstSection === secondSection) return true
+  const firstY = Number(first.yRatio)
+  const secondY = Number(second.yRatio)
+  return Number.isFinite(firstY) && Number.isFinite(secondY) && Math.abs(firstY - secondY) <= 0.06
+}
+
+function looksLikeUnrelatedLongTextPair(item = {}) {
+  const figma = normalizeString(item.figmaValue)
+  const web = normalizeString(item.webValue)
+  if (!figma || !web) return false
+  if (/(image|video|media|이미지|영상|비디오|미디어)/i.test(`${figma} ${web}`)) return false
+  if (figma.length < 24 && web.length < 24) return false
+  const first = normalizeLooseVisualText(figma)
+  const second = normalizeLooseVisualText(web)
+  if (!first || !second) return false
+  return !first.includes(second) && !second.includes(first) && !extractNumericTokens(first).some((token) => extractNumericTokens(second).includes(token))
+}
+
+function looksLikeLongBodyText(value) {
+  const text = normalizeString(value)
+  return text.length >= 36 && /[.!?]|다\.?|요\.?|니다\.?/.test(text)
 }
 
 function getAreaFromCanonicalEntity(entity = {}) {
@@ -452,6 +647,18 @@ function classifyCtaDifferenceSupport(item, payload = {}) {
   const cta = payload.visualEvidence?.cta || {}
   const figmaActions = Array.isArray(cta.figmaActions) ? cta.figmaActions : []
   const webActions = Array.isArray(cta.webActions) ? cta.webActions : []
+  const cropGate = classifyCtaCropQualityGate(payload)
+  const canonicalConflict = webActions.length > 0 && looksLikeMissingCtaValue(item.webValue || item.web)
+  if (cropGate.unsafe || canonicalConflict) {
+    return createUncertainCtaGate({
+      key: canonicalConflict ? 'cta-canonical-web-present' : cropGate.key,
+      summary: canonicalConflict
+        ? 'Vision 결과는 Web CTA 누락을 시사하지만 canonical Hero CTA가 존재하므로 구성 확인 항목으로 낮췄습니다.'
+        : 'Hero crop 품질이 충분하지 않아 Vision만으로 CTA 누락을 단정하지 않고 구성 확인 항목으로 분류했습니다.',
+      figmaValue: formatCanonicalActionLabels(figmaActions) || normalizeString(item.figmaValue || item.figma),
+      webValue: formatCanonicalActionLabels(webActions) || normalizeString(item.webValue || item.web),
+    })
+  }
   if (Number(cta.countDifference || 0) > 0) return { supported: true, key: 'cta-count' }
   const rawFigma = normalizeLooseVisualText(item.figmaValue || item.figma)
   const rawWeb = normalizeLooseVisualText(item.webValue || item.web)
@@ -478,15 +685,39 @@ function classifyCtaDifferenceSupport(item, payload = {}) {
   return { supported: false }
 }
 
-function createUncertainCtaGate() {
+function createUncertainCtaGate(overrides = {}) {
   return {
     supported: true,
     severity: 'check',
     confidence: 'medium',
-    title: 'CTA 구성 확인이 필요합니다.',
-    summary: 'Figma와 Web의 CTA 목록은 다르지만 명확한 1:1 대응 관계가 부족해 구성 확인 항목으로 분류했습니다.',
-    key: 'cta-uncertain-composition',
+    title: 'CTA 구성을 확인해주세요.',
+    summary: overrides.summary || 'Figma와 Web의 CTA 목록은 다르지만 명확한 1:1 대응 관계가 부족해 구성 확인 항목으로 분류했습니다.',
+    key: overrides.key || 'cta-uncertain-composition',
+    figmaValue: overrides.figmaValue || '',
+    webValue: overrides.webValue || '',
   }
+}
+
+function classifyCtaCropQualityGate(payload = {}) {
+  const summaries = Array.isArray(payload.__visionCropSummary) ? payload.__visionCropSummary : []
+  const heroSummaries = summaries.filter((item) => /hero/i.test(String(item?.label || '')))
+  if (heroSummaries.length === 0) return { unsafe: false, key: '' }
+  const diagnostics = heroSummaries.map((item) => item.cropDiagnostics || {})
+  const failed = diagnostics.some((item) => item.cropQualityPassed === false || Number(item.descendantUnionHeight || 0) <= 0)
+  if (failed) return { unsafe: true, key: 'cta-crop-quality-low' }
+  const heights = diagnostics.map((item) => Number(item.finalCropHeight || 0)).filter((value) => value > 0)
+  if (heights.length >= 2 && Math.max(...heights) / Math.max(1, Math.min(...heights)) >= 2.5) return { unsafe: true, key: 'cta-crop-coverage-mismatch' }
+  return { unsafe: false, key: '' }
+}
+
+function looksLikeMissingCtaValue(value) {
+  const text = normalizeString(value)
+  if (!text) return true
+  return /(없음|누락|미노출|not visible|missing|none|0\s*(개|cta|button|buttons?))/i.test(text)
+}
+
+function formatCanonicalActionLabels(actions = []) {
+  return actions.map((item) => normalizeString(item.text || item.displayText)).filter(Boolean).slice(0, 5).join(' / ')
 }
 
 function looksLikeCtaListValue(value) {
@@ -532,11 +763,21 @@ function isTransientOverlayDifference(item = {}) {
   return hasOverlay && !hasCoreDesignEvidence
 }
 
+function isTransientOverlayIssue(item = {}) {
+  return isTransientOverlayText(`${item.category || ''} ${item.title || ''} ${item.description || ''} ${(Array.isArray(item.evidence) ? item.evidence : []).join(' ')}`)
+}
+
+function isTransientOverlayText(value) {
+  const text = normalizeString(value)
+  if (!text) return false
+  const hasOverlay = /(cookie|consent|privacy|preference|popup|overlay|쿠키|동의|개인정보|팝업|오버레이|환경설정)/i.test(text)
+  const hasCoreDesignEvidence = /(figma.*dialog|dialog.*figma|modal.*figma|시안.*팝업|팝업.*시안)/i.test(text) && /(web|figma|양쪽|both)/i.test(text)
+  return hasOverlay && !hasCoreDesignEvidence
+}
+
 function compareVisualDifferences(first, second) {
   const orderDiff = Number(first.order || 0) - Number(second.order || 0)
-  if (orderDiff !== 0) return orderDiff
-  const categoryOrder = { Text: 1, CTA: 2, Media: 3, Image: 3, Price: 4, Layout: 5, Missing: 6, Other: 7 }
-  return (categoryOrder[first.category] || 99) - (categoryOrder[second.category] || 99)
+  return orderDiff
 }
 
 function stripInternalVisualDifferenceFields(item) {
@@ -559,6 +800,17 @@ function normalizeLooseVisualText(value) {
 
 function extractNumericTokens(value) {
   return String(value || '').match(/\d+(?:[.,]\d+)?\s*(?:%|원|만원|개월|년)?/g) || []
+}
+
+function looksLikePriceText(value) {
+  const text = String(value || '')
+  if (!/\d/.test(text)) return false
+  if (/(₩|\$|€|¥)\s*\d|\d[\d.,]*\s*(원|만원|천원|억원|krw|usd|eur|jpy)/i.test(text)) return true
+  if (/\d(?:[.,]\d+)?\s*(%|퍼센트)/i.test(text)) return true
+  if (/(금리|이율|interest|rate|apr)\s*\d|\d(?:[.,]\d+)?\s*%/.test(text) && /(금리|이율|interest|rate|apr)/i.test(text)) return true
+  if (/(월\s*납입|월납입|monthly|payment|per\s*month)/i.test(text) && /(₩|\$|€|¥|\d[\d.,]*\s*(원|만원|천원|억원|krw|usd|eur|jpy))/i.test(text)) return true
+  if (/(계약기간|약정|리스|렌트|period|term)/i.test(text) && /\d+\s*(개월|년|months?|years?)/i.test(text)) return true
+  return false
 }
 
 function hasKorean(value) {
@@ -603,6 +855,92 @@ function getVisionImages(payload = {}) {
 
 function arrayHasItems(value) {
   return Array.isArray(value) && value.length > 0
+}
+
+function getRawVisionCount(value = {}) {
+  return Array.isArray(value.visualDifferences) ? value.visualDifferences.length : 0
+}
+
+function decorateAiReviewError(error, stage, context = {}) {
+  const aiError = error?.openAiCalled === true
+    ? error
+    : createAiReviewError(getErrorCodeForStage(error, stage), getSafeErrorMessage(error, stage), true)
+  aiError.openAiCalled = true
+  aiError.visionUsed = context.imageInputCount > 0
+  aiError.imageInputCount = context.imageInputCount || 0
+  aiError.visionInputSummary = createVisionInputSummary(context.payload)
+  aiError.model = normalizeString(context.model)
+  aiError.aiReviewDurationMs = Date.now() - Number(context.startedAt || Date.now())
+  aiError.openAiRequestDurationMs = Number(context.openAiRequestDurationMs || 0) || (context.requestStartedAt ? Date.now() - context.requestStartedAt : 0)
+  aiError.openAiResponseReceived = context.openAiResponseReceived === true
+  aiError.openAiResponseParsed = context.openAiResponseParsed === true
+  aiError.fallbackStage = normalizeFallbackStage(stage)
+  aiError.fallbackReason = normalizeFallbackReason(getFallbackReason(error, stage))
+  if (aiError !== error) aiError.cause = error
+  return aiError
+}
+
+function classifyOpenAiRequestStage(error) {
+  if (isTimeoutError(error)) return 'openai-timeout'
+  if (Number(error?.status || error?.response?.status || 0) > 0) return 'openai-http-error'
+  return 'openai-request'
+}
+
+function getParseFailureStage(error) {
+  if (error?.code === 'empty_ai_response') return 'openai-response-empty'
+  return 'json-parse'
+}
+
+function getErrorCodeForStage(error, stage) {
+  if (error?.code && typeof error.code === 'string') return error.code
+  if (stage === 'openai-timeout') return 'openai_timeout'
+  if (stage === 'openai-http-error') return 'openai_http_error'
+  if (stage === 'openai-response-empty') return 'empty_ai_response'
+  if (stage === 'json-parse') return 'invalid_ai_json'
+  if (stage === 'schema-validation') return 'invalid_ai_schema'
+  if (stage === 'post-process') return 'post_process_failed'
+  if (stage === 'openai-request') return 'openai_request_failed'
+  return 'openai_review_failed'
+}
+
+function getSafeErrorMessage(error, stage) {
+  if (error instanceof Error && ['empty_ai_response', 'invalid_ai_json', 'invalid_ai_schema'].includes(error.code)) return error.message
+  if (stage === 'openai-timeout') return 'AI Review OpenAI 요청 시간이 초과되었습니다.'
+  if (stage === 'openai-http-error') return 'AI Review OpenAI HTTP 오류가 발생했습니다.'
+  if (stage === 'openai-response-empty') return 'AI Review 응답이 비어 있습니다.'
+  if (stage === 'json-parse') return 'AI Review 응답 JSON을 파싱하지 못했습니다.'
+  if (stage === 'schema-validation') return 'AI Review 응답 스키마가 올바르지 않습니다.'
+  if (stage === 'post-process') return 'AI Review 응답 후처리에 실패했습니다.'
+  return 'AI Review 호출에 실패했습니다.'
+}
+
+function getFallbackReason(error, stage) {
+  if (stage === 'openai-http-error') {
+    const status = Number(error?.status || error?.response?.status || 0)
+    return status > 0 ? `http-${status}` : 'http-error'
+  }
+  if (stage === 'openai-timeout') return 'timeout'
+  if (stage === 'openai-response-empty') return 'empty_ai_response'
+  if (stage === 'json-parse') return 'invalid_ai_json'
+  if (stage === 'schema-validation') return 'invalid_ai_schema'
+  if (stage === 'post-process') return 'post_process_failed'
+  if (stage === 'openai-request') return normalizeFallbackReason(error?.code || error?.name || 'request-failed')
+  return normalizeFallbackReason(error?.code || 'unknown')
+}
+
+function isTimeoutError(error) {
+  const text = `${error?.code || ''} ${error?.name || ''} ${error?.type || ''} ${error?.message || ''}`
+  return /timeout|timed.?out|ETIMEDOUT|AbortError|APIConnectionTimeoutError/i.test(text)
+}
+
+function normalizeFallbackStage(value) {
+  const stage = normalizeString(value)
+  return ['image-prepare', 'openai-request', 'openai-timeout', 'openai-http-error', 'openai-response-empty', 'json-parse', 'schema-validation', 'post-process', 'unknown'].includes(stage) ? stage : 'unknown'
+}
+
+function normalizeFallbackReason(value) {
+  const reason = normalizeString(value).toLowerCase().replace(/[^a-z0-9._:-]+/g, '-').replace(/^-+|-+$/g, '')
+  return reason.slice(0, 120) || 'unknown'
 }
 
 function createAiReviewError(code, message, openAiCalled) {

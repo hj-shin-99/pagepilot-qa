@@ -65,6 +65,7 @@ export function sanitizeAiReviewResponse(response = {}) {
       openAiCalled: response.meta?.openAiCalled === true,
       visionUsed: response.meta?.visionUsed === true,
       imageInputCount: numberValue(response.meta?.imageInputCount),
+      rawVisionCount: numberValue(response.meta?.rawVisionCount),
       figmaImagePrepared: response.meta?.figmaImagePrepared === true,
       webImagePrepared: response.meta?.webImagePrepared === true,
       fallbackUsed: response.meta?.fallbackUsed === true,
@@ -235,7 +236,7 @@ function sanitizeIssueArray(value) {
 }
 
 function sanitizeVisualDifferenceArray(value) {
-  return Array.isArray(value) ? value.map(sanitizeVisualDifference).filter(Boolean).slice(0, 10) : []
+  return Array.isArray(value) ? value.map(sanitizeVisualDifference).filter(Boolean) : []
 }
 
 function sanitizeVisionInputSummary(value) {

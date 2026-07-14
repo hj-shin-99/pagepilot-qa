@@ -2794,6 +2794,13 @@
   background: #f0f9ff !important;
 }
 
+.difference-more-button {
+  justify-self: start;
+  margin-top: 12px;
+  padding: 10px 13px;
+  font-size: 13px;
+}
+
 .visual-detail-accordion {
   padding: 0;
   overflow: hidden;

@@ -45,20 +45,24 @@ export function createVisualVisionService(options = {}) {
       }))
       const visionInputSummary = images.map(({ label, width, height, detail }) => ({ label, width, height, detail }))
 
-      return {
-        payload: {
-          ...payload,
-          visionInput: {
-            enabled: true,
-            images,
-          },
+      const visionCropSummary = [figmaHero, webHero].map((image) => ({ label: image.label, width: image.width, height: image.height, cropUsed: Boolean(image.cropUsed), cropReason: image.cropReason, cropFailureReason: image.cropFailureReason || '', cropDiagnostics: image.cropDiagnostics || null }))
+      const preparedPayload = {
+        ...payload,
+        visionInput: {
+          enabled: true,
+          images,
         },
+      }
+      Object.defineProperty(preparedPayload, '__visionCropSummary', { value: visionCropSummary, enumerable: false })
+
+      return {
+        payload: preparedPayload,
         meta: {
           visionPrepared: true,
           figmaImagePrepared: true,
           webImagePrepared: true,
           visionInputSummary,
-          visionCropSummary: [figmaHero, webHero].map((image) => ({ label: image.label, cropUsed: Boolean(image.cropUsed), cropReason: image.cropReason, cropFailureReason: image.cropFailureReason || '' })),
+          visionCropSummary,
           figmaImage: { width: figmaOverview.width, height: figmaOverview.height, originalWidth: figmaOverview.originalWidth, originalHeight: figmaOverview.originalHeight, cached: figmaOverview.cached, sizeBytes: figmaOverview.sizeBytes },
           webImage: { width: webOverview.width, height: webOverview.height, originalWidth: webOverview.originalWidth, originalHeight: webOverview.originalHeight, cached: webOverview.cached, sizeBytes: webOverview.sizeBytes },
         },
@@ -121,13 +125,20 @@ export async function prepareVisionImage(inputPath, options = {}) {
     cropUsed: Boolean(cropResult.crop),
     cropReason: cropResult.reason,
     cropFailureReason: cropResult.failureReason,
+    cropDiagnostics: cropResult.diagnostics || null,
   }
 }
 
 function createHeroCropRegion(payload, source) {
   const descriptor = findHeroDescriptor(payload, source)
   if (descriptor) {
-    return { source, descriptor, fallback: false }
+    return {
+      source,
+      descriptor,
+      descendants: findHeroDescendantBoxes(payload, source),
+      sections: findHeroSourceSections(payload, source),
+      fallback: false,
+    }
   }
   return { source, descriptor: null, fallback: true, reason: 'hero-descriptor-missing' }
 }
@@ -140,12 +151,30 @@ function findHeroDescriptor(payload = {}, source) {
     || null
 }
 
+function findHeroSourceSections(payload = {}, source) {
+  const sections = Array.isArray(payload.visualEvidence?.hero?.sections) ? payload.visualEvidence.hero.sections : []
+  return sections.filter((item) => item?.source === source && hasUsableRatioBox(item))
+}
+
+function findHeroDescendantBoxes(payload = {}, source) {
+  const heroDescendants = Array.isArray(payload.visualEvidence?.hero?.descendants) ? payload.visualEvidence.hero.descendants : []
+  const cta = payload.visualEvidence?.cta || {}
+  const media = payload.visualEvidence?.media || {}
+  return [
+    ...heroDescendants,
+    ...(Array.isArray(cta.figmaActions) ? cta.figmaActions : []),
+    ...(Array.isArray(cta.webActions) ? cta.webActions : []),
+    ...(Array.isArray(media.figmaPrimaryCandidates) ? media.figmaPrimaryCandidates : []),
+    ...(Array.isArray(media.webPrimaryCandidates) ? media.webPrimaryCandidates : []),
+  ].filter((item) => item?.source === source)
+}
+
 function resolveCrop(cropInput, metadata) {
   if (!cropInput) {
     return { crop: null, width: metadata.width, height: metadata.height, cacheValue: null, reason: 'none', failureReason: '' }
   }
   const descriptor = cropInput.descriptor
-  const descriptorCrop = descriptor && createCropFromDescriptor(descriptor, metadata)
+  const descriptorCrop = descriptor && createCropFromDescriptor(descriptor, metadata, cropInput)
   if (descriptorCrop) return descriptorCrop
   const fallbackCrop = createTopViewportCrop(metadata)
   return {
@@ -155,25 +184,129 @@ function resolveCrop(cropInput, metadata) {
   }
 }
 
-function createCropFromDescriptor(descriptor, metadata) {
+function createCropFromDescriptor(descriptor, metadata, cropInput = {}) {
   if (!hasUsableRatioBox(descriptor)) return null
   const width = metadata.width
   const height = metadata.height
-  const rawX = Math.floor(clamp(Number(descriptor.xRatio), 0, 1) * width)
-  const rawY = Math.floor(clamp(Number(descriptor.yRatio), 0, 1) * height)
-  const rawWidth = Math.ceil(clamp(Number(descriptor.widthRatio), 0.05, 1) * width)
-  const rawHeight = Math.ceil(clamp(Number(descriptor.heightRatio), 0.04, HERO_MAX_CROP_HEIGHT_RATIO) * height)
+  const descriptorBox = normalizeRatioBox(descriptor, 'descriptor')
+  const descendantResult = createDescendantUnion(cropInput.descendants, descriptorBox, metadata)
+  const descendantUnion = descendantResult.union
+  const nextBoundary = getNextSectionBoundary(cropInput.sections, descriptorBox)
+  const descriptorBottom = descriptorBox.yRatio + descriptorBox.heightRatio
+  const unionBottom = descendantUnion ? Math.max(descriptorBottom, descendantUnion.bottomRatio) : descriptorBottom
+  const unclampedBottom = Math.min(Math.max(unionBottom, descriptorBottom), descriptorBox.yRatio + HERO_MAX_CROP_HEIGHT_RATIO)
+  const finalBottom = nextBoundary !== null ? Math.min(unclampedBottom, nextBoundary) : unclampedBottom
+  const finalHeightRatio = Math.max(0.04, finalBottom - descriptorBox.yRatio)
+  const rawX = Math.floor(descriptorBox.xRatio * width)
+  const rawY = Math.floor(descriptorBox.yRatio * height)
+  const rawWidth = Math.ceil(descriptorBox.widthRatio * width)
+  const rawHeight = Math.ceil(finalHeightRatio * height)
   const padX = Math.round(Math.min(width * 0.04, 160))
-  const padY = Math.round(clamp(rawHeight * 0.14, 96, 320))
-  const minHeight = Math.min(height, Math.max(HERO_MIN_CROP_HEIGHT, Math.round(width * 0.42)))
   const crop = clampCrop({
     left: rawX - padX,
-    top: rawY - padY,
+    top: rawY,
     width: rawWidth + padX * 2,
-    height: Math.max(rawHeight + padY * 2, minHeight),
+    height: rawHeight,
   }, metadata)
   if (!isValidCrop(crop)) return null
-  return { crop, width: crop.width, height: crop.height, cacheValue: crop, reason: 'hero-section-descriptor', failureReason: '' }
+  const descriptorHeight = Math.ceil(descriptorBox.heightRatio * height)
+  const descendantUnionHeight = descendantUnion ? Math.ceil(descendantUnion.height) : 0
+  const cropAdjusted = crop.height !== descriptorHeight
+  const cropCoverageRatio = height > 0 ? Number((crop.height / height).toFixed(4)) : 0
+  const cropQualityPassed = descendantResult.validCount > 0 && descendantUnionHeight > 0 && crop.height >= Math.min(HERO_MIN_CROP_HEIGHT, height)
+  return {
+    crop,
+    width: crop.width,
+    height: crop.height,
+    cacheValue: crop,
+    reason: 'hero-section-descriptor',
+    failureReason: '',
+    diagnostics: {
+      descriptorHeight,
+      validDescendantBoxCount: descendantResult.validCount,
+      invalidDescendantBoxCount: descendantResult.invalidCount,
+      descendantUnionHeight,
+      nextSectionBoundary: nextBoundary !== null ? Math.round(nextBoundary * height) : null,
+      finalCropHeight: crop.height,
+      cropCoverageRatio,
+      cropQualityPassed,
+      cropAdjusted,
+      cropAdjustmentReason: cropAdjusted ? (nextBoundary !== null && finalBottom === nextBoundary ? 'next-section-clamped' : 'descendant-union-adjusted') : '',
+      descendantUnionFailureReason: descendantResult.validCount === 0 ? 'no-valid-semantic-descendant-box' : '',
+    },
+  }
+}
+
+function normalizeRatioBox(value = {}, kind = '') {
+  const defaultHeight = kind === 'cta' ? 0.045 : kind === 'media' ? 0.18 : 0.04
+  const xRatio = clamp(Number(value.xRatio), 0, 1)
+  const yRatio = clamp(Number(value.yRatio), 0, 1)
+  const widthRatio = clamp(Number(value.widthRatio), 0.02, 1 - xRatio || 1)
+  const heightRatio = clamp(Number(value.heightRatio), defaultHeight, 1 - yRatio || defaultHeight)
+  return { xRatio, yRatio, widthRatio, heightRatio }
+}
+
+function createDescendantUnion(descendants = [], descriptorBox, metadata) {
+  let invalidCount = 0
+  const boxes = (Array.isArray(descendants) ? descendants : [])
+    .map((item) => normalizeDescendantBox(item, descriptorBox, metadata))
+    .filter((box) => {
+      if (!box) {
+        invalidCount += 1
+        return false
+      }
+      return true
+    })
+  if (boxes.length === 0) return { union: null, validCount: 0, invalidCount }
+  const top = Math.min(...boxes.map((box) => box.top))
+  const bottom = Math.max(...boxes.map((box) => box.bottom))
+  return {
+    union: {
+      top,
+      bottom,
+      yRatio: top / metadata.height,
+      bottomRatio: bottom / metadata.height,
+      height: Math.max(0, bottom - top),
+    },
+    validCount: boxes.length,
+    invalidCount,
+  }
+}
+
+function normalizeDescendantBox(item = {}, descriptorBox, metadata) {
+  const ratioBox = hasUsableRatioBox(item) ? normalizeRatioBox(item, item.kind || item.type || '') : null
+  const pxBox = ratioBox
+    ? {
+        left: ratioBox.xRatio * metadata.width,
+        top: ratioBox.yRatio * metadata.height,
+        width: ratioBox.widthRatio * metadata.width,
+        height: ratioBox.heightRatio * metadata.height,
+      }
+    : getPixelBox(item)
+  if (!pxBox) return null
+  const crop = clampCrop(pxBox, metadata)
+  if (!isValidSemanticBox(crop)) return null
+  const bottomRatio = (crop.top + crop.height) / metadata.height
+  if (bottomRatio < descriptorBox.yRatio - 0.02) return null
+  return { top: crop.top, bottom: crop.top + crop.height }
+}
+
+function getPixelBox(item = {}) {
+  const box = item.boundingBox || item.absoluteBoundingBox || item.bbox || item.rect || item.bounds || item.box || item
+  const left = nullableNumber(box.x ?? box.left)
+  const top = nullableNumber(box.y ?? box.top)
+  const width = nullableNumber(box.width ?? (Number.isFinite(Number(box.right)) && left !== null ? Number(box.right) - left : null))
+  const height = nullableNumber(box.height ?? (Number.isFinite(Number(box.bottom)) && top !== null ? Number(box.bottom) - top : null))
+  if (left === null || top === null || width === null || height === null || width <= 0 || height <= 0) return null
+  return { left, top, width, height }
+}
+
+function getNextSectionBoundary(sections = [], descriptorBox) {
+  const boundaries = (Array.isArray(sections) ? sections : [])
+    .map((section) => Number(section.yRatio))
+    .filter((yRatio) => Number.isFinite(yRatio) && yRatio > descriptorBox.yRatio + 0.02)
+    .sort((first, second) => first - second)
+  return boundaries[0] ?? null
 }
 
 function createTopViewportCrop(metadata) {
@@ -192,6 +325,10 @@ function clampCrop(crop, metadata) {
 
 function isValidCrop(crop) {
   return Number(crop?.width) >= 32 && Number(crop?.height) >= 32
+}
+
+function isValidSemanticBox(crop) {
+  return Number(crop?.width) > 0 && Number(crop?.height) > 0
 }
 
 function hasUsableRatioBox(value) {
@@ -233,6 +370,11 @@ async function statOrNull(filePath) {
 function positiveNumber(value, fallback) {
   const number = Number(value)
   return Number.isFinite(number) && number > 0 ? number : fallback
+}
+
+function nullableNumber(value) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
 }
 
 function clamp(value, min, max) {

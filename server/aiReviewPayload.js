@@ -181,7 +181,9 @@ function createAiReviewResponseMeta({ qaMeta, preparedMeta = {}, resultMeta, err
   const imageInputCount = Number(resultMeta?.imageInputCount ?? error?.imageInputCount ?? 0)
   const openAiCalled = resultMeta?.openAiCalled === true || error?.openAiCalled === true
   const visionUsed = resultMeta?.visionUsed === true || error?.visionUsed === true
-  const visionFailureReason = getVisionFailureReason({ preparedMeta, imageInputCount, openAiCalled, fallbackUsed, error })
+  const fallbackStage = getFallbackStage({ preparedMeta, error, fallbackUsed })
+  const fallbackReason = getFallbackReason({ preparedMeta, error, fallbackUsed, fallbackStage })
+  const visionFailureReason = getVisionFailureReason({ preparedMeta, imageInputCount, openAiCalled, fallbackUsed, error, fallbackStage })
 
   return {
     ...(qaMeta || {}),
@@ -190,23 +192,54 @@ function createAiReviewResponseMeta({ qaMeta, preparedMeta = {}, resultMeta, err
     openAiCalled,
     visionUsed,
     imageInputCount,
+    rawVisionCount: Number(resultMeta?.rawVisionCount ?? error?.rawVisionCount ?? 0),
     visionInputSummary: normalizeVisionInputSummary(preparedMeta.visionInputSummary || resultMeta?.visionInputSummary || error?.visionInputSummary),
     figmaImagePrepared: preparedMeta.figmaImagePrepared === true,
     webImagePrepared: preparedMeta.webImagePrepared === true,
     fallbackUsed: fallbackUsed === true,
+    fallbackStage,
+    fallbackReason,
     model: safeText(resultMeta?.model || error?.model),
     aiReviewDurationMs: Number(resultMeta?.aiReviewDurationMs ?? error?.aiReviewDurationMs ?? 0),
+    openAiRequestDurationMs: Number(resultMeta?.openAiRequestDurationMs ?? error?.openAiRequestDurationMs ?? 0),
+    openAiResponseReceived: resultMeta?.openAiResponseReceived === true || error?.openAiResponseReceived === true,
+    openAiResponseParsed: resultMeta?.openAiResponseParsed === true || error?.openAiResponseParsed === true,
     visionFailureReason,
   }
 }
 
-function getVisionFailureReason({ preparedMeta = {}, imageInputCount, openAiCalled, fallbackUsed, error }) {
+function getVisionFailureReason({ preparedMeta = {}, imageInputCount, openAiCalled, fallbackUsed, error, fallbackStage }) {
   if (typeof preparedMeta.visionFailureReason === 'string' && preparedMeta.visionFailureReason) return preparedMeta.visionFailureReason
   const expectedImageCount = Array.isArray(preparedMeta.visionInputSummary) ? preparedMeta.visionInputSummary.length : 0
   if (preparedMeta.visionPrepared === true && imageInputCount !== expectedImageCount) return 'image-input-not-attached'
+  if (fallbackUsed && ['schema-validation', 'post-process', 'json-parse', 'openai-response-empty'].includes(fallbackStage)) return fallbackStage
   if (fallbackUsed && openAiCalled && imageInputCount > 0) return 'openai-failed'
   if (fallbackUsed && error) return typeof error?.code === 'string' ? error.code : 'openai-failed'
   return ''
+}
+
+function getFallbackStage({ preparedMeta = {}, error, fallbackUsed }) {
+  if (fallbackUsed !== true) return ''
+  if (typeof error?.fallbackStage === 'string' && error.fallbackStage) return normalizeFallbackStage(error.fallbackStage)
+  if (preparedMeta.visionFailureReason === 'image-prepare-failed') return 'image-prepare'
+  return 'unknown'
+}
+
+function getFallbackReason({ preparedMeta = {}, error, fallbackUsed, fallbackStage }) {
+  if (fallbackUsed !== true) return ''
+  if (typeof error?.fallbackReason === 'string' && error.fallbackReason) return safeDiagnosticToken(error.fallbackReason)
+  if (fallbackStage === 'image-prepare') return safeDiagnosticToken(preparedMeta.visionFailureReason || 'image-prepare-failed')
+  if (typeof error?.code === 'string' && error.code) return safeDiagnosticToken(error.code)
+  return 'unknown'
+}
+
+function normalizeFallbackStage(value) {
+  const stage = safeText(value, 80)
+  return ['image-prepare', 'openai-request', 'openai-timeout', 'openai-http-error', 'openai-response-empty', 'json-parse', 'schema-validation', 'post-process', 'unknown'].includes(stage) ? stage : 'unknown'
+}
+
+function safeDiagnosticToken(value) {
+  return safeText(value, 140).toLowerCase().replace(/[^a-z0-9._:-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120) || 'unknown'
 }
 
 function normalizeVisionInputSummary(value) {
@@ -220,7 +253,7 @@ function normalizeVisionInputSummary(value) {
 }
 
 function logAiReviewMeta(meta = {}) {
-  console.info(`[AI Review] called=${meta.openAiCalled === true} vision=${meta.visionUsed === true} images=${Number(meta.imageInputCount || 0)} fallback=${meta.fallbackUsed === true} durationMs=${Number(meta.aiReviewDurationMs || 0)}`)
+  console.info(`[AI Review] called=${meta.openAiCalled === true} vision=${meta.visionUsed === true} images=${Number(meta.imageInputCount || 0)} fallback=${meta.fallbackUsed === true} stage=${meta.fallbackStage || ''} reason=${meta.fallbackReason || ''} durationMs=${Number(meta.aiReviewDurationMs || 0)}`)
 }
 
 function createVisualIssues(visual = {}) {
@@ -274,16 +307,27 @@ function getSafeScreenshotFileName(value) {
 function classifyVisualDifferenceSeverity(item = {}) {
   const text = `${item.figmaText || ''} ${item.webText || ''} ${item.text || ''}`
   if (isTrivialTextDifference(item.figmaText || item.text, item.webText)) return 'check'
-  if (/[0-9][0-9,._%원$€£年月日-]*/.test(text)) return 'critical'
+  if (hasStrongPriceEvidence(text)) return 'critical'
   if (String(item.confidence || item.matchConfidence || '').toLowerCase() === 'low') return 'check'
   return 'warning'
 }
 
 function classifyVisualDifferenceCategory(item = {}) {
   const text = `${item.figmaText || ''} ${item.webText || ''} ${item.text || ''}`
-  if (/[0-9][0-9,._%원$€£年月日-]*/.test(text)) return 'numeric'
+  if (hasStrongPriceEvidence(text)) return 'numeric'
   if (/cta|button|action/i.test(`${item.role || ''} ${item.sectionRole || ''}`)) return 'cta-text'
   return 'copy'
+}
+
+function hasStrongPriceEvidence(value) {
+  const text = safeText(value, 500)
+  if (!/\d/.test(text)) return false
+  if (/(₩|\$|€|£|¥)\s*\d|\d[\d.,]*\s*(원|만원|천원|억원|krw|usd|eur|jpy)/i.test(text)) return true
+  if (/\d(?:[.,]\d+)?\s*(%|퍼센트)/i.test(text)) return true
+  if (/(금리|이율|interest|rate|apr)\s*\d|\d(?:[.,]\d+)?\s*%/.test(text) && /(금리|이율|interest|rate|apr)/i.test(text)) return true
+  if (/(월\s*납입|월납입|monthly|payment|per\s*month)/i.test(text) && /(₩|\$|€|£|¥|\d[\d.,]*\s*(원|만원|천원|억원|krw|usd|eur|jpy))/i.test(text)) return true
+  if (/(계약기간|약정|리스|렌트|period|term)/i.test(text) && /\d+\s*(개월|년|months?|years?)/i.test(text)) return true
+  return false
 }
 
 function isTrivialTextDifference(first, second) {
@@ -308,17 +352,37 @@ function normalizeKoreanParticles(value) {
 function createHeroEvidence(visual = {}) {
   const hero = visual.aiHints?.evidenceSummary?.hero || {}
   const heroSection = visual.aiHints?.heroSection || {}
+  const cta = createCtaEvidence(visual)
+  const media = createMediaEvidence(visual)
+  const textDescendants = createHeroTextDescendants(visual, heroSection)
   return {
     figmaSectionId: safeText(heroSection.figmaSectionId),
     webSectionId: safeText(heroSection.webSectionId),
     figmaTextCount: numberValue(hero.figmaTextCount),
     webTextCount: numberValue(hero.webTextCount),
-    figmaCtaCount: numberValue(hero.figmaCtaCount ?? visual.aiHints?.heroCtaGroup?.figma?.count),
-    webCtaCount: numberValue(hero.webCtaCount ?? visual.aiHints?.heroCtaGroup?.web?.count),
+    figmaCtaCount: cta.figmaCount,
+    webCtaCount: cta.webCount,
     webPrimaryMediaCount: numberValue(hero.webPrimaryMediaCount),
     confidence: safeText(heroSection.confidence),
     sections: arrayOfObjects(heroSection.sections).map(compactHeroSection).filter(Boolean).slice(0, 4),
+    descendants: [
+      ...textDescendants.map((item) => compactHeroDescendantBox(item, 'text')).filter(Boolean),
+      ...cta.figmaActions.map((item) => compactHeroDescendantBox(item, 'cta')).filter(Boolean),
+      ...cta.webActions.map((item) => compactHeroDescendantBox(item, 'cta')).filter(Boolean),
+      ...media.figmaPrimaryCandidates.map((item) => compactHeroDescendantBox(item, 'media')).filter(Boolean),
+      ...media.webPrimaryCandidates.map((item) => compactHeroDescendantBox(item, 'media')).filter(Boolean),
+    ].slice(0, 12),
   }
+}
+
+function createHeroTextDescendants(visual = {}, heroSection = {}) {
+  const texts = arrayOfObjects(visual.aiHints?.canonicalEvidence?.texts)
+  const figmaSectionId = safeText(heroSection.figmaSectionId)
+  const webSectionId = safeText(heroSection.webSectionId)
+  return texts
+    .filter((item) => (item.source === 'figma' && item.sectionId === figmaSectionId) || (item.source === 'web' && item.sectionId === webSectionId))
+    .filter((item) => ['heading', 'label', 'body'].includes(safeText(item.role)) || safeText(item.text))
+    .slice(0, 8)
 }
 
 function compactHeroSection(section = {}) {
@@ -332,18 +396,24 @@ function compactHeroSection(section = {}) {
     yRatio: nullableNumber(section.yRatio),
     widthRatio: nullableNumber(section.widthRatio),
     heightRatio: nullableNumber(section.heightRatio),
+    x: nullableNumber(section.x),
+    y: nullableNumber(section.y),
+    width: nullableNumber(section.width),
+    height: nullableNumber(section.height),
     confidence: safeText(section.confidence),
   }
 }
 
 function createCtaEvidence(visual = {}) {
   const group = visual.aiHints?.heroCtaGroup || {}
+  const figmaActions = limitActions(group.figma?.actions)
+  const webActions = limitActions(group.web?.actions)
   return {
-    figmaCount: numberValue(group.figma?.count),
-    webCount: numberValue(group.web?.count),
-    countDifference: numberValue(group.countDifference),
-    figmaActions: limitActions(group.figma?.actions),
-    webActions: limitActions(group.web?.actions),
+    figmaCount: figmaActions.length,
+    webCount: webActions.length,
+    countDifference: Math.abs(figmaActions.length - webActions.length),
+    figmaActions,
+    webActions,
   }
 }
 
@@ -374,7 +444,52 @@ function createMediaEvidence(visual = {}) {
     figmaImageCount: numberValue(content.figmaImageCount),
     webImageCount: numberValue(content.webImageCount),
     webVideoCount: numberValue(content.webVideoCount),
+    figmaPrimaryCandidates: limitMediaCandidates(group.figma?.primaryCandidates),
+    webPrimaryCandidates: limitMediaCandidates(group.web?.primaryCandidates),
   }
+}
+
+function limitMediaCandidates(items) {
+  return arrayOfObjects(items).map((item) => {
+    const pxBox = extractPixelBox(item)
+    return {
+      source: safeText(item.source),
+      type: safeText(item.type || item.mediaType),
+      role: safeText(item.role),
+      xRatio: nullableNumber(item.xRatio),
+      yRatio: nullableNumber(item.yRatio),
+      widthRatio: nullableNumber(item.widthRatio),
+      heightRatio: nullableNumber(item.heightRatio),
+      ...(pxBox || {}),
+    }
+  }).filter((item) => ['figma', 'web'].includes(item.source)).slice(0, 4)
+}
+
+function compactHeroDescendantBox(item = {}, kind) {
+  const source = safeText(item.source)
+  if (!['figma', 'web'].includes(source)) return null
+  const yRatio = nullableNumber(item.yRatio)
+  const pxBox = extractPixelBox(item)
+  if (yRatio === null && !pxBox) return null
+  return {
+    source,
+    kind,
+    xRatio: nullableNumber(item.xRatio),
+    yRatio,
+    widthRatio: nullableNumber(item.widthRatio),
+    heightRatio: nullableNumber(item.heightRatio),
+    ...(pxBox || {}),
+  }
+}
+
+function extractPixelBox(item = {}) {
+  const box = item.boundingBox || item.absoluteBoundingBox || item.bbox || item.rect || item.bounds || item.box || item
+  const x = nullableNumber(box.x ?? box.left)
+  const y = nullableNumber(box.y ?? box.top)
+  const width = nullableNumber(box.width ?? (Number.isFinite(Number(box.right)) && x !== null ? Number(box.right) - x : null))
+  const height = nullableNumber(box.height ?? (Number.isFinite(Number(box.bottom)) && y !== null ? Number(box.bottom) - y : null))
+  if (x === null || y === null || width === null || height === null || width <= 0 || height <= 0) return null
+  return { x, y, width, height }
 }
 
 function createTechIssueSummary(tech = {}) {
@@ -410,17 +525,35 @@ function getCheckItems(tech = {}, checkId, severity) {
 }
 
 function limitActions(items) {
-  return dedupeByJson(arrayOfObjects(items).map((item) => ({
-    text: safeText(item.text || item.displayText),
-    role: safeText(item.role),
-    href: safeUrl(item.href),
-    sectionId: safeText(item.sectionId, 220),
-    sectionPath: safeText(item.sectionPath || item.contextPath || item.parentSelector, 260),
-    comparisonScope: safeText(item.comparisonScope),
-    xRatio: nullableNumber(item.xRatio),
-    yRatio: nullableNumber(item.yRatio),
-    isHeroAction: item.isHeroAction === true,
-  }))).slice(0, 6)
+  return dedupeByJson(arrayOfObjects(items)
+    .map((item) => {
+      const pxBox = extractPixelBox(item)
+      return {
+        source: safeText(item.source),
+        text: safeText(item.text || item.displayText),
+        role: safeText(item.role),
+        href: safeUrl(item.href),
+        sectionId: safeText(item.sectionId, 220),
+        sectionPath: safeText(item.sectionPath || item.contextPath || item.parentSelector, 260),
+        comparisonScope: safeText(item.comparisonScope),
+        xRatio: nullableNumber(item.xRatio),
+        yRatio: nullableNumber(item.yRatio),
+        widthRatio: nullableNumber(item.widthRatio),
+        heightRatio: nullableNumber(item.heightRatio),
+        ...(pxBox || {}),
+        isHeroAction: item.isHeroAction === true,
+      }
+    })
+    .filter(isCanonicalHeroCtaAction))
+    .slice(0, 6)
+}
+
+function isCanonicalHeroCtaAction(item = {}) {
+  if (!item.text) return false
+  if (!['primary-action', 'secondary-action'].includes(item.role)) return false
+  if (!['primary', ''].includes(item.comparisonScope)) return false
+  if (/reference|tab|media-control|carousel|utility|navigation/i.test(`${item.comparisonScope} ${item.role} ${item.sectionPath}`)) return false
+  return true
 }
 
 function dedupeByJson(items) {

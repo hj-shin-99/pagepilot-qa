@@ -17,7 +17,7 @@ test('client AI Review payload keeps numeric differences blocking and spacing di
 test('client AI Review response uses review as single source of truth', () => {
   const response = sanitizeAiReviewResponse({
     success: true,
-    meta: { openAiCalled: true, fallbackUsed: false, model: 'gpt-4.1-mini', visionInputSummary: [{ label: 'figma-hero', width: 100, height: 80, detail: 'high' }] },
+    meta: { openAiCalled: true, fallbackUsed: false, model: 'gpt-4.1-mini', rawVisionCount: 12, visionInputSummary: [{ label: 'figma-hero', width: 100, height: 80, detail: 'high' }] },
     releaseDecision: 'blocked',
     review: {
       releaseDecision: 'caution',
@@ -33,6 +33,7 @@ test('client AI Review response uses review as single source of truth', () => {
   assert.equal(response.review.releaseDecision, 'caution')
   assert.equal(response.meta.openAiCalled, true)
   assert.equal(response.meta.model, 'gpt-4.1-mini')
+  assert.equal(response.meta.rawVisionCount, 12)
   assert.equal(response.meta.visionInputSummary[0].detail, 'high')
   assert.equal(response.review.verify[0].category, 'media')
   assert.equal(response.review.visualDifferences[0].title, 'Hero media differs')

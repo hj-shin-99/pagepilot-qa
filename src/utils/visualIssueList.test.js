@@ -316,6 +316,17 @@ test('ordinal benefit text is classified as Text while real amount remains numer
   assert.equal(report.items.find((item) => item.figmaValue.includes('금리'))?.category, 'price')
 })
 
+test('ordinal-only Vision text differences are not kept as Critical', () => {
+  const report = createVisualDifferenceReport({ comparison: { differences: [] }, aiHints: {} }, {
+    meta: { openAiCalled: true, visionUsed: true, fallbackUsed: false, rawVisionCount: 1 },
+    review: { visualDifferences: [{ area: 'Benefit', category: 'Text', title: 'Text differs', summary: 'Ordinal benefit copy differs.', figmaValue: '02 낮은 월납입금으로 BMW 이용', webValue: '02 낮은 월납입금으로 이용', severity: 'critical', confidence: 'high', order: 0 }], mustFix: [], verify: [] },
+  })
+
+  assert.equal(report.items.length, 1)
+  assert.equal(report.items[0].categoryLabel, 'Text')
+  assert.equal(report.items[0].severity, 'warning')
+})
+
 test('Vision success keeps high-confidence canonical text differences across long pages', () => {
   const report = createVisualDifferenceReport({
     comparison: { differences: [
@@ -437,4 +448,13 @@ test('unreliable hero crop gates Web CTA missing Critical when canonical Web CTA
   })
 
   assert.equal(report.items.some((item) => item.categoryLabel === 'CTA' || item.categoryLabel === 'Missing'), false)
+})
+
+test('incompatible hero crop pair removes Web image and CTA output claims', () => {
+  const report = createVisualDifferenceReport({ comparison: { differences: [] }, aiHints: {} }, {
+    meta: { visionUsed: true, fallbackUsed: false, rawVisionCount: 1, heroCropPairQuality: { compatible: false, figmaCoverageRatio: 0.35, webCoverageRatio: 0.05 } },
+    review: { visualDifferences: [{ area: 'Hero', category: 'Media', title: '대표 이미지 미노출', summary: '웹 이미지와 CTA 출력 이슈 점검', figmaValue: 'Hero image', webValue: '이미지 미노출', severity: 'critical', confidence: 'high' }], mustFix: [], verify: [] },
+  })
+
+  assert.equal(report.items.length, 0)
 })

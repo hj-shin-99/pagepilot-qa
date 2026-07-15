@@ -51,11 +51,12 @@ test('visual vision service attaches overview and hero crop images without expos
   })
 
   assert.equal(result.meta.visionPrepared, true)
-  assert.equal(result.payload.visionInput.images.length, 4)
-  assert.deepEqual(result.meta.visionInputSummary.map((item) => item.label), ['figma-overview', 'web-overview', 'figma-hero', 'web-hero'])
-  assert.deepEqual(result.meta.visionInputSummary.map((item) => item.detail), ['low', 'low', 'high', 'high'])
+  assert.equal(result.payload.visionInput.images.length, 2)
+  assert.deepEqual(result.meta.visionInputSummary.map((item) => item.label), ['figma-overview', 'web-overview'])
+  assert.deepEqual(result.meta.visionInputSummary.map((item) => item.detail), ['low', 'low'])
   assert.equal(result.payload.visionInput.images.every((image) => image.dataUrl.startsWith('data:image/jpeg;base64,')), true)
   assert.equal(result.meta.visionCropSummary.every((item) => item.cropReason === 'hero-section-descriptor'), true)
+  assert.equal(result.meta.heroCropPairQuality.compatible, false)
   assert.equal(JSON.stringify(result.meta).includes(workspace), false)
 })
 
@@ -74,8 +75,9 @@ test('visual vision service records hero crop fallback reason when descriptor is
   const service = createVisualVisionService({ paths, cacheDir: path.join(workspace, '.cache', 'visual', 'ai-review'), overviewMaxWidth: 100, heroMaxWidth: 120 })
   const result = await service.attachVisionInput({ visualAssets: { figmaRenderId: 'render-1', webScreenshotFileName: 'aaaaaaaaaaaaaaaaaaaaaaaa.png' }, visualEvidence: { hero: {}, media: {} } })
 
-  assert.equal(result.payload.visionInput.images.length, 4)
+  assert.equal(result.payload.visionInput.images.length, 2)
   assert.equal(result.meta.visionCropSummary.every((item) => item.cropFailureReason === 'hero-descriptor-missing'), true)
+  assert.equal(result.meta.heroCropPairQuality.compatible, false)
 })
 
 test('visual vision service keeps hero descriptor crop within actual hero boundary', async () => {
@@ -105,12 +107,13 @@ test('visual vision service keeps hero descriptor crop within actual hero bounda
       media: {},
     },
   })
-  const figmaHero = result.meta.visionInputSummary.find((item) => item.label === 'figma-hero')
-  const webHero = result.meta.visionInputSummary.find((item) => item.label === 'web-hero')
+  const figmaHero = result.meta.visionCropSummary.find((item) => item.label === 'figma-hero')
+  const webHero = result.meta.visionCropSummary.find((item) => item.label === 'web-hero')
 
   assert.equal(figmaHero.height <= 1050, true)
   assert.equal(webHero.height <= 700, true)
   assert.equal(result.meta.visionCropSummary.every((item) => item.cropReason === 'hero-section-descriptor'), true)
+  assert.equal(result.payload.visionInput.images.length, 2)
 })
 
 test('visual vision service expands short hero descriptor to descendant CTA and media boxes', async () => {
@@ -154,6 +157,8 @@ test('visual vision service expands short hero descriptor to descendant CTA and 
   assert.equal(figmaHero.cropDiagnostics.cropAdjusted, true)
   assert.equal(figmaHero.cropDiagnostics.cropAdjustmentReason, 'descendant-union-adjusted')
   assert.equal(webHero.cropDiagnostics.cropAdjustmentReason, 'descendant-union-adjusted')
+  assert.equal(result.meta.heroCropPairQuality.compatible, true)
+  assert.equal(result.payload.visionInput.images.length, 4)
 })
 
 test('visual vision service clamps oversized hero descriptor at next section boundary', async () => {
@@ -267,6 +272,8 @@ test('visual vision service uses canonical spatialEvidence descendants from comp
   assert.equal(webHero.cropDiagnostics.validDescendantBoxCount, 1)
   assert.equal(figmaHero.cropDiagnostics.descendantUnionHeight > 0, true)
   assert.equal(webHero.cropDiagnostics.descendantUnionHeight > 0, true)
+  assert.equal(result.meta.heroCropPairQuality.compatible, true)
+  assert.equal(result.payload.visionInput.images.length, 4)
 })
 
 test('visual vision service handles no hero, no CTA hero, image hero, video hero, and mismatched source heights safely', async () => {

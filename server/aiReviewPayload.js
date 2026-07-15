@@ -194,6 +194,7 @@ function createAiReviewResponseMeta({ qaMeta, preparedMeta = {}, resultMeta, err
     imageInputCount,
     rawVisionCount: Number(resultMeta?.rawVisionCount ?? error?.rawVisionCount ?? 0),
     visionInputSummary: normalizeVisionInputSummary(preparedMeta.visionInputSummary || resultMeta?.visionInputSummary || error?.visionInputSummary),
+    heroCropPairQuality: normalizeHeroCropPairQuality(preparedMeta.heroCropPairQuality || resultMeta?.heroCropPairQuality || error?.heroCropPairQuality),
     figmaImagePrepared: preparedMeta.figmaImagePrepared === true,
     webImagePrepared: preparedMeta.webImagePrepared === true,
     fallbackUsed: fallbackUsed === true,
@@ -240,6 +241,17 @@ function normalizeFallbackStage(value) {
 
 function safeDiagnosticToken(value) {
   return safeText(value, 140).toLowerCase().replace(/[^a-z0-9._:-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120) || 'unknown'
+}
+
+function normalizeHeroCropPairQuality(value) {
+  if (!value || typeof value !== 'object') return null
+  return {
+    compatible: value.compatible === true,
+    figmaCoverageRatio: numberValue(value.figmaCoverageRatio),
+    webCoverageRatio: numberValue(value.webCoverageRatio),
+    coverageRatioDelta: numberValue(value.coverageRatioDelta),
+    reason: safeText(value.reason, 120),
+  }
 }
 
 function normalizeVisionInputSummary(value) {

@@ -103,6 +103,7 @@ export function createAiReviewService(options = {}) {
             imageInputCount,
             rawVisionCount: getRawVisionCount(parsed),
             visionInputSummary: createVisionInputSummary(payload),
+            heroCropPairQuality: createHeroCropPairQualitySummary(payload),
             fallbackStage: '',
             fallbackReason: '',
             openAiRequestDurationMs,
@@ -128,6 +129,7 @@ export function createAiReviewService(options = {}) {
         wrapped.visionUsed = imageInputCount > 0
         wrapped.imageInputCount = imageInputCount
         wrapped.visionInputSummary = createVisionInputSummary(payload)
+        wrapped.heroCropPairQuality = createHeroCropPairQualitySummary(payload)
         wrapped.aiReviewDurationMs = Date.now() - startedAt
         wrapped.openAiRequestDurationMs = requestStartedAt ? Date.now() - requestStartedAt : 0
         wrapped.openAiResponseReceived = openAiResponseReceived
@@ -143,7 +145,7 @@ export function createAiReviewService(options = {}) {
 
 export function normalizeAiReview(value, payload = {}) {
   const input = value && typeof value === 'object' ? value : {}
-  const review = {
+  const review = applyReviewSafetyGates({
     releaseDecision: normalizeReleaseDecision(input.releaseDecision),
     summary: normalizeSummary(input.summary, payload),
     mustFix: normalizeIssueArray(input.mustFix, 'critical', { dropTransientOverlay: true }),
@@ -151,9 +153,9 @@ export function normalizeAiReview(value, payload = {}) {
     developerNotes: normalizeIssueArray(input.developerNotes, 'check', { dropTransientOverlay: true }),
     visualDifferences: normalizeVisualDifferenceArray(input.visualDifferences, payload),
     clientReplyDraft: normalizeKoreanText(input.clientReplyDraft, createFallbackClientReply(payload)),
-  }
+  }, payload)
 
-  return adjustReviewDecision(review, payload)
+  return alignReviewNarrative(adjustReviewDecision(reconcileFinalReviewArrays(review, payload)), payload)
 }
 
 export function createFallbackAiReview(payload = {}, reason = '') {
@@ -265,6 +267,373 @@ function normalizeIssueArray(value, defaultSeverity, options = {}) {
   return filtered.slice(0, 10)
 }
 
+function applyReviewSafetyGates(review, payload = {}) {
+  const safety = createReviewSafetyContext(payload)
+  return {
+    ...review,
+    summary: sanitizeReviewNarrative(review.summary, payload, safety, 'summary'),
+    mustFix: sanitizeAuxiliaryIssues(review.mustFix, payload, safety, 'mustFix'),
+    verify: sanitizeAuxiliaryIssues(review.verify, payload, safety, 'verify'),
+    developerNotes: sanitizeAuxiliaryIssues(review.developerNotes, payload, safety, 'developerNotes'),
+    visualDifferences: sanitizeVisualDifferencesBySafety(review.visualDifferences, payload, safety),
+    clientReplyDraft: sanitizeReviewNarrative(review.clientReplyDraft, payload, safety, 'clientReplyDraft'),
+  }
+}
+
+function createReviewSafetyContext(payload = {}) {
+  return {
+    cropPair: createHeroCropPairQualitySummary(payload),
+    canonicalPresence: getCanonicalHeroPresence(payload),
+  }
+}
+
+function sanitizeAuxiliaryIssues(items, payload, safety, target) {
+  return (Array.isArray(items) ? items : [])
+    .map((item) => sanitizeAuxiliaryIssue(item, payload, safety, target))
+    .filter(Boolean)
+    .slice(0, 10)
+}
+
+function sanitizeAuxiliaryIssue(item, payload, safety, target) {
+  if (!item) return null
+  const text = issueSearchText(item)
+  if (isTransientOverlayText(text)) return null
+  if (isOrdinalOnlyPriceClaim(item)) return target === 'mustFix' ? null : { ...item, severity: 'check', category: item.category === 'Price' ? 'Text' : item.category }
+  if (isOrdinalTextDifference(item)) return target === 'mustFix' ? null : { ...item, severity: 'check', category: item.category === 'Price' ? 'Text' : item.category }
+  const heroClaim = classifyUnsafeHeroClaim(item, payload, safety)
+  if (!heroClaim.unsafe) return item
+  if (heroClaim.pairIncompatible || heroClaim.conflictsCanonical || target === 'mustFix' || target === 'developerNotes') return null
+  return {
+    ...item,
+    category: heroClaim.category || item.category,
+    title: heroClaim.title || item.title,
+    description: heroClaim.description || item.description,
+    evidence: [],
+    severity: 'check',
+  }
+}
+
+function sanitizeVisualDifferencesBySafety(items, payload, safety) {
+  return (Array.isArray(items) ? items : [])
+    .map((item) => sanitizeVisualDifferenceBySafety(item, payload, safety))
+    .filter(Boolean)
+}
+
+function sanitizeVisualDifferenceBySafety(item, payload, safety) {
+  if (!item) return null
+  if (isOrdinalOnlyPriceClaim(item)) return null
+  if (isOrdinalTextDifference(item)) return { ...item, severity: 'warning' }
+  const heroClaim = classifyUnsafeHeroClaim(item, payload, safety)
+  if (!heroClaim.unsafe) return item
+  if (heroClaim.pairIncompatible || heroClaim.conflictsCanonical) return null
+  if (heroClaim.kind === 'cta') {
+    return {
+      ...item,
+      category: 'CTA',
+      title: 'CTA 구성을 확인해주세요.',
+      summary: 'Hero crop pair 범위가 호환되지 않아 Vision만으로 CTA 누락을 단정하지 않고 구성 확인 항목으로 분류했습니다.',
+      webValue: '확인되지 않음',
+      severity: 'check',
+      confidence: item.confidence === 'high' ? 'medium' : item.confidence,
+    }
+  }
+  return { ...item, severity: 'check', confidence: item.confidence === 'high' ? 'medium' : item.confidence }
+}
+
+function sanitizeReviewNarrative(value, payload, safety, target) {
+  const text = normalizeString(value)
+  if (!text) return target === 'summary' ? createFallbackSummary(payload) : createFallbackClientReply(payload)
+  if (isTransientOverlayText(text) || isOrdinalOnlyPriceText(text) || classifyUnsafeHeroClaim({ title: text, description: text }, payload, safety).unsafe) {
+    return target === 'summary' ? createFallbackSummary(payload) : createFallbackClientReply(payload)
+  }
+  return text
+}
+
+function reconcileFinalReviewArrays(review, payload = {}) {
+  const safety = createReviewSafetyContext(payload)
+  const visualDifferences = Array.isArray(review.visualDifferences) ? review.visualDifferences : []
+  const verify = []
+  const mustFix = []
+
+  ;(Array.isArray(review.mustFix) ? review.mustFix : []).forEach((item) => {
+    const reconciled = reconcileAuxiliaryIssueWithVisualDifferences(item, visualDifferences, payload, safety, 'mustFix')
+    if (!reconciled) return
+    if (reconciled.target === 'mustFix') mustFix.push(reconciled.item)
+    else verify.push(reconciled.item)
+  })
+  ;(Array.isArray(review.verify) ? review.verify : []).forEach((item) => {
+    const reconciled = reconcileAuxiliaryIssueWithVisualDifferences(item, visualDifferences, payload, safety, 'verify')
+    if (reconciled) verify.push(reconciled.item)
+  })
+
+  const developerNotes = (Array.isArray(review.developerNotes) ? review.developerNotes : [])
+    .map((item) => reconcileAuxiliaryIssueWithVisualDifferences(item, visualDifferences, payload, safety, 'developerNotes'))
+    .filter(Boolean)
+    .map((entry) => entry.item)
+
+  return {
+    ...review,
+    mustFix: dedupeSemanticIssues(mustFix).slice(0, 10),
+    verify: dedupeSemanticIssues(verify).slice(0, 10),
+    developerNotes: dedupeSemanticIssues(developerNotes).slice(0, 10),
+  }
+}
+
+function reconcileAuxiliaryIssueWithVisualDifferences(item, visualDifferences, payload, safety, target) {
+  if (!item) return null
+  const heroClaim = classifyUnsafeHeroClaim(item, payload, safety)
+  if (heroClaim.unsafe && (heroClaim.pairIncompatible || heroClaim.conflictsCanonical)) return null
+
+  const visualMatch = findMatchingVisualDifference(item, visualDifferences)
+  if (visualMatch && isRemovedOrUnsupportedMustFix(item, visualMatch, target)) {
+    return { target: 'verify', item: createAuxiliaryIssueFromVisualMatch(item, visualMatch) }
+  }
+
+  if (target === 'mustFix') {
+    if (visualMatch && normalizeSeverity(visualMatch.severity) !== 'critical') {
+      return { target: 'verify', item: createAuxiliaryIssueFromVisualMatch(item, visualMatch) }
+    }
+    if (isNonCriticalTextClaim(item) || !isCriticalAllowedIssue(item, payload, safety, visualMatch)) {
+      return { target: 'verify', item: { ...item, category: item.category === 'Price' ? 'Text' : item.category, severity: visualMatch ? normalizeSeverity(visualMatch.severity) : 'warning' } }
+    }
+    return { target: 'mustFix', item: { ...item, severity: 'critical' } }
+  }
+
+  if (visualMatch) return { target, item: { ...item, severity: normalizeSeverity(visualMatch.severity) } }
+  if (normalizeSeverity(item.severity) === 'critical' && !isCriticalAllowedIssue(item, payload, safety, visualMatch)) return { target, item: { ...item, severity: 'warning' } }
+  return { target, item }
+}
+
+function isRemovedOrUnsupportedMustFix(item, visualMatch, target) {
+  if (target !== 'mustFix') return false
+  return visualMatch && normalizeSeverity(visualMatch.severity) !== 'critical'
+}
+
+function createAuxiliaryIssueFromVisualMatch(item, visualMatch) {
+  return {
+    ...item,
+    category: visualMatch.category || item.category,
+    title: item.title || visualMatch.title,
+    description: item.description || visualMatch.summary || visualMatch.title,
+    severity: normalizeSeverity(visualMatch.severity),
+  }
+}
+
+function findMatchingVisualDifference(issue, visualDifferences = []) {
+  let best = null
+  let bestScore = 0
+  visualDifferences.forEach((visual) => {
+    const score = scoreAuxiliaryVisualMatch(issue, visual)
+    if (score > bestScore) {
+      best = visual
+      bestScore = score
+    }
+  })
+  return bestScore >= 3 ? best : null
+}
+
+function scoreAuxiliaryVisualMatch(issue = {}, visual = {}) {
+  const issueCategory = normalizeCategory(issue.category, issueSearchText(issue))
+  const visualCategory = normalizeVisualDifferenceCategory(visual.category)
+  let score = issueCategory === visualCategory || (issueCategory === 'Text' && visualCategory === 'Price') || (issueCategory === 'Price' && visualCategory === 'Text') ? 1 : 0
+  const issueText = normalizeSemanticText(issueSearchText(issue))
+  const visualText = normalizeSemanticText(issueSearchText(visual))
+  const issueTokens = semanticTokens(issueSearchText(issue))
+  const visualTokens = semanticTokens(issueSearchText(visual))
+  const sharedTokens = issueTokens.filter((token) => visualTokens.includes(token))
+  if (sharedTokens.some((token) => token.length >= 4 || /[가-힣]/.test(token))) score += 2
+  if (normalizedValuesOverlapForReview(issue.figmaValue, visual.figmaValue) || normalizedValuesOverlapForReview(issue.webValue, visual.webValue)) score += 2
+  if (issueText && visualText && (issueText.includes(visualText) || visualText.includes(issueText))) score += 2
+  const issueClaim = classifyReviewClaimType(issueSearchText(issue))
+  if (issueClaim && issueClaim === classifyReviewClaimType(issueSearchText(visual))) score += 1
+  return score
+}
+
+function normalizedValuesOverlapForReview(first, second) {
+  const firstKey = normalizeSemanticText(first)
+  const secondKey = normalizeSemanticText(second)
+  return Boolean(firstKey && secondKey && (firstKey.includes(secondKey) || secondKey.includes(firstKey)))
+}
+
+function semanticTokens(value) {
+  return normalizeString(value).toLowerCase().match(/[a-z0-9가-힣]{2,}/g) || []
+}
+
+function numericTokensForReview(value) {
+  return String(value || '').match(/\d+(?:[.,]\d+)*/g) || []
+}
+
+function normalizeSemanticText(value) {
+  return normalizeString(value).toLowerCase().replace(/[\s\u00a0.,:;!?"'“”‘’()[\]{}<>_/\\-]/g, '')
+}
+
+function classifyReviewClaimType(text) {
+  const value = String(text || '')
+  if (isHeroClaimText(value) && /(cta|button|버튼|action|신청|상담|예약|문의)/i.test(value)) return 'hero-cta'
+  if (isHeroClaimText(value) && /(image|media|video|이미지|미디어|영상|비디오)/i.test(value)) return 'hero-media'
+  if (isHeroClaimText(value) && /(text|copy|문구|텍스트|타이틀|heading|title)/i.test(value)) return 'hero-text'
+  if (/(cta|button|버튼|action)/i.test(value)) return 'cta'
+  if (/(image|media|video|이미지|미디어|영상|비디오)/i.test(value)) return 'media'
+  return ''
+}
+
+function isNonCriticalTextClaim(item = {}) {
+  const category = normalizeCategory(item.category, issueSearchText(item))
+  if (category !== 'Text' && category !== 'Price') return false
+  const text = issueSearchText(item)
+  if (isOrdinalTextDifference({ ...item, category: 'Text' })) return true
+  if (hasConcreteNumericValue(text) || hasCriticalTextMeaning(text) || hasInclusionExclusionConflict(text)) return false
+  return /(오타|typo|spelling|철자|띄어쓰기|공백|문구|text|copy)/i.test(text)
+}
+
+function isCriticalAllowedIssue(item = {}, payload = {}, safety = createReviewSafetyContext(payload), visualMatch = null) {
+  const text = issueSearchText(item)
+  const category = normalizeCategory(item.category, text)
+  const visualCritical = visualMatch && normalizeSeverity(visualMatch.severity) === 'critical'
+  if (category === 'Tech' && /(http|status|접속|console|error|오류|실패|network)/i.test(text)) return true
+  if ((category === 'Price' || /금액|가격|금리|이율|퍼센트|기간|날짜/i.test(text)) && (hasConcreteNumericValue(text) || numericTokensForReview(text).length >= 2)) return true
+  if (numericTokensForReview(text).length >= 2 && /(월|monthly|금액|가격|price|금리|이율|rate|기간|날짜)/i.test(text)) return true
+  if (hasInclusionExclusionConflict(text)) return true
+  if (/(법적|필수|고지|약관|required|legal)/i.test(text) && isAbsenceClaimText(text)) return true
+  if (category === 'CTA' && isAbsenceClaimText(text) && safety.cropPair?.compatible !== false && Number(payload.visualEvidence?.cta?.countDifference || 0) > 0) return true
+  return Boolean(visualCritical && !isNonCriticalTextClaim(item))
+}
+
+function hasInclusionExclusionConflict(value) {
+  const text = String(value || '')
+  return /(포함|include|included)/i.test(text) && /(제외|exclude|excluded)/i.test(text)
+}
+
+function dedupeSemanticIssues(items) {
+  const selected = new Map()
+  items.forEach((item) => {
+    const key = createSemanticIssueKey(item)
+    const current = selected.get(key)
+    if (!current || severityRank(item.severity) > severityRank(current.severity)) selected.set(key, item)
+  })
+  return Array.from(selected.values())
+}
+
+function createSemanticIssueKey(item = {}) {
+  const category = normalizeCategory(item.category, issueSearchText(item))
+  const claimType = classifyReviewClaimType(issueSearchText(item))
+  const tokens = semanticTokens(`${item.title || ''} ${item.description || ''} ${item.figmaValue || ''} ${item.webValue || ''} ${(item.evidence || []).join(' ')}`)
+    .filter((token) => token.length >= 3)
+    .slice(0, 5)
+    .join('|')
+  return `${category}:${claimType}:${tokens}`
+}
+
+function severityRank(severity) {
+  return { critical: 3, warning: 2, check: 1 }[normalizeSeverity(severity)] || 0
+}
+
+function classifyUnsafeHeroClaim(item = {}, payload = {}, safety = createReviewSafetyContext(payload)) {
+  const text = issueSearchText(item)
+  const pairIncompatible = safety.cropPair?.compatible === false
+  const outputClaim = isWebImageOrCtaOutputClaimText(text)
+  if (!isHeroClaimText(text) && !(pairIncompatible && outputClaim)) return { unsafe: false }
+  const kind = classifyHeroClaimKind(text)
+  const absence = isAbsenceClaimText(text)
+  const distortion = isHeroDistortionClaimText(text)
+  if (!pairIncompatible && !absence) return { unsafe: false }
+  const conflictsCanonical = absence && conflictsCanonicalHeroPresence(kind, safety.canonicalPresence)
+  if (!pairIncompatible && !conflictsCanonical) return { unsafe: false }
+  if (!absence && !distortion && !outputClaim) return { unsafe: false }
+  return {
+    unsafe: true,
+    kind,
+    pairIncompatible,
+    conflictsCanonical,
+    category: kind === 'cta' ? 'CTA' : kind === 'media' ? 'Media' : kind === 'text' ? 'Text' : item.category,
+    title: kind === 'cta' ? 'CTA 구성을 확인해주세요.' : item.title,
+    description: kind === 'cta' ? 'Hero crop pair 범위가 호환되지 않아 CTA 누락 단정 대신 구성 확인이 필요합니다.' : item.description,
+  }
+}
+
+function issueSearchText(item = {}) {
+  return `${item.area || ''} ${item.category || ''} ${item.title || ''} ${item.description || ''} ${item.summary || ''} ${item.figmaValue || ''} ${item.webValue || ''} ${Array.isArray(item.evidence) ? item.evidence.join(' ') : ''}`
+}
+
+function isHeroClaimText(text) {
+  return /(hero|main.?visual|key.?visual|\bkv\b|메인|히어로|비주얼|대표\s*이미지)/i.test(String(text || ''))
+}
+
+function isWebImageOrCtaOutputClaimText(text) {
+  const value = String(text || '')
+  return /(web|웹).*(image|이미지|media|미디어|cta|button|버튼).*(missing|not found|absent|loading|output|render|none|없음|누락|미노출|노출되지|로딩|출력|표시|보이지 않|없습니다|없다|않음)/i.test(value)
+    || /(image|이미지|media|미디어|cta|button|버튼).*(loading|output|render|missing|not found|absent|none|없음|누락|미노출|노출되지|로딩|출력|표시|보이지 않|없습니다|없다|않음)/i.test(value)
+}
+
+function isAbsenceClaimText(text) {
+  return /(missing|not found|absent|none|0\s*(개|cta|button|buttons?)|없음|누락|미노출|노출되지|보이지 않|없습니다|없다|않음)/i.test(String(text || ''))
+}
+
+function isHeroDistortionClaimText(text) {
+  return /(distortion|distorted|compressed|squash|squeez|ratio|height|width|왜곡|압축|눌림|찌그러|비율|세로|가로|높이|너비)/i.test(String(text || ''))
+}
+
+function classifyHeroClaimKind(text) {
+  const value = String(text || '')
+  if (/(cta|button|action|버튼|바로가기|신청|상담|예약|문의)/i.test(value)) return 'cta'
+  if (/(media|image|video|photo|visual|이미지|영상|비디오|미디어|차량)/i.test(value)) return 'media'
+  if (/(text|copy|heading|title|문구|텍스트|타이틀)/i.test(value)) return 'text'
+  return 'hero'
+}
+
+function conflictsCanonicalHeroPresence(kind, presence = {}) {
+  if (kind === 'cta') return presence.webAction
+  if (kind === 'media') return presence.webMedia
+  if (kind === 'text') return presence.webText
+  return presence.webAction || presence.webMedia || presence.webText
+}
+
+function getCanonicalHeroPresence(payload = {}) {
+  const hero = payload.visualEvidence?.hero || {}
+  const cta = payload.visualEvidence?.cta || {}
+  const media = payload.visualEvidence?.media || {}
+  const descendants = Array.isArray(hero.descendants) ? hero.descendants : []
+  return {
+    webText: Number(hero.webTextCount || 0) > 0 || descendants.some((item) => item?.source === 'web' && item?.kind === 'text'),
+    webAction: Number(hero.webCtaCount || 0) > 0 || (Array.isArray(cta.webActions) && cta.webActions.length > 0) || descendants.some((item) => item?.source === 'web' && item?.kind === 'cta'),
+    webMedia: Number(hero.webPrimaryMediaCount || 0) > 0 || (Array.isArray(media.webPrimaryCandidates) && media.webPrimaryCandidates.length > 0) || (Array.isArray(media.webMediaTypes) && media.webMediaTypes.length > 0) || descendants.some((item) => item?.source === 'web' && item?.kind === 'media'),
+  }
+}
+
+function isOrdinalOnlyPriceClaim(item = {}) {
+  if (normalizeCategory(item.category, issueSearchText(item)) !== 'Price') return false
+  return isOrdinalOnlyPriceText(issueSearchText(item))
+}
+
+function isOrdinalTextDifference(item = {}) {
+  const category = normalizeVisualDifferenceCategory(item.category || normalizeCategory(item.category, issueSearchText(item)))
+  if (category !== 'Text') return false
+  const text = issueSearchText(item)
+  if (!isOrdinalPrefixText(text)) return false
+  if (hasConcreteNumericValue(text) || hasCriticalTextMeaning(text)) return false
+  return true
+}
+
+function isOrdinalOnlyPriceText(value) {
+  const text = normalizeString(value)
+  if (!isOrdinalPrefixText(text)) return false
+  return !hasConcreteNumericValue(text)
+}
+
+function isOrdinalPrefixText(value) {
+  const text = String(value || '')
+  return /(^|\s)(0?[1-9]|[①②③④⑤])(?:[.)]|\s)/.test(text) || /(^|\s)0[1-9](?=\s|[가-힣A-Za-z])/.test(text)
+}
+
+function hasCriticalTextMeaning(value) {
+  return /(포함|제외|include|exclude|included|excluded|필수|의무|법적|고지|약관|조건|보장|미보장|가능|불가|취소|환불|만료|기간|날짜|금리|이율|%|퍼센트|₩|\$|€|¥|\d[\d.,]*\s*(원|만원|천원|억원|개월|년|months?|years?))/i.test(String(value || ''))
+}
+
+function hasConcreteNumericValue(value) {
+  const text = String(value || '')
+  return /(₩|\$|€|¥)\s*\d|\d[\d.,]*\s*(원|만원|천원|억원|krw|usd|eur|jpy|%|퍼센트)|\d+(?:[.,]\d+)?\s*(개월|년|months?|years?)/i.test(text)
+}
+
 function normalizeVisualDifferenceArray(value, payload = {}) {
   const normalized = coerceArray(value).map((item, index) => normalizeVisualDifference(item, index, payload)).filter(Boolean)
   return dedupeVisualDifferences(normalized.filter((item) => isUsefulVisualDifference(item, payload)).filter(isConsistentVisualDifference))
@@ -324,16 +693,61 @@ function createIssueObject({ category = 'tech', title = '', description = '', ev
   }
 }
 
-function adjustReviewDecision(review, payload) {
-  const hasBlocking = hasBlockingEvidence(payload)
-  const hasWarnings = hasWarningEvidence(payload)
+function adjustReviewDecision(review) {
+  const hasBlocking = hasFinalBlockingEvidence(review)
+  const hasWarnings = hasFinalWarningEvidence(review)
   const adjusted = { ...review }
 
-  if (adjusted.releaseDecision === 'blocked' && !hasBlocking) adjusted.releaseDecision = hasWarnings ? 'caution' : 'ready'
-  if (adjusted.releaseDecision === 'ready' && hasBlocking) adjusted.releaseDecision = 'blocked'
-  if (adjusted.releaseDecision === 'ready' && hasWarnings) adjusted.releaseDecision = 'caution'
+  adjusted.releaseDecision = hasBlocking ? 'blocked' : hasWarnings ? 'caution' : 'ready'
   if (!hasBlocking) adjusted.mustFix = []
   return adjusted
+}
+
+function hasFinalBlockingEvidence(review = {}) {
+  const hasCriticalVisualDifference = (Array.isArray(review.visualDifferences) ? review.visualDifferences : [])
+    .some((item) => normalizeSeverity(item?.severity) === 'critical')
+  const hasSupportedCriticalMustFix = (Array.isArray(review.mustFix) ? review.mustFix : [])
+    .some((item) => normalizeSeverity(item?.severity) === 'critical')
+  return hasCriticalVisualDifference || hasSupportedCriticalMustFix
+}
+
+function hasFinalWarningEvidence(review = {}) {
+  return [...(Array.isArray(review.verify) ? review.verify : []), ...(Array.isArray(review.developerNotes) ? review.developerNotes : []), ...(Array.isArray(review.visualDifferences) ? review.visualDifferences : [])]
+    .some((item) => ['warning', 'check'].includes(normalizeSeverity(item?.severity)))
+}
+
+function alignReviewNarrative(review, payload = {}) {
+  const aligned = { ...review }
+  if (isNarrativeInconsistentWithDecision(aligned.summary, aligned.releaseDecision)) {
+    aligned.summary = createDecisionAlignedSummary(aligned.releaseDecision)
+  }
+  if (isNarrativeInconsistentWithDecision(aligned.clientReplyDraft, aligned.releaseDecision)) {
+    aligned.clientReplyDraft = createDecisionAlignedClientReply(aligned.releaseDecision)
+  }
+  if (!normalizeString(aligned.summary)) aligned.summary = createFallbackSummary(payload)
+  if (!normalizeString(aligned.clientReplyDraft)) aligned.clientReplyDraft = createFallbackClientReply(payload)
+  return aligned
+}
+
+function isNarrativeInconsistentWithDecision(value, decision) {
+  const text = normalizeString(value)
+  if (!text) return true
+  if (decision === 'blocked') return false
+  if (/(차단|block|blocked|blocking|우선\s*수정|수정\s*필요|must\s*fix|critical|크리티컬)/i.test(text)) return true
+  if (decision === 'ready' && /(확인\s*필요|경고|warning|caution|수정|fix)/i.test(text)) return true
+  return false
+}
+
+function createDecisionAlignedSummary(decision) {
+  if (decision === 'blocked') return '자동 QA 결과 배포 전에 수정해야 할 차단 이슈가 확인되었습니다.'
+  if (decision === 'ready') return '자동 QA 결과 기준 배포를 막는 주요 오류가 확인되지 않았습니다.'
+  return '자동 QA 결과 확인이 필요한 차이가 있습니다. 의도된 차이인지 확인 후 진행을 권장합니다.'
+}
+
+function createDecisionAlignedClientReply(decision) {
+  if (decision === 'blocked') return '자동 QA 검토 결과, 배포 전 우선 수정이 필요한 항목이 확인되었습니다. 수정 후 재검증하겠습니다.'
+  if (decision === 'ready') return '자동 QA 검토 결과, 현재 기준에서 배포를 막는 주요 이슈는 확인되지 않았습니다.'
+  return '자동 QA 검토 결과, 확인이 필요한 차이가 일부 확인되었습니다. 의도된 차이인지 확인 후 진행하겠습니다.'
 }
 
 function hasBlockingEvidence(payload = {}) {
@@ -699,6 +1113,8 @@ function createUncertainCtaGate(overrides = {}) {
 }
 
 function classifyCtaCropQualityGate(payload = {}) {
+  const pairQuality = createHeroCropPairQualitySummary(payload)
+  if (pairQuality && pairQuality.compatible === false) return { unsafe: true, key: pairQuality.reason || 'hero-crop-pair-incompatible' }
   const summaries = Array.isArray(payload.__visionCropSummary) ? payload.__visionCropSummary : []
   const heroSummaries = summaries.filter((item) => /hero/i.test(String(item?.label || '')))
   if (heroSummaries.length === 0) return { unsafe: false, key: '' }
@@ -846,6 +1262,51 @@ function createVisionInputSummary(payload = {}) {
   }))
 }
 
+function createHeroCropPairQualitySummary(payload = {}) {
+  const direct = payload.__heroCropPairQuality
+  if (direct && typeof direct === 'object') return normalizeHeroCropPairQuality(direct)
+  const summaries = Array.isArray(payload.__visionCropSummary) ? payload.__visionCropSummary : []
+  if (summaries.length === 0) return null
+  return computeHeroCropPairQuality(summaries)
+}
+
+function computeHeroCropPairQuality(summaries = []) {
+  const figma = summaries.find((item) => String(item?.label || '').toLowerCase() === 'figma-hero') || null
+  const web = summaries.find((item) => String(item?.label || '').toLowerCase() === 'web-hero') || null
+  const figmaCoverageRatio = safeCoverageRatio(figma)
+  const webCoverageRatio = safeCoverageRatio(web)
+  const coverageRatioDelta = Number(Math.abs(figmaCoverageRatio - webCoverageRatio).toFixed(4))
+  const figmaValidCount = Number(figma?.cropDiagnostics?.validDescendantBoxCount || 0)
+  const webValidCount = Number(web?.cropDiagnostics?.validDescendantBoxCount || 0)
+  const figmaPassed = figma?.cropDiagnostics?.cropQualityPassed === true
+  const webPassed = web?.cropDiagnostics?.cropQualityPassed === true
+  const coverageValues = [figmaCoverageRatio, webCoverageRatio].filter((value) => Number.isFinite(value) && value > 0)
+  const maxCoverage = coverageValues.length ? Math.max(...coverageValues) : 0
+  const minCoverage = coverageValues.length ? Math.min(...coverageValues) : 0
+  let reason = ''
+  if (!figma || !web) reason = 'hero-crop-missing'
+  else if (!figmaPassed || !webPassed) reason = 'hero-crop-quality-failed'
+  else if ((figmaValidCount === 0 && webValidCount > 0) || (webValidCount === 0 && figmaValidCount > 0)) reason = 'hero-descendant-count-mismatch'
+  else if (minCoverage > 0 && maxCoverage / minCoverage >= 2.5) reason = 'hero-coverage-ratio-mismatch'
+  else if (minCoverage > 0 && minCoverage < maxCoverage * 0.35) reason = 'hero-thin-partial-crop'
+  return { compatible: reason === '', figmaCoverageRatio, webCoverageRatio, coverageRatioDelta, reason }
+}
+
+function normalizeHeroCropPairQuality(value = {}) {
+  return {
+    compatible: value.compatible === true,
+    figmaCoverageRatio: Number(value.figmaCoverageRatio || 0),
+    webCoverageRatio: Number(value.webCoverageRatio || 0),
+    coverageRatioDelta: Number(value.coverageRatioDelta || 0),
+    reason: normalizeString(value.reason).slice(0, 120),
+  }
+}
+
+function safeCoverageRatio(item) {
+  const ratio = Number(item?.cropDiagnostics?.cropCoverageRatio)
+  return Number.isFinite(ratio) && ratio >= 0 ? ratio : 0
+}
+
 function getVisionImages(payload = {}) {
   const images = payload.visionInput?.images
   if (Array.isArray(images)) return images.filter((image) => image?.dataUrl)
@@ -869,6 +1330,7 @@ function decorateAiReviewError(error, stage, context = {}) {
   aiError.visionUsed = context.imageInputCount > 0
   aiError.imageInputCount = context.imageInputCount || 0
   aiError.visionInputSummary = createVisionInputSummary(context.payload)
+  aiError.heroCropPairQuality = createHeroCropPairQualitySummary(context.payload)
   aiError.model = normalizeString(context.model)
   aiError.aiReviewDurationMs = Date.now() - Number(context.startedAt || Date.now())
   aiError.openAiRequestDurationMs = Number(context.openAiRequestDurationMs || 0) || (context.requestStartedAt ? Date.now() - context.requestStartedAt : 0)

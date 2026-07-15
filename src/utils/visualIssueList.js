@@ -116,7 +116,7 @@ function createVisionItems(aiReview = {}) {
         description: getString(item.summary || item.description) || createCanonicalDescription(category, item.figmaValue, item.webValue),
         figmaValue: getString(item.figmaValue || item.figma),
         webValue: getString(item.webValue || item.web),
-        severity: normalizeSeverity(item.severity),
+        severity: normalizeIssueSeverityForContent(category, item.severity, item),
         confidence: normalizeConfidence(item.confidence),
         sortRank: getSortRank(item, area),
         sectionId: getString(item.sectionId),
@@ -145,11 +145,13 @@ function applyHeroAbsenceGate(item, result = {}, aiReview = {}) {
   if ((claim === 'media' && presence.webMedia) || (claim === 'cta' && presence.webAction) || (claim === 'text' && presence.webText) || (claim === 'hero' && (presence.webText || presence.webAction || presence.webMedia))) {
     return null
   }
+  if (aiReview.meta?.heroCropPairQuality?.compatible === false) return null
   if (item.severity === 'critical') return { ...item, severity: 'check' }
   return item
 }
 
 function isUnreliableHeroCrop(aiReview = {}) {
+  if (aiReview.meta?.heroCropPairQuality?.compatible === false) return true
   const crops = Array.isArray(aiReview.meta?.visionCropSummary) ? aiReview.meta.visionCropSummary : []
   if (crops.some((item) => item?.cropDiagnostics?.cropQualityPassed === false)) return true
   const coverage = crops.map((item) => Number(item?.cropDiagnostics?.cropCoverageRatio)).filter(Number.isFinite)
@@ -159,8 +161,11 @@ function isUnreliableHeroCrop(aiReview = {}) {
 
 function isHeroAbsenceClaim(item = {}) {
   const text = `${item.area || ''} ${item.category || ''} ${item.title || ''} ${item.description || ''} ${item.figmaValue || ''} ${item.webValue || ''} ${(item.mergeTokens || []).join(' ')}`.toLowerCase()
-  if (!/(hero|main.?visual|kv|key.?visual|main kv|메인|히어로|비주얼)/i.test(text)) return false
-  return /(missing|not found|absent|없음|누락|부족|보이지 않|없습니다|없다)/i.test(text)
+  const heroText = /(hero|main.?visual|kv|key.?visual|main kv|메인|히어로|비주얼|대표\s*이미지)/i.test(text)
+  const outputText = /(web|웹).*(image|이미지|media|미디어|cta|button|버튼).*(missing|not found|absent|loading|output|render|none|없음|누락|미노출|로딩|출력|표시|보이지 않|없습니다|없다)/i.test(text)
+    || /(image|이미지|media|미디어|cta|button|버튼).*(loading|output|render|missing|not found|absent|none|없음|누락|미노출|로딩|출력|표시|보이지 않|없습니다|없다)/i.test(text)
+  if (!heroText && !outputText) return false
+  return outputText || /(missing|not found|absent|none|없음|누락|미노출|부족|보이지 않|없습니다|없다)/i.test(text)
 }
 
 function classifyHeroAbsenceClaim(item = {}) {
@@ -246,7 +251,7 @@ function createAiItems(aiReview = {}) {
         description: createIssueDescription(issue, category),
         figmaValue: evidenceValues.figma,
         webValue: evidenceValues.web,
-        severity: normalizeSeverity(issue.severity || (index < mustFix.length ? 'critical' : 'warning')),
+        severity: normalizeIssueSeverityForContent(category, issue.severity || (index < mustFix.length ? 'critical' : 'warning'), issue),
         confidence: normalizeConfidence(issue.confidence),
         sortRank: getAreaRank(normalizeVisualArea(issue, category === 'media' || category === 'cta' ? 'Main KV' : 'Page Content')),
         mergeTokens: [issue.title, issue.description, ...(Array.isArray(issue.evidence) ? issue.evidence : [])].map(getString).filter(Boolean),
@@ -983,6 +988,19 @@ function formatMediaTypes(value) {
 function normalizeSeverity(value) {
   const severity = getString(value).toLowerCase()
   return ['critical', 'warning', 'check'].includes(severity) ? severity : 'warning'
+}
+
+function normalizeIssueSeverityForContent(category, severity, item = {}) {
+  const normalized = normalizeSeverity(severity)
+  if (normalizeCategory(category) === 'text' && normalized === 'critical' && isOrdinalTextDifference(item)) return 'warning'
+  return normalized
+}
+
+function isOrdinalTextDifference(item = {}) {
+  const text = `${item.title || ''} ${item.description || ''} ${item.summary || ''} ${item.figmaValue || item.figmaText || item.text || ''} ${item.webValue || item.webText || ''} ${(item.mergeTokens || []).join(' ')}`
+  if (!/(^|\s)(0?[1-9]|[①②③④⑤])(?:[.)]|\s)|(^|\s)0[1-9](?=\s|[가-힣A-Za-z])/.test(text)) return false
+  if (hasStrongPriceEvidence(text)) return false
+  return !/(포함|제외|include|exclude|included|excluded|필수|의무|법적|고지|약관|조건|보장|미보장|가능|불가|취소|환불|만료|기간|날짜)/i.test(text)
 }
 
 function normalizeConfidence(value) {

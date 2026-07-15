@@ -74,6 +74,7 @@ export function sanitizeAiReviewResponse(response = {}) {
       visionFailureReason: getString(response.meta?.visionFailureReason),
       visionInputSummary: sanitizeVisionInputSummary(response.meta?.visionInputSummary),
       visionCropSummary: sanitizeVisionCropSummary(response.meta?.visionCropSummary),
+      heroCropPairQuality: sanitizeHeroCropPairQuality(response.meta?.heroCropPairQuality),
     },
     review: {
       releaseDecision: normalizeDecision(review.releaseDecision),
@@ -372,6 +373,17 @@ function sanitizeVisionCropSummary(value) {
       } : null,
     })).filter((item) => item.label).slice(0, 4)
     : []
+}
+
+function sanitizeHeroCropPairQuality(value) {
+  if (!value || typeof value !== 'object') return null
+  return {
+    compatible: value.compatible === true,
+    figmaCoverageRatio: numberValue(value.figmaCoverageRatio),
+    webCoverageRatio: numberValue(value.webCoverageRatio),
+    coverageRatioDelta: numberValue(value.coverageRatioDelta),
+    reason: getString(value.reason),
+  }
 }
 
 function sanitizeVisualDifference(item, index) {

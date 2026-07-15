@@ -223,12 +223,10 @@ test('AI review downgrades Vision missing CTA when canonical Web CTA exists', ()
     visualDifferences: [{ area: 'Hero', category: 'CTA', title: 'CTA missing', summary: 'Web CTA missing.', figmaValue: 'Start', webValue: 'Web CTA 없음', severity: 'critical', confidence: 'high', order: 0 }],
   }, payload)
 
-  assert.equal(normalized.visualDifferences[0].title, 'CTA 구성을 확인해주세요.')
-  assert.equal(normalized.visualDifferences[0].severity, 'check')
-  assert.equal(normalized.visualDifferences[0].webValue, 'Start')
+  assert.equal(normalized.visualDifferences.length, 0)
 })
 
-test('AI review downgrades CTA critical when hero crop quality fails but keeps normal CTA count behavior', () => {
+test('AI review removes CTA critical when hero crop quality fails but keeps normal CTA count behavior', () => {
   const unsafePayload = createPayload()
   unsafePayload.visualEvidence.hero = { sections: [{ source: 'figma' }, { source: 'web' }] }
   unsafePayload.visualEvidence.cta = { countDifference: 1, figmaActions: [{ text: 'Start', role: 'primary-action' }], webActions: [] }
@@ -253,7 +251,7 @@ test('AI review downgrades CTA critical when hero crop quality fails but keeps n
     visualDifferences: [{ area: 'Hero', category: 'CTA', title: 'CTA missing', summary: 'Web CTA missing.', figmaValue: 'Start', webValue: '', severity: 'critical', confidence: 'high', order: 0 }],
   }, safePayload)
 
-  assert.equal(unsafe.visualDifferences[0].severity, 'check')
+  assert.equal(unsafe.visualDifferences.length, 0)
   assert.equal(safe.visualDifferences[0].severity, 'critical')
 })
 
@@ -450,13 +448,12 @@ test('AI review sanitizes mustFix and verify partial invalid items', () => {
     visualDifferences: [],
   }, createPayload())
 
-  assert.equal(result.mustFix.length, 2)
+  assert.equal(result.mustFix.length, 1)
+  assert.equal(result.mustFix[0].title, '월 47 / 월 50')
   assert.equal(result.mustFix[0].severity, 'critical')
-  assert.equal(result.mustFix[1].title, '월 47 / 월 50')
-  assert.equal(result.mustFix[1].severity, 'critical')
-  assert.equal(result.verify.length, 1)
-  assert.equal(result.verify[0].category, 'CTA')
-  assert.equal(result.verify[0].severity, 'warning')
+  assert.equal(result.verify.length, 2)
+  assert.equal(result.verify.some((item) => item.title === '가격 확인' && item.severity === 'warning'), true)
+  assert.equal(result.verify.some((item) => item.category === 'CTA' && item.severity === 'warning'), true)
   assert.equal(typeof result.clientReplyDraft, 'string')
 })
 
@@ -518,8 +515,9 @@ test('AI review JSON parsing and normalization are robust', () => {
   const normalized = normalizeAiReview({ ...parsed, mustFix: ['A', '', null], verify: 'not-array', releaseDecision: 'unknown' }, createPayload())
 
   assert.equal(normalized.releaseDecision, 'caution')
-  assert.equal(normalized.mustFix[0].title, 'A')
-  assert.equal(normalized.verify[0].title, 'not-array')
+  assert.equal(normalized.mustFix.length, 0)
+  assert.equal(normalized.verify.some((item) => item.title === 'A'), true)
+  assert.equal(normalized.verify.some((item) => item.title === 'not-array'), true)
 })
 
 test('AI review decision is not blocked for spacing-only, meta-only, or alt-only warnings', () => {
@@ -535,11 +533,12 @@ test('AI review decision is not blocked for spacing-only, meta-only, or alt-only
   assert.equal(normalized.mustFix.length, 0)
 })
 
-test('AI review keeps blocked for numeric price differences', () => {
+test('AI review does not stay blocked without final critical output', () => {
   const payload = createPayload()
   const normalized = normalizeAiReview({ releaseDecision: 'ready', summary: '정상', mustFix: [], verify: [], developerNotes: [], clientReplyDraft: '초안' }, payload)
 
-  assert.equal(normalized.releaseDecision, 'blocked')
+  assert.equal(normalized.releaseDecision, 'ready')
+  assert.equal(/차단|우선\s*수정|수정\s*필요/.test(normalized.summary), false)
 })
 
 test('AI review puts image versus video composition into verify instead of blocked', () => {
@@ -553,6 +552,212 @@ test('AI review puts image versus video composition into verify instead of block
 
   assert.equal(normalized.releaseDecision, 'caution')
   assert.equal(normalized.verify[0].category, 'Media')
+})
+
+test('AI review removes hero absence criticals across arrays when crop pair is incompatible', () => {
+  const payload = createPayload()
+  payload.visualEvidence.hero = { sections: [{ source: 'figma' }, { source: 'web' }], webTextCount: 2 }
+  payload.visualEvidence.cta = { webActions: [{ text: 'Apply', role: 'primary-action' }] }
+  payload.visualEvidence.media = { webPrimaryCandidates: [{ type: 'image', source: 'web' }] }
+  Object.defineProperty(payload, '__heroCropPairQuality', { value: { compatible: false, figmaCoverageRatio: 0.36, webCoverageRatio: 0.04, coverageRatioDelta: 0.32, reason: 'hero-crop-quality-failed' }, enumerable: false })
+  const normalized = normalizeAiReview({
+    releaseDecision: 'blocked',
+    summary: 'Hero 이미지 세로 압축과 Web CTA 없음이 핵심 문제입니다.',
+    mustFix: [
+      { category: 'media', title: 'Hero 이미지 세로 압축 Critical', description: 'Hero image is compressed.', severity: 'critical' },
+      { category: 'cta', title: 'Web CTA 0개 Critical', description: 'Web Hero CTA missing.', severity: 'critical' },
+    ],
+    verify: [{ category: 'text', title: 'Hero 텍스트 없음', description: 'Web Hero text missing.', severity: 'warning' }],
+    developerNotes: [{ category: 'media', title: 'Hero distortion debug', description: 'Hero crop shows distortion.', severity: 'check' }],
+    clientReplyDraft: 'Hero CTA 없음과 이미지 압축을 수정하겠습니다.',
+    visualDifferences: [
+      { area: 'Hero', category: 'CTA', title: 'Web CTA missing', summary: 'Web CTA missing.', figmaValue: 'Apply', webValue: 'missing', severity: 'critical', confidence: 'high', order: 0 },
+      { area: 'Hero', category: 'Media', title: 'Hero image compressed', summary: 'Hero image distortion.', figmaValue: 'normal', webValue: 'compressed', severity: 'critical', confidence: 'high', order: 1 },
+    ],
+  }, payload)
+
+  assert.equal(normalized.visualDifferences.length, 0)
+  assert.equal(normalized.mustFix.length, 0)
+  assert.equal(normalized.verify.length, 0)
+  assert.equal(normalized.developerNotes.length, 0)
+  assert.equal(/Hero|CTA 없음|압축/i.test(normalized.summary), false)
+  assert.equal(/Hero|CTA 없음|압축/i.test(normalized.clientReplyDraft), false)
+})
+
+test('AI review keeps normal hero vision judgment when crop pair is compatible', () => {
+  const payload = createPayload()
+  payload.visualEvidence.hero = { sections: [{ source: 'figma' }, { source: 'web' }] }
+  Object.defineProperty(payload, '__heroCropPairQuality', { value: { compatible: true, figmaCoverageRatio: 0.32, webCoverageRatio: 0.31, coverageRatioDelta: 0.01, reason: '' }, enumerable: false })
+  const normalized = normalizeAiReview({
+    releaseDecision: 'caution', summary: 'Hero 이미지 차이 확인', mustFix: [], verify: [], developerNotes: [], clientReplyDraft: '확인',
+    visualDifferences: [{ area: 'Hero', category: 'Media', title: 'Hero media differs', summary: 'Image differs.', figmaValue: 'image A', webValue: 'image B', severity: 'warning', confidence: 'high', order: 0 }],
+  }, payload)
+
+  assert.equal(normalized.visualDifferences.length, 1)
+  assert.equal(normalized.visualDifferences[0].severity, 'warning')
+})
+
+test('AI review removes hero CTA missing judgment when both crops are bad', () => {
+  const payload = createPayload()
+  payload.visualEvidence.hero = { sections: [{ source: 'figma' }, { source: 'web' }] }
+  Object.defineProperty(payload, '__heroCropPairQuality', { value: { compatible: false, figmaCoverageRatio: 0.05, webCoverageRatio: 0.04, coverageRatioDelta: 0.01, reason: 'hero-crop-quality-failed' }, enumerable: false })
+  const normalized = normalizeAiReview({
+    releaseDecision: 'blocked', summary: 'CTA 확인', mustFix: [], verify: [], developerNotes: [], clientReplyDraft: '확인',
+    visualDifferences: [{ area: 'Hero', category: 'CTA', title: 'Web CTA missing', summary: 'Web CTA missing.', figmaValue: 'Apply', webValue: 'missing', severity: 'critical', confidence: 'high', order: 0 }],
+  }, payload)
+
+  assert.equal(normalized.visualDifferences.length, 0)
+})
+
+test('AI review treats excessive hero coverage delta as incompatible', () => {
+  const payload = createPayload()
+  payload.visualEvidence.hero = { sections: [{ source: 'figma' }, { source: 'web' }] }
+  Object.defineProperty(payload, '__visionCropSummary', { value: [
+    { label: 'figma-hero', cropDiagnostics: { cropQualityPassed: true, validDescendantBoxCount: 4, descendantUnionHeight: 500, finalCropHeight: 900, cropCoverageRatio: 0.36 } },
+    { label: 'web-hero', cropDiagnostics: { cropQualityPassed: true, validDescendantBoxCount: 4, descendantUnionHeight: 500, finalCropHeight: 900, cropCoverageRatio: 0.12 } },
+  ], enumerable: false })
+  const normalized = normalizeAiReview({
+    releaseDecision: 'blocked', summary: 'Hero CTA 없음', mustFix: [], verify: [], developerNotes: [], clientReplyDraft: '확인',
+    visualDifferences: [{ area: 'Hero', category: 'CTA', title: 'Web CTA missing', summary: 'Web CTA missing.', figmaValue: 'Apply', webValue: '', severity: 'critical', confidence: 'high', order: 0 }],
+  }, payload)
+
+  assert.equal(normalized.visualDifferences.length, 0)
+})
+
+test('AI review removes canonical-conflicting Web media missing claims', () => {
+  const payload = createPayload()
+  payload.visualEvidence.hero = { sections: [{ source: 'figma' }, { source: 'web' }] }
+  payload.visualEvidence.media = { webPrimaryCandidates: [{ source: 'web', type: 'image' }] }
+  Object.defineProperty(payload, '__heroCropPairQuality', { value: { compatible: false, figmaCoverageRatio: 0.36, webCoverageRatio: 0.04, coverageRatioDelta: 0.32, reason: 'hero-crop-quality-failed' }, enumerable: false })
+  const normalized = normalizeAiReview({
+    releaseDecision: 'blocked', summary: '확인', mustFix: [], verify: [], developerNotes: [], clientReplyDraft: '확인',
+    visualDifferences: [{ area: 'Hero', category: 'Missing', title: 'Web Hero image missing', summary: 'Web media missing.', figmaValue: 'image', webValue: 'missing', severity: 'critical', confidence: 'high', order: 0 }],
+  }, payload)
+
+  assert.equal(normalized.visualDifferences.length, 0)
+})
+
+test('AI review removes incompatible hero image and CTA output claims from narrative fields', () => {
+  const payload = createPayload()
+  Object.defineProperty(payload, '__heroCropPairQuality', { value: { compatible: false, figmaCoverageRatio: 0.34, webCoverageRatio: 0.06, coverageRatioDelta: 0.28, reason: 'hero-crop-quality-failed' }, enumerable: false })
+  const normalized = normalizeAiReview({
+    releaseDecision: 'blocked',
+    summary: '차단 이슈: 웹 이미지와 CTA 출력 이슈 점검이 필요합니다.',
+    mustFix: [{ category: 'media', title: '대표 이미지 미노출', description: '웹 이미지와 CTA 출력 이슈 점검', severity: 'critical' }],
+    verify: [{ category: 'media', title: '웹 이미지와 CTA 출력 이슈 점검', description: 'Web 이미지 로딩/출력 문제입니다.', severity: 'warning' }],
+    developerNotes: [{ category: 'media', title: '웹 이미지와 CTA 출력 이슈 점검', description: 'Hero crop 기반입니다.', severity: 'check' }],
+    clientReplyDraft: '차단 이슈로 대표 이미지 미노출과 CTA 출력 문제를 우선 수정하겠습니다.',
+    visualDifferences: [{ area: 'Hero', category: 'Media', title: '대표 이미지 미노출', summary: '웹 이미지와 CTA 출력 이슈 점검', figmaValue: 'Hero image', webValue: '이미지 미노출', severity: 'critical', confidence: 'high' }],
+  }, payload)
+
+  assert.equal(normalized.releaseDecision, 'ready')
+  assert.equal(normalized.visualDifferences.length, 0)
+  assert.equal(normalized.mustFix.length, 0)
+  assert.equal(normalized.verify.length, 0)
+  assert.equal(normalized.developerNotes.length, 0)
+  assert.equal(/차단|우선\s*수정|이미지 미노출|출력 이슈/.test(`${normalized.summary} ${normalized.clientReplyDraft}`), false)
+})
+
+test('AI review downgrades ordinal-only text differences from critical', () => {
+  const normalized = normalizeAiReview({
+    releaseDecision: 'blocked', summary: '확인', mustFix: [], verify: [], developerNotes: [], clientReplyDraft: '확인',
+    visualDifferences: [{ area: 'Benefit', category: 'Text', title: '낮은 월 납입금 문구 차이', summary: '순번과 띄어쓰기 차이입니다.', figmaValue: '02 낮은 월납입금으로 이용', webValue: '낮은 월 납입금으로 이용', severity: 'critical', confidence: 'high', order: 0 }],
+  }, createPayload())
+
+  assert.equal(normalized.releaseDecision, 'caution')
+  assert.equal(normalized.visualDifferences[0].category, 'Text')
+  assert.equal(normalized.visualDifferences[0].severity, 'warning')
+})
+
+test('AI review reconciles final arrays from sanitized visualDifferences', () => {
+  const payload = createPayload()
+  Object.defineProperty(payload, '__heroCropPairQuality', { value: { compatible: false, figmaCoverageRatio: 0.35, webCoverageRatio: 0.05, coverageRatioDelta: 0.3, reason: 'hero-crop-quality-failed' }, enumerable: false })
+  const normalized = normalizeAiReview({
+    releaseDecision: 'caution',
+    summary: 'Hero 섹션 내 주요 CTA 3개가 Web에 전혀 노출되지 않음이 차단 이슈입니다.',
+    mustFix: [
+      { category: 'cta', title: 'Hero 섹션 내 주요 CTA 3개가 Web에 전혀 노출되지 않음', description: 'Hero CTA 미노출', severity: 'critical' },
+      { category: 'text', title: 'BMWW 오타 수정 필요', description: 'BMWW를 BMW로 수정해야 합니다.', severity: 'critical' },
+    ],
+    verify: [],
+    developerNotes: [{ category: 'cta', title: 'Hero CTA debug', description: 'CTA 미노출 점검', severity: 'check' }],
+    clientReplyDraft: 'Hero CTA 미노출 차단 이슈와 BMWW 오타를 우선 수정하겠습니다.',
+    visualDifferences: [
+      { area: 'Header', category: 'Text', title: 'BMWW/BMW 오탈자', summary: '브랜드 표기 오탈자입니다.', figmaValue: 'BMWW', webValue: 'BMW', severity: 'warning', confidence: 'high', order: 0 },
+      { area: 'Footer', category: 'Text', title: '하단 링크 텍스트 차이', summary: '링크 문구가 다릅니다.', figmaValue: '고객 지원', webValue: '고객센터', severity: 'check', confidence: 'medium', order: 1 },
+    ],
+  }, payload)
+
+  assert.equal(normalized.releaseDecision, 'caution')
+  assert.equal(normalized.mustFix.length, 0)
+  assert.equal(normalized.verify.some((item) => /BMWW/.test(item.title) && item.severity === 'warning'), true)
+  assert.equal(normalized.developerNotes.some((item) => /CTA|미노출/i.test(`${item.title} ${item.description}`)), false)
+  assert.equal(/Hero|CTA|미노출|차단|우선\s*수정/.test(`${normalized.summary} ${normalized.clientReplyDraft}`), false)
+})
+
+test('AI review keeps inclusion exclusion critical but blocks only with real critical evidence', () => {
+  const important = normalizeAiReview({
+    releaseDecision: 'caution', summary: '확인', verify: [], developerNotes: [], clientReplyDraft: '확인',
+    mustFix: [{ category: 'text', title: '혜택 포함/제외 의미 반전', description: 'Figma는 혜택 포함, Web은 혜택 제외로 표시됩니다.', severity: 'critical' }],
+    visualDifferences: [{ area: 'Offer', category: 'Text', title: '혜택 조건 문구 차이', summary: '포함과 제외가 반대로 표시됩니다.', figmaValue: '혜택 포함', webValue: '혜택 제외', severity: 'critical', confidence: 'high', order: 0 }],
+  }, createPayload())
+  const numeric = normalizeAiReview({
+    releaseDecision: 'caution', summary: '확인', verify: [], developerNotes: [], clientReplyDraft: '확인', visualDifferences: [],
+    mustFix: [{ category: 'price', title: '월 납입금 차이', description: 'Figma 월 47만원, Web 월 50만원', severity: 'critical' }],
+  }, createPayload())
+
+  assert.equal(important.releaseDecision, 'blocked')
+  assert.equal(important.mustFix[0].severity, 'critical')
+  assert.equal(numeric.releaseDecision, 'blocked')
+  assert.equal(numeric.mustFix[0].severity, 'critical')
+})
+
+test('AI review prevents critical mustFix for general typos and warning visual matches', () => {
+  const normalized = normalizeAiReview({
+    releaseDecision: 'caution', summary: 'BMWW 오타 수정 필요', verify: [], developerNotes: [], clientReplyDraft: 'BMWW 오타를 수정하겠습니다.',
+    mustFix: [{ category: 'text', title: 'BMWW 오타 수정 필요', description: 'BMWW를 BMW로 수정합니다.', severity: 'critical' }],
+    visualDifferences: [{ area: 'Header', category: 'Text', title: 'BMWW/BMW 오탈자', summary: '브랜드 표기 오탈자입니다.', figmaValue: 'BMWW', webValue: 'BMW', severity: 'warning', confidence: 'high', order: 0 }],
+  }, createPayload())
+
+  assert.equal(normalized.releaseDecision, 'caution')
+  assert.equal(normalized.mustFix.length, 0)
+  assert.equal(normalized.verify[0].severity, 'warning')
+  assert.equal(normalized.visualDifferences[0].severity, 'warning')
+})
+
+test('AI review removes ordinal price criticals from auxiliary arrays but keeps real amounts', () => {
+  const payload = createPayload()
+  payload.visualEvidence.textDifferences = [{ kind: 'text-difference', severity: 'critical', category: 'numeric', figmaText: 'Figma 47만원', webText: 'Web 50만원' }]
+  payload.releaseDecisionInput = { criticalCount: 1, warningCount: 0, checkCount: 0, techErrorCount: 0, techWarningCount: 0 }
+  const normalized = normalizeAiReview({
+    releaseDecision: 'blocked', summary: '02 접두사 숫자를 가격 문제로 분류했습니다.',
+    mustFix: [
+      { category: 'price', title: '02 접두사 숫자 가격 문제', description: '02 낮은 월납입금 항목입니다.', severity: 'critical' },
+      { category: 'price', title: '금액 차이', description: 'Figma 47만원 Web 50만원', severity: 'critical' },
+    ],
+    verify: [], developerNotes: [], clientReplyDraft: '02 가격 문제를 수정하겠습니다.', visualDifferences: [],
+  }, payload)
+
+  assert.equal(normalized.mustFix.length, 1)
+  assert.equal(normalized.mustFix[0].title, '금액 차이')
+  assert.equal(/02/.test(normalized.summary), false)
+  assert.equal(/02/.test(normalized.clientReplyDraft), false)
+})
+
+test('AI review removes cookie overlay from all auxiliary output text', () => {
+  const normalized = normalizeAiReview({
+    releaseDecision: 'blocked', summary: 'Cookie popup is the core issue.',
+    mustFix: [{ category: 'missing', title: 'Cookie popup', description: 'Cookie consent overlay appears.', severity: 'critical' }],
+    verify: [{ category: 'tech', title: 'Cookie state', description: 'Consent popup state.', severity: 'warning' }],
+    developerNotes: [{ category: 'tech', title: 'Cookie debug', description: 'Cookie overlay shown.', severity: 'check' }],
+    clientReplyDraft: 'Cookie popup을 핵심 문제로 수정하겠습니다.', visualDifferences: [],
+  }, createPayload())
+
+  assert.equal(normalized.mustFix.length, 0)
+  assert.equal(normalized.verify.length, 0)
+  assert.equal(normalized.developerNotes.length, 0)
+  assert.equal(/cookie|popup|consent/i.test(normalized.summary), false)
+  assert.equal(/cookie|popup|consent/i.test(normalized.clientReplyDraft), false)
 })
 
 function createPayload() {

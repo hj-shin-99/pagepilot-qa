@@ -35,7 +35,10 @@ export function createVisualVisionService(options = {}) {
         prepareVisionImage(figmaFile.absolutePath, { cacheDir, maxWidth: options.heroMaxWidth || HERO_MAX_WIDTH, quality: options.heroQuality || HERO_QUALITY, maxOutputBytes, label: 'figma-hero', variant: 'hero', detail: 'high', crop: createHeroCropRegion(payload, 'figma') }),
         prepareVisionImage(webFile.absolutePath, { cacheDir, maxWidth: options.heroMaxWidth || HERO_MAX_WIDTH, quality: options.heroQuality || HERO_QUALITY, maxOutputBytes, label: 'web-hero', variant: 'hero', detail: 'high', crop: createHeroCropRegion(payload, 'web') }),
       ])
-      const images = [figmaOverview, webOverview, figmaHero, webHero].map((image) => ({
+      const visionCropSummary = [figmaHero, webHero].map((image) => ({ label: image.label, width: image.width, height: image.height, cropUsed: Boolean(image.cropUsed), cropReason: image.cropReason, cropFailureReason: image.cropFailureReason || '', cropDiagnostics: image.cropDiagnostics || null }))
+      const heroCropPairQuality = createHeroCropPairQuality(visionCropSummary)
+      const visionImages = heroCropPairQuality.compatible ? [figmaOverview, webOverview, figmaHero, webHero] : [figmaOverview, webOverview]
+      const images = visionImages.map((image) => ({
         label: image.label,
         dataUrl: image.dataUrl,
         mimeType: image.mimeType,
@@ -45,7 +48,6 @@ export function createVisualVisionService(options = {}) {
       }))
       const visionInputSummary = images.map(({ label, width, height, detail }) => ({ label, width, height, detail }))
 
-      const visionCropSummary = [figmaHero, webHero].map((image) => ({ label: image.label, width: image.width, height: image.height, cropUsed: Boolean(image.cropUsed), cropReason: image.cropReason, cropFailureReason: image.cropFailureReason || '', cropDiagnostics: image.cropDiagnostics || null }))
       const preparedPayload = {
         ...payload,
         visionInput: {
@@ -54,6 +56,7 @@ export function createVisualVisionService(options = {}) {
         },
       }
       Object.defineProperty(preparedPayload, '__visionCropSummary', { value: visionCropSummary, enumerable: false })
+      Object.defineProperty(preparedPayload, '__heroCropPairQuality', { value: heroCropPairQuality, enumerable: false })
 
       return {
         payload: preparedPayload,
@@ -63,12 +66,52 @@ export function createVisualVisionService(options = {}) {
           webImagePrepared: true,
           visionInputSummary,
           visionCropSummary,
+          heroCropPairQuality,
           figmaImage: { width: figmaOverview.width, height: figmaOverview.height, originalWidth: figmaOverview.originalWidth, originalHeight: figmaOverview.originalHeight, cached: figmaOverview.cached, sizeBytes: figmaOverview.sizeBytes },
           webImage: { width: webOverview.width, height: webOverview.height, originalWidth: webOverview.originalWidth, originalHeight: webOverview.originalHeight, cached: webOverview.cached, sizeBytes: webOverview.sizeBytes },
         },
       }
     },
   }
+}
+
+function createHeroCropPairQuality(visionCropSummary = []) {
+  const figma = findCropSummary(visionCropSummary, 'figma-hero')
+  const web = findCropSummary(visionCropSummary, 'web-hero')
+  const figmaCoverageRatio = cropCoverageRatio(figma)
+  const webCoverageRatio = cropCoverageRatio(web)
+  const coverageRatioDelta = Number(Math.abs(figmaCoverageRatio - webCoverageRatio).toFixed(4))
+  const figmaValidCount = Number(figma?.cropDiagnostics?.validDescendantBoxCount || 0)
+  const webValidCount = Number(web?.cropDiagnostics?.validDescendantBoxCount || 0)
+  const figmaPassed = figma?.cropDiagnostics?.cropQualityPassed === true
+  const webPassed = web?.cropDiagnostics?.cropQualityPassed === true
+  const coverageValues = [figmaCoverageRatio, webCoverageRatio].filter((value) => Number.isFinite(value) && value > 0)
+  const maxCoverage = coverageValues.length ? Math.max(...coverageValues) : 0
+  const minCoverage = coverageValues.length ? Math.min(...coverageValues) : 0
+
+  let reason = ''
+  if (!figma || !web) reason = 'hero-crop-missing'
+  else if (!figmaPassed || !webPassed) reason = 'hero-crop-quality-failed'
+  else if ((figmaValidCount === 0 && webValidCount > 0) || (webValidCount === 0 && figmaValidCount > 0)) reason = 'hero-descendant-count-mismatch'
+  else if (minCoverage > 0 && maxCoverage / minCoverage >= 2.5) reason = 'hero-coverage-ratio-mismatch'
+  else if (minCoverage > 0 && minCoverage < maxCoverage * 0.35) reason = 'hero-thin-partial-crop'
+
+  return {
+    compatible: reason === '',
+    figmaCoverageRatio,
+    webCoverageRatio,
+    coverageRatioDelta,
+    reason,
+  }
+}
+
+function findCropSummary(items, label) {
+  return (Array.isArray(items) ? items : []).find((item) => String(item?.label || '').toLowerCase() === label) || null
+}
+
+function cropCoverageRatio(item) {
+  const ratio = Number(item?.cropDiagnostics?.cropCoverageRatio)
+  return Number.isFinite(ratio) && ratio >= 0 ? ratio : 0
 }
 
 export async function prepareVisionImage(inputPath, options = {}) {

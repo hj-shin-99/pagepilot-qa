@@ -17,22 +17,25 @@ function InputPanel({
 
   return (
     <aside className={`control-panel ${isCollapsed ? 'is-collapsed' : ''}`}>
-      <button className="sidebar-toggle-button" type="button" onClick={onToggleCollapsed}>
-        {isCollapsed ? '열기' : '접기'}
-      </button>
-      {isCollapsed ? null : (
-        <>
+      <div className="sidebar-topbar">
+        {isCollapsed ? null : (
           <div className="brand-mark">
             <span className="brand-dot" aria-hidden="true" />
             PagePilot QA
           </div>
+        )}
+        <button className="sidebar-toggle-button" type="button" onClick={onToggleCollapsed}>
+          {isCollapsed ? '열기' : '접기'}
+        </button>
+      </div>
+      {isCollapsed ? null : (
+        <div className="sidebar-content">
+          <div className="sidebar-intro">
+            <h1>PagePilot QA v0.3</h1>
+            <p className="sidebar-description">Figma 시안과 실제 Web 페이지를 AI 멀티모달로 비교하여 텍스트, 이미지, CTA 및 콘텐츠 차이를 자동 검수합니다.</p>
+          </div>
 
-          <h1>PagePilot QA v0.3</h1>
-          <p className="lead-text">
-            Web URL을 입력하면 Tech QA를 실행합니다. Figma URL을 함께 입력하면 Visual QA도 실행합니다.
-          </p>
-
-          <form className="scan-form" onSubmit={handleSubmit}>
+          <form className="scan-form sidebar-input-section" onSubmit={handleSubmit}>
             <label className="field-label" htmlFor="target-url">
               Web URL
             </label>
@@ -63,8 +66,7 @@ function InputPanel({
               {isScanning ? '검사 중...' : '검사 시작'}
             </button>
           </form>
-
-        </>
+        </div>
       )}
     </aside>
   )

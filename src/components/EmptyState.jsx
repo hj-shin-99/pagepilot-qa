@@ -14,10 +14,12 @@ function EmptyState({ scanState, scanError, mode = 'visual', combined = false, s
         </div>
         <p className="state-label">{isFailed ? '검사 실패' : isScanning ? '검사 중' : isSkipped ? '미실행' : '검사 전'}</p>
         <h2>{getTitle({ isFailed, isScanning, isSkipped, isTech, combined })}</h2>
-        <p>{isFailed ? scanError : getDescription({ isTech, isSkipped, combined })}</p>
+        <p>{isFailed ? scanError : getDescription({ isTech, isSkipped, isScanning, combined })}</p>
         {isScanning ? (
           <ol className="scan-stage-list" aria-label="검사 진행 단계">
-            {getStages({ isTech, combined }).map((stage, index) => <li className={getStageClassName(index, getActiveStageIndex({ isTech, combined, scanStage }))} key={stage}>{stage}</li>)}
+            {getStages({ isTech, combined }).map((stage, index) => (
+              <li className={getStageClassName(index, getActiveStageIndex({ isTech, combined, scanStage }))} key={stage}>{stage}</li>
+            ))}
           </ol>
         ) : null}
       </div>
@@ -30,11 +32,12 @@ function getTitle({ isFailed, isScanning, isSkipped, isTech, combined }) {
   if (isScanning && combined) return 'Web 페이지와 Figma 시안을 분석하고 있습니다.'
   if (isScanning) return 'Web 페이지를 분석하고 있습니다.'
   if (isSkipped) return 'Figma URL을 입력하면 Visual QA를 함께 실행합니다.'
-  return isTech ? 'Web URL을 입력하고 검사를 시작하세요.' : 'Web URL과 Figma Frame URL을 입력하세요.'
+  return isTech ? 'Tech QA' : 'Visual QA'
 }
 
-function getDescription({ isTech, isSkipped, combined }) {
+function getDescription({ isTech, isSkipped, isScanning, combined }) {
   if (isSkipped) return '왼쪽 입력 영역에 Figma Frame URL을 추가하고 검사 시작을 누르면 Visual QA도 실행됩니다.'
+  if (!isScanning) return isTech ? 'Web URL을 입력하고 검사를 시작하세요. 페이지 접속 상태와 기술 항목을 검사합니다.' : 'Web URL과 Figma URL을 입력하세요. Figma 시안과 Web 페이지를 비교합니다.'
   if (combined) return 'Visual QA와 Tech QA를 함께 검사하고 결과를 정리하고 있습니다.'
   return isTech
     ? 'Tech QA 항목을 검사하고 있습니다.'
@@ -42,16 +45,29 @@ function getDescription({ isTech, isSkipped, combined }) {
 }
 
 function getStages({ isTech, combined }) {
-  if (combined) return ['Web/Figma 데이터 수집', 'AI Vision 비교', '결과 정리 및 저장']
+  if (combined) return [
+    'Web 페이지를 수집하고 있습니다.',
+    '시안 정보와 Web 데이터를 비교하고 있습니다.',
+    '구조와 콘텐츠의 차이를 검증하고 있습니다.',
+    'AI가 확인된 차이를 최종 검토하고 있습니다.',
+    '최종 QA 결과를 정리하고 있습니다.',
+  ]
   return isTech
-    ? ['Web 페이지 분석', 'Tech QA 항목 검사']
-    : ['Figma Frame 로드 및 렌더링', 'Web 페이지 접속 및 캡처', 'Text Matcher 및 canonical evidence 생성']
+    ? [
+      '페이지 접속 상태를 확인하고 있습니다.',
+      '기술 항목을 검사하고 있습니다.',
+    ]
+    : [
+      '시안 화면을 준비하고 있습니다.',
+      'Web 화면을 수집하고 있습니다.',
+      '비교 기준 데이터를 생성하고 있습니다.',
+    ]
 }
 
 function getActiveStageIndex({ isTech, combined, scanStage }) {
   if (combined) {
-    if (scanStage === 'ai-review') return 1
-    if (scanStage === 'finalizing') return 2
+    if (scanStage === 'ai-review') return 3
+    if (scanStage === 'finalizing') return 4
     return 0
   }
   if (scanStage === 'finalizing') return isTech ? 1 : 2

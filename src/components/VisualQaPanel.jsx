@@ -10,10 +10,11 @@ import {
   createVisualIssueCards,
   createWebDisplayImageUrl,
 } from '../utils/visualQa'
-import { createVisualDifferenceReport, DEFAULT_VISUAL_ISSUE_DISPLAY_COUNT } from '../utils/visualIssueList'
+import { createVisualDisplayIssues } from '../utils/visualDisplayIssues.js'
+import { createVisualIssueGroups } from '../utils/visualIssueGroups.js'
 import { createVisualQaTitle } from '../utils/visualTitle'
 
-function VisualQaPanel({ result, summary, copyStatus, onCopyResult, aiReview, aiReviewState = 'idle', pageTitle }) {
+function VisualQaPanel({ result, copyStatus, onCopyResult, aiReview, aiReviewState = 'idle', pageTitle }) {
   const cards = createVisualIssueCards(result)
   const meta = result.meta || {}
   const aiHints = result.aiHints || {}
@@ -22,14 +23,16 @@ function VisualQaPanel({ result, summary, copyStatus, onCopyResult, aiReview, ai
   const media = createMediaSummary(aiHints)
   const figmaImage = createFigmaImageUrl(result.figma)
   const webImage = createWebDisplayImageUrl(result.web)
-  const differenceReport = createVisualDifferenceReport(result, aiReview)
-  const differenceItems = differenceReport.items
-  const differenceMeta = differenceReport.meta
+  const displayIssues = createVisualDisplayIssues(result, aiReview)
+  const issueGroups = createVisualIssueGroups(displayIssues)
+  const displayMeta = displayIssues.meta || {}
+  const groupMeta = issueGroups.meta || {}
+  const differenceMeta = displayMeta.finalReportMeta || {}
   const visualTitle = createVisualQaTitle({ pageTitle, result })
 
   useEffect(() => {
-    console.info(`[Visual QA Issues] rawVisionCount=${differenceMeta.rawVisionCount} canonicalSupplementCount=${differenceMeta.canonicalSupplementCount} mergedCount=${differenceMeta.mergedCount} dedupedCount=${differenceMeta.dedupedCount} displayCount=${differenceMeta.displayCount} invalidIssueDroppedCount=${differenceMeta.invalidIssueDroppedCount} crossCategoryMergeRejectedCount=${differenceMeta.crossCategoryMergeRejectedCount}`)
-  }, [differenceMeta.rawVisionCount, differenceMeta.canonicalSupplementCount, differenceMeta.mergedCount, differenceMeta.dedupedCount, differenceMeta.displayCount, differenceMeta.invalidIssueDroppedCount, differenceMeta.crossCategoryMergeRejectedCount])
+    console.info(`[Visual QA Display Issues] finalReportItems=${displayMeta.finalReportItemCount} comparisonDifferences=${displayMeta.comparisonDifferenceCount} aiVisualDifferences=${displayMeta.aiVisualDifferenceCount} ctaEvidence=${displayMeta.ctaEvidenceCount} mediaEvidence=${displayMeta.mediaEvidenceCount} priceNumericEvidence=${displayMeta.priceNumericEvidenceCount} candidates=${displayMeta.candidateCount} uiCount=${displayIssues.length} groupCount=${groupMeta.groupCount} groupedIssueCount=${groupMeta.groupedIssueCount} duplicateIssueCount=${groupMeta.duplicateIssueCount} rawVisionCount=${differenceMeta.rawVisionCount} canonicalSupplementCount=${differenceMeta.canonicalSupplementCount} mergedCount=${differenceMeta.mergedCount} dedupedCount=${differenceMeta.dedupedCount} invalidIssueDroppedCount=${differenceMeta.invalidIssueDroppedCount} crossCategoryMergeRejectedCount=${differenceMeta.crossCategoryMergeRejectedCount}`)
+  }, [displayIssues.length, displayMeta.finalReportItemCount, displayMeta.comparisonDifferenceCount, displayMeta.aiVisualDifferenceCount, displayMeta.ctaEvidenceCount, displayMeta.mediaEvidenceCount, displayMeta.priceNumericEvidenceCount, displayMeta.candidateCount, groupMeta.groupCount, groupMeta.groupedIssueCount, groupMeta.duplicateIssueCount, differenceMeta.rawVisionCount, differenceMeta.canonicalSupplementCount, differenceMeta.mergedCount, differenceMeta.dedupedCount, differenceMeta.invalidIssueDroppedCount, differenceMeta.crossCategoryMergeRejectedCount])
 
   return (
     <section className="section-stack visual-qa-panel" aria-label="Visual QA 결과">
@@ -44,9 +47,11 @@ function VisualQaPanel({ result, summary, copyStatus, onCopyResult, aiReview, ai
             결과 복사
           </button>
         </div>
-        <div className="summary-box">{summary}</div>
+        <div className="summary-box">{formatIssueCountSummary(groupMeta.groupedIssueCount ?? displayIssues.length)}</div>
         {copyStatus ? <p className="copy-status">{copyStatus}</p> : null}
       </header>
+
+      <AiMultimodalComplete aiReview={aiReview} />
 
       <article className="detail-card visual-image-card-primary">
         <div className="section-title-row">
@@ -66,234 +71,229 @@ function VisualQaPanel({ result, summary, copyStatus, onCopyResult, aiReview, ai
       <article className="detail-card difference-list-card">
         <div className="section-title-row">
           <div>
-            <h3>다른 부분</h3>
+            <h3>발견된 차이</h3>
             <p className="panel-note relaxed-note">수정 또는 확인이 필요한 실무형 이슈만 합쳐서 표시합니다.</p>
           </div>
-          <span>{differenceMeta.dedupedCount}개</span>
+          <span>{formatGroupIssueCount(issueGroups.length, groupMeta.groupedIssueCount ?? displayIssues.length)}</span>
         </div>
-        <DifferenceList items={differenceItems} initialCount={DEFAULT_VISUAL_ISSUE_DISPLAY_COUNT} />
+        <IssueGroupList groups={issueGroups} />
       </article>
 
       <details className="detail-card visual-detail-accordion">
         <summary>
-          <span>세부 정보 보기</span>
-          <strong>AI Vision, 규칙 기반 결과, 시스템 메타</strong>
+          <span>상세 분석 보기</span>
+          <strong>Hero · CTA · Price · Media · Text · System</strong>
         </summary>
 
-        <AiVisionRawSummary aiReview={aiReview} state={aiReviewState} />
+        <div className="visual-detail-stack">
+          <DetailAccordion title="AI 멀티모달 분석" note="최종 검토 요약">
+            <AiVisionSummary aiReview={aiReview} state={aiReviewState} finalIssueCount={displayIssues.length} />
+          </DetailAccordion>
 
-        <section className="visual-detail-section">
-          <div className="section-title-row">
-            <div>
-              <h3>규칙 기반 Critical / Warning / Check</h3>
-              <p className="panel-note relaxed-note">Canonical 비교에서 생성된 원본 판정 목록입니다.</p>
-            </div>
-            <span>{cards.length}개</span>
-          </div>
-          <RuleIssueList cards={cards} />
-        </section>
-
-        <section className="visual-two-column">
-          <VisualSectionCard title="Hero" note="핵심 영역 요약">
+          <DetailAccordion title="Hero" note="핵심 영역 요약">
             <KeyValue label="Figma Hero Text" value={hero.figmaTextCount} />
             <KeyValue label="Web Hero Text" value={hero.webTextCount} />
             <KeyValue label="CTA Count" value={`Figma ${hero.figmaCtaCount} / Web ${hero.webCtaCount}`} />
             <KeyValue label="대표 Media" value={`Figma ${formatList(hero.figmaMediaTypes)} / Web ${formatList(hero.webMediaTypes)}`} />
-          </VisualSectionCard>
+          </DetailAccordion>
 
-          <VisualSectionCard title="CTA" note="Primary/Secondary CTA만 표시">
+          <DetailAccordion title="CTA" note="Primary/Secondary CTA만 표시">
             <EntityList items={createActionItems(aiHints)} emptyText="표시할 핵심 CTA가 없습니다." />
             <OtherInteractions items={createOtherInteractionItems(aiHints)} />
-          </VisualSectionCard>
-        </section>
+          </DetailAccordion>
 
-        <section className="visual-two-column">
-          <VisualSectionCard title="Price / Numeric" note="금액/숫자 후보">
+          <DetailAccordion title="Price / Numeric" note="금액/숫자 후보">
             <EntityList items={createPriceItems(aiHints, comparison)} emptyText="수집된 가격/금액 후보가 없습니다." />
-          </VisualSectionCard>
+          </DetailAccordion>
 
-          <VisualSectionCard title="Media" note="Hero primary media와 주요 개수">
+          <DetailAccordion title="Media" note="Hero primary media와 주요 개수">
             <KeyValue label="Hero Media" value={media.comparisonText} />
             <KeyValue label="Content Media" value={`Figma 이미지 ${media.counts.figmaImage} / Web 이미지 ${media.counts.webImage} / Web 영상 ${media.counts.webVideo}`} />
             <EntityList items={media.heroPrimary} emptyText="Hero primary media가 없습니다." />
-          </VisualSectionCard>
-        </section>
+          </DetailAccordion>
 
-        <section className="visual-two-column">
-          <VisualSectionCard title="Text Difference" note="문구 비교 요약">
+          <DetailAccordion title="Text" note="문구 비교 요약">
             <KeyValue label="Matched" value={comparison.matchedCount} />
             <KeyValue label="Different" value={comparison.differenceCount} />
             <KeyValue label="Figma Only" value={comparison.figmaOnlyCount} />
             <KeyValue label="Web Only" value={comparison.webOnlyCount} />
             <EntityList items={createDifferenceItems(comparison)} emptyText="문구 차이가 없습니다." />
-          </VisualSectionCard>
+          </DetailAccordion>
 
-          <VisualSectionCard title="System" note="시스템 메타">
+          <DetailAccordion title="System" note="시스템 메타">
             <KeyValue label="OpenAI 호출" value={aiReview?.meta?.openAiCalled === true ? '있음' : '없음'} />
-            <KeyValue label="Vision 사용" value={aiReview?.meta?.visionUsed === true ? '있음' : '없음'} />
+            <KeyValue label="이미지 분석" value={aiReview?.meta?.visionUsed === true ? '사용' : '미사용'} />
             <KeyValue label="Image Inputs" value={aiReview?.meta?.imageInputCount} />
-            <KeyValue label="Raw Vision Count" value={differenceMeta.rawVisionCount} />
-            <KeyValue label="Canonical Supplement Count" value={differenceMeta.canonicalSupplementCount} />
-            <KeyValue label="Merged Count" value={differenceMeta.mergedCount} />
-            <KeyValue label="Deduped Count" value={differenceMeta.dedupedCount} />
-            <KeyValue label="Display Count" value={differenceMeta.displayCount} />
-            <KeyValue label="Invalid Issue Dropped Count" value={differenceMeta.invalidIssueDroppedCount} />
-            <KeyValue label="Cross Category Merge Rejected Count" value={differenceMeta.crossCategoryMergeRejectedCount} />
             <KeyValue label="Fallback" value={aiReview?.meta?.fallbackUsed === true ? '있음' : '없음'} />
             <KeyValue label="Payload Version" value={meta.payloadVersion} />
             <KeyValue label="Playwright Runs" value={meta.playwrightRunCount} />
-            <KeyValue label="Figma Cache" value={meta.figmaCacheSource} />
-            <KeyValue label="Figma Render Cache" value={meta.figmaRenderCacheSource} />
-          </VisualSectionCard>
-        </section>
+          </DetailAccordion>
+        </div>
+      </details>
+
+      <details className="detail-card developer-info-accordion">
+        <summary>
+          <span>개발 정보</span>
+          <strong>Raw · Canonical · Merge · Cache</strong>
+        </summary>
+        <div className="visual-section-body developer-info-body">
+          <KeyValue label="Final Report Items" value={displayMeta.finalReportItemCount} />
+          <KeyValue label="Comparison Differences" value={displayMeta.comparisonDifferenceCount} />
+          <KeyValue label="AI Visual Differences" value={displayMeta.aiVisualDifferenceCount} />
+          <KeyValue label="CTA Evidence" value={displayMeta.ctaEvidenceCount} />
+          <KeyValue label="Media Evidence" value={displayMeta.mediaEvidenceCount} />
+          <KeyValue label="Price/Numeric Evidence" value={displayMeta.priceNumericEvidenceCount} />
+          <KeyValue label="Display Candidates" value={displayMeta.candidateCount} />
+          <KeyValue label="Display Groups" value={groupMeta.groupCount} />
+          <KeyValue label="Grouped Issue Count" value={groupMeta.groupedIssueCount} />
+          <KeyValue label="Exact Duplicate Removed" value={groupMeta.duplicateIssueCount} />
+          <KeyValue label="Raw Vision Count" value={differenceMeta.rawVisionCount} />
+          <KeyValue label="Canonical Supplement Count" value={differenceMeta.canonicalSupplementCount} />
+          <KeyValue label="Merged Count" value={differenceMeta.mergedCount} />
+          <KeyValue label="Deduped Count" value={differenceMeta.dedupedCount} />
+          <KeyValue label="UI 표시 개수" value={displayIssues.length} />
+          <KeyValue label="Invalid Issue Dropped Count" value={differenceMeta.invalidIssueDroppedCount} />
+          <KeyValue label="Cross Category Merge Rejected Count" value={differenceMeta.crossCategoryMergeRejectedCount} />
+          <KeyValue label="Rule Source Items" value={cards.length} />
+          <KeyValue label="Figma Cache" value={meta.figmaCacheSource} />
+          <KeyValue label="Figma Render Cache" value={meta.figmaRenderCacheSource} />
+          <KeyValue label="처리 시간" value={formatDuration(aiReview?.meta?.aiReviewDurationMs)} />
+        </div>
       </details>
     </section>
   )
 }
 
-function AiVisionRawSummary({ aiReview, state }) {
+function AiMultimodalComplete({ aiReview }) {
+  const meta = aiReview?.meta || {}
+  return (
+    <article className="detail-card ai-multimodal-complete">
+      <div className="section-title-row">
+        <div>
+          <h3>AI 멀티모달 검증 완료</h3>
+          <p className="panel-note relaxed-note">AI 멀티모달이 Figma 시안과 Web 화면을 교차 검토하여 최종 차이를 분석했습니다.</p>
+        </div>
+      </div>
+      <ol className="ai-complete-steps" aria-label="AI 멀티모달 검증 완료 단계">
+        <li>Playwright 수집 완료</li>
+        <li>Figma API 비교 완료</li>
+        <li>Canonical 2차 검증 완료</li>
+        <li>AI 멀티모달 최종 검토 완료</li>
+      </ol>
+      <div className="ai-complete-meta">
+        <KeyValue label="모델" value={meta.model || (meta.openAiCalled ? '사용' : '미사용')} />
+        <KeyValue label="처리 시간" value={formatDuration(meta.aiReviewDurationMs)} />
+      </div>
+    </article>
+  )
+}
+
+function AiVisionSummary({ aiReview, state, finalIssueCount }) {
   const review = aiReview?.review || null
   const meta = aiReview?.meta || {}
-  const differences = Array.isArray(review?.visualDifferences) ? review.visualDifferences : []
 
   if (state === 'loading') {
-    return <p className="visual-detail-section panel-note relaxed-note">OpenAI Vision 검토 중입니다.</p>
+    return <p className="visual-detail-section panel-note relaxed-note">AI 멀티모달 검토 중입니다.</p>
   }
 
   if (!review && state !== 'fallback') {
-    return <p className="visual-detail-section empty-row">AI Vision raw summary가 없습니다.</p>
+    return <p className="visual-detail-section empty-row">AI 분석 요약이 없습니다.</p>
   }
 
   return (
     <section className="visual-detail-section">
       <div className="section-title-row">
         <div>
-          <h3>AI Vision Raw Summary</h3>
-          <p className="panel-note relaxed-note">Vision 응답 원문 요약과 visualDifferences 원본입니다.</p>
+          <h3>AI 분석 요약</h3>
+          <p className="panel-note relaxed-note">AI 처리 정보만 간단히 표시합니다.</p>
         </div>
-        <span>{meta.visionUsed ? `${meta.imageInputCount || 0} images` : 'Vision 미사용'}</span>
+        <span>{meta.visionUsed ? `${meta.imageInputCount || 0}장` : '이미지 분석 미사용'}</span>
       </div>
-      {review?.summary ? <p className="visual-raw-summary">{review.summary}</p> : null}
-      <div className="visual-two-column ai-review-columns">
+      <p className="visual-raw-summary">{formatIssueCountSummary(finalIssueCount)}</p>
+      <div className="ai-summary-grid">
         <div className="visual-key-value">
-          <span>OpenAI</span>
-          <strong>{meta.openAiCalled ? `사용${meta.model ? ` · ${meta.model}` : ''}` : '미사용'}</strong>
+          <span>처리 모델</span>
+          <strong>{meta.model || (meta.openAiCalled ? '사용' : '미사용')}</strong>
         </div>
         <div className="visual-key-value">
           <span>처리 시간</span>
           <strong>{meta.aiReviewDurationMs ? `${meta.aiReviewDurationMs}ms` : '-'}</strong>
         </div>
         <div className="visual-key-value">
-          <span>Figma 이미지</span>
-          <strong>{meta.figmaImagePrepared ? '준비됨' : '없음'}</strong>
+          <span>이미지 입력</span>
+          <strong>{meta.imageInputCount ?? 0}장</strong>
         </div>
         <div className="visual-key-value">
-          <span>Web 이미지</span>
-          <strong>{meta.webImagePrepared ? '준비됨' : '없음'}</strong>
+          <span>Fallback</span>
+          <strong>{meta.fallbackUsed ? '있음' : '없음'}</strong>
+        </div>
+        <div className="visual-key-value">
+          <span>최종 차이 개수</span>
+          <strong>{formatValue(finalIssueCount)}</strong>
         </div>
       </div>
-      {meta.fallbackUsed || meta.visionFailureReason ? (
-        <p className="panel-note relaxed-note">Vision 상태: {meta.visionFailureReason || 'fallback-used'}</p>
-      ) : null}
-      <AiVisualDifferenceList items={differences} />
     </section>
   )
 }
 
-function AiVisualDifferenceList({ items = [] }) {
-  if (!items.length) return <p className="empty-row">AI Vision이 확인한 별도 시각 차이가 없습니다.</p>
+function IssueGroupList({ groups = [] }) {
+  if (!groups.length) return <p className="empty-row">표시할 다른 부분이 없습니다.</p>
 
   return (
-    <ol className="visual-entity-list ai-visual-difference-list">
-      {items.map((item, index) => (
-        <li key={`${item.area}-${item.category}-${item.title}-${index}`}>
-          <strong>{item.title || item.category}</strong>
-          <span>{item.area} · {item.category}</span>
-          {item.summary ? <small>{item.summary}</small> : null}
-          {item.figmaValue || item.webValue ? <small>Figma: {item.figmaValue || '-'} · Web: {item.webValue || '-'}</small> : null}
+    <ol className="issue-group-list">
+      {groups.map((group, index) => (
+        <li className="issue-group-card" key={group.id || `${group.label}-${index}`}>
+          <div className="issue-group-header">
+            <span className="issue-group-index">{String(index + 1).padStart(2, '0')}</span>
+            <div>
+              <strong>{group.label}</strong>
+              <span>{group.items.length}개 차이</span>
+            </div>
+          </div>
+          <ol className="issue-group-items">
+            {group.items.map((item, itemIndex) => <IssueGroupItem item={item} key={item.groupItemId || item.id || `${item.categoryLabel}-${item.title}-${itemIndex}`} />)}
+          </ol>
         </li>
       ))}
     </ol>
   )
 }
 
-function DifferenceList({ items = [], initialCount = DEFAULT_VISUAL_ISSUE_DISPLAY_COUNT }) {
-  const [expanded, setExpanded] = useState(false)
-  if (!items.length) return <p className="empty-row">표시할 다른 부분이 없습니다.</p>
-  const visibleItems = expanded ? items : items.slice(0, initialCount)
-  const remainingCount = Math.max(0, items.length - visibleItems.length)
-
+function IssueGroupItem({ item }) {
   return (
-    <>
-      <ol className="difference-list">
-        {visibleItems.map((item, index) => (
-          <li className="difference-item" key={item.id || `${item.categoryLabel}-${item.title}-${index}`}>
-            <span className="difference-index">{index + 1}</span>
-            <div className="difference-copy">
-              <div className="difference-meta-row">
-                <span>{item.categoryLabel}</span>
-                {item.area && item.area !== 'Page Content' ? <span>{item.area}</span> : null}
-                <span className={`difference-severity ${item.severity}`}>{formatSeverity(item.severity)}</span>
-              </div>
-              <strong>{item.title}</strong>
-              {item.figmaValue || item.webValue ? (
-                <dl className="difference-values">
-                  <div>
-                    <dt>Figma</dt>
-                    <dd>{formatValue(item.figmaValue)}</dd>
-                  </div>
-                  <div>
-                    <dt>Web</dt>
-                    <dd>{formatValue(item.webValue)}</dd>
-                  </div>
-                </dl>
-              ) : null}
-            </div>
-          </li>
-        ))}
-      </ol>
-      {remainingCount > 0 ? (
-        <button className="secondary-button difference-more-button" type="button" onClick={() => setExpanded(true)}>
-          나머지 {remainingCount}건 더보기
-        </button>
-      ) : null}
-    </>
-  )
-}
-
-function RuleIssueList({ cards = [] }) {
-  if (!cards.length) return <p className="empty-row">규칙 기반 이슈가 없습니다.</p>
-
-  return (
-    <ul className="visual-card-list">
-      {cards.map((card) => (
-        <li className={`visual-issue-card ${card.severity}`} key={`${card.category}-${card.title}-${card.detail}-${card.entityKey}`}>
-          <span>{card.severity}</span>
-          <strong>{card.title}</strong>
-          <p>{card.detail}</p>
-          {card.technical ? (
-            <details className="visual-technical-detail">
-              <summary>상세 보기</summary>
-              <small>{card.technical}</small>
-            </details>
-          ) : null}
-        </li>
-      ))}
-    </ul>
-  )
-}
-
-function VisualSectionCard({ title, note, children }) {
-  return (
-    <article className="detail-card visual-section-card">
-      <div className="section-title-row">
-        <div>
-          <h3>{title}</h3>
-          <p className="panel-note relaxed-note">{note}</p>
+    <li className={`issue-group-item ${getDifferenceCategoryClass(item)}`}>
+      <div className="issue-group-item-main">
+        <div className="difference-meta-row">
+          <span className="difference-category-chip">{item.categoryLabel}</span>
         </div>
+        <strong>{item.title}</strong>
+        {shouldShowDifferenceDescription(item) ? <p>{item.description}</p> : null}
       </div>
+      {item.figmaValue || item.webValue ? (
+        <dl className="difference-values issue-group-values">
+          <div>
+            <dt>Figma</dt>
+            <dd>{formatValue(item.figmaValue)}</dd>
+          </div>
+          <div>
+            <dt>Web</dt>
+            <dd>{formatValue(item.webValue)}</dd>
+          </div>
+        </dl>
+      ) : null}
+    </li>
+  )
+}
+
+function DetailAccordion({ title, note, children }) {
+  return (
+    <details className="visual-sub-accordion">
+      <summary>
+        <span>{title}</span>
+        <small>{note}</small>
+      </summary>
       <div className="visual-section-body">{children}</div>
-    </article>
+    </details>
   )
 }
 
@@ -383,10 +383,39 @@ function formatValue(value) {
   return String(value)
 }
 
-function formatSeverity(value) {
-  if (value === 'critical') return 'Critical'
-  if (value === 'check') return 'Check'
-  return 'Warning'
+function formatDuration(value) {
+  const ms = Number(value)
+  if (!Number.isFinite(ms) || ms <= 0) return '-'
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}초` : `${Math.round(ms)}ms`
+}
+
+function getDifferenceCategoryClass(item = {}) {
+  const value = `${item.category || ''} ${item.categoryLabel || ''}`.toLowerCase()
+  if (/cta|button|action/.test(value)) return 'is-cta'
+  if (/media|image|kv|video/.test(value)) return 'is-media'
+  if (/price|numeric|amount/.test(value)) return 'is-price'
+  if (/missing|count/.test(value)) return 'is-missing'
+  return 'is-text'
+}
+
+function shouldShowDifferenceDescription(item = {}) {
+  const description = String(item.description || '').trim()
+  if (!description) return false
+  const title = String(item.title || '').trim()
+  if (description === title) return false
+  if (description === String(item.figmaValue || '').trim() || description === String(item.webValue || '').trim()) return false
+  return !/^figma와 web/i.test(description) || description.length > 28
+}
+
+function formatIssueCountSummary(count) {
+  const safeCount = Number.isFinite(Number(count)) ? Number(count) : 0
+  return safeCount > 0 ? `Figma 시안과 Web 페이지에서 ${safeCount}개의 차이를 확인했습니다.` : 'Figma 시안과 Web 페이지에서 확인된 차이가 없습니다.'
+}
+
+function formatGroupIssueCount(groupCount, issueCount) {
+  const safeGroupCount = Number.isFinite(Number(groupCount)) ? Number(groupCount) : 0
+  const safeIssueCount = Number.isFinite(Number(issueCount)) ? Number(issueCount) : 0
+  return `${safeGroupCount}개 영역 · ${safeIssueCount}개 항목`
 }
 
 function formatDate(value) {

@@ -95,6 +95,7 @@ function createWebCtaCandidates(webCtaHints) {
   const hints = Array.isArray(webCtaHints) ? webCtaHints : []
   return hints
     .map((hint) => {
+      const box = normalizeBox(hint?.boundingBox || hint?.rect || hint?.bounds || hint?.box)
       const reasons = []
       if (hint?.selector && /(button|btn|cta|role=button|\ba\b)/i.test(String(hint.selector))) reasons.push('interactive selector')
       if (normalizeString(hint?.href)) reasons.push('has href')
@@ -113,8 +114,15 @@ function createWebCtaCandidates(webCtaHints) {
         section: normalizeString(hint?.area) || 'unknown',
         confidence: classifyConfidence(reasons.length >= 3 ? 'high' : reasons.length >= 2 ? 'medium' : 'low'),
         reasons,
-        y: normalizeNumber(hint?.y),
-        yRatio: normalizeAreaToRatio(hint?.area),
+        x: normalizeNumber(hint?.x ?? box?.x),
+        y: normalizeNumber(hint?.y ?? box?.y),
+        width: normalizeNumber(hint?.width ?? box?.width),
+        height: normalizeNumber(hint?.height ?? box?.height),
+        xRatio: normalizeNumber(hint?.xRatio),
+        yRatio: normalizeNumber(hint?.yRatio) ?? normalizeAreaToRatio(hint?.area),
+        widthRatio: normalizeNumber(hint?.widthRatio),
+        heightRatio: normalizeNumber(hint?.heightRatio),
+        boundingBox: box,
         visible: hint?.visible !== false,
       }
     })
@@ -126,6 +134,7 @@ function createWebImageCandidates(images) {
   const safeImages = Array.isArray(images) ? images : []
   return safeImages
     .map((image) => {
+      const box = normalizeBox(image?.boundingBox || image?.rect || image?.bounds || image?.box)
       const reasons = ['img element']
       if (image?.loaded) reasons.push('loaded successfully')
       if (normalizeString(image?.alt)) reasons.push('has alt text')
@@ -142,9 +151,17 @@ function createWebImageCandidates(images) {
         section: normalizeString(image?.section) || 'unknown',
         confidence: classifyConfidence(reasons.length >= 3 ? 'high' : reasons.length >= 2 ? 'medium' : 'low'),
         reasons,
-        width: normalizeNumber(image?.naturalWidth),
-        height: normalizeNumber(image?.naturalHeight),
-        yRatio: normalizeBoundingBoxYRatio(image?.boundingBox),
+        x: normalizeNumber(image?.x ?? box?.x),
+        y: normalizeNumber(image?.y ?? box?.y),
+        width: normalizeNumber(box?.width ?? image?.width ?? image?.naturalWidth),
+        height: normalizeNumber(box?.height ?? image?.height ?? image?.naturalHeight),
+        naturalWidth: normalizeNumber(image?.naturalWidth),
+        naturalHeight: normalizeNumber(image?.naturalHeight),
+        xRatio: normalizeNumber(image?.xRatio),
+        yRatio: normalizeNumber(image?.yRatio) ?? normalizeBoundingBoxYRatio(box),
+        widthRatio: normalizeNumber(image?.widthRatio),
+        heightRatio: normalizeNumber(image?.heightRatio),
+        boundingBox: box,
         visible: image?.loaded === true,
       }
     })
@@ -341,6 +358,16 @@ function normalizeCount(value, fallback) {
 function normalizeNumber(value) {
   const numeric = Number(value)
   return Number.isFinite(numeric) ? numeric : null
+}
+
+function normalizeBox(box) {
+  if (!box || typeof box !== 'object') return null
+  const x = normalizeNumber(box.x ?? box.left)
+  const y = normalizeNumber(box.y ?? box.top)
+  const width = normalizeNumber(box.width ?? (Number.isFinite(Number(box.right)) && x !== null ? Number(box.right) - x : null))
+  const height = normalizeNumber(box.height ?? (Number.isFinite(Number(box.bottom)) && y !== null ? Number(box.bottom) - y : null))
+  if (x === null || y === null || width === null || height === null || width <= 0 || height <= 0) return null
+  return { x, y, width, height }
 }
 
 function normalizeAreaToRatio(value) {

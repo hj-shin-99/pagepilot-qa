@@ -73,6 +73,7 @@ export function sanitizeAiReviewResponse(response = {}) {
       aiReviewDurationMs: numberValue(response.meta?.aiReviewDurationMs),
       visionFailureReason: getString(response.meta?.visionFailureReason),
       visionInputSummary: sanitizeVisionInputSummary(response.meta?.visionInputSummary),
+      visionCropSummary: sanitizeVisionCropSummary(response.meta?.visionCropSummary),
     },
     review: {
       releaseDecision: normalizeDecision(review.releaseDecision),
@@ -96,6 +97,15 @@ function createTextDifferences(visual = {}) {
     figmaText: getString(item.figmaText || item.text),
     webText: getString(item.webText),
     confidence: getString(item.confidence || item.matchConfidence),
+    sectionId: getString(item.sectionId),
+    sectionPath: getString(item.sectionPath || item.contextPath || item.layerPath),
+    comparisonScope: getString(item.comparisonScope),
+    xRatio: nullableNumber(item.xRatio),
+    yRatio: nullableNumber(item.yRatio),
+    widthRatio: nullableNumber(item.widthRatio),
+    heightRatio: nullableNumber(item.heightRatio),
+    originalIndex: nullableNumber(item.originalIndex ?? item.order),
+    spatialEvidence: compactSpatialEvidence(item.spatialEvidence || item),
   }))).slice(0, MAX_ITEMS)
 }
 
@@ -117,17 +127,37 @@ function classifyCategory(item = {}) {
 function createHeroEvidence(visual = {}) {
   const hero = visual.aiHints?.evidenceSummary?.hero || {}
   const heroSection = visual.aiHints?.heroSection || {}
+  const cta = createCtaEvidence(visual)
+  const media = createMediaEvidence(visual)
+  const textDescendants = createHeroTextDescendants(visual, heroSection)
   return {
     figmaSectionId: getString(heroSection.figmaSectionId),
     webSectionId: getString(heroSection.webSectionId),
     figmaTextCount: numberValue(hero.figmaTextCount),
     webTextCount: numberValue(hero.webTextCount),
-    figmaCtaCount: numberValue(hero.figmaCtaCount ?? visual.aiHints?.heroCtaGroup?.figma?.count),
-    webCtaCount: numberValue(hero.webCtaCount ?? visual.aiHints?.heroCtaGroup?.web?.count),
+    figmaCtaCount: cta.figmaCount,
+    webCtaCount: cta.webCount,
     webPrimaryMediaCount: numberValue(hero.webPrimaryMediaCount),
     confidence: getString(heroSection.confidence),
     sections: arrayOfObjects(heroSection.sections).map(compactHeroSection).filter(Boolean).slice(0, 4),
+    descendants: [
+      ...textDescendants.map((item) => compactHeroDescendantBox(item, 'text')).filter(Boolean),
+      ...cta.figmaActions.map((item) => compactHeroDescendantBox(item, 'cta')).filter(Boolean),
+      ...cta.webActions.map((item) => compactHeroDescendantBox(item, 'cta')).filter(Boolean),
+      ...media.figmaPrimaryCandidates.map((item) => compactHeroDescendantBox(item, 'media')).filter(Boolean),
+      ...media.webPrimaryCandidates.map((item) => compactHeroDescendantBox(item, 'media')).filter(Boolean),
+    ].slice(0, 12),
   }
+}
+
+function createHeroTextDescendants(visual = {}, heroSection = {}) {
+  const texts = arrayOfObjects(visual.aiHints?.canonicalEvidence?.texts)
+  const figmaSectionId = getString(heroSection.figmaSectionId)
+  const webSectionId = getString(heroSection.webSectionId)
+  return texts
+    .filter((item) => (item.source === 'figma' && item.sectionId === figmaSectionId) || (item.source === 'web' && item.sectionId === webSectionId))
+    .filter((item) => ['heading', 'label', 'body'].includes(getString(item.role)) || getString(item.text))
+    .slice(0, 8)
 }
 
 function compactHeroSection(section = {}) {
@@ -141,6 +171,7 @@ function compactHeroSection(section = {}) {
     yRatio: nullableNumber(section.yRatio),
     widthRatio: nullableNumber(section.widthRatio),
     heightRatio: nullableNumber(section.heightRatio),
+    spatialEvidence: compactSpatialEvidence(section.spatialEvidence || section),
     confidence: getString(section.confidence),
   }
 }
@@ -183,6 +214,41 @@ function createMediaEvidence(visual = {}) {
     figmaImageCount: numberValue(content.figmaImageCount),
     webImageCount: numberValue(content.webImageCount),
     webVideoCount: numberValue(content.webVideoCount),
+    figmaPrimaryCandidates: limitMediaCandidates(group.figma?.primaryCandidates),
+    webPrimaryCandidates: limitMediaCandidates(group.web?.primaryCandidates),
+  }
+}
+
+function limitMediaCandidates(items) {
+  return arrayOfObjects(items).map((item) => ({
+    entityId: getString(item.entityId),
+    source: getString(item.source),
+    type: getString(item.type || item.mediaType),
+    role: getString(item.role),
+    comparisonScope: getString(item.comparisonScope),
+    isHeroPrimary: item.isHeroPrimary === true,
+    sectionId: getString(item.sectionId),
+    sectionPath: getString(item.sectionPath || item.contextPath || item.parentSelector),
+    ...compactSpatialFields(item),
+    spatialEvidence: compactSpatialEvidence(item.spatialEvidence || item),
+  })).filter((item) => ['figma', 'web'].includes(item.source)).slice(0, 4)
+}
+
+function compactHeroDescendantBox(item = {}, kind) {
+  const source = getString(item.source)
+  if (!['figma', 'web'].includes(source)) return null
+  const spatialEvidence = compactSpatialEvidence(item.spatialEvidence || item)
+  const fields = compactSpatialFields(item)
+  if (!spatialEvidence && fields.yRatio === null && fields.y === null) return null
+  return {
+    entityId: getString(item.entityId),
+    source,
+    kind,
+    sectionId: getString(item.sectionId),
+    sectionPath: getString(item.sectionPath || item.contextPath || item.parentSelector),
+    comparisonScope: getString(item.comparisonScope),
+    ...fields,
+    spatialEvidence,
   }
 }
 
@@ -219,16 +285,54 @@ function countTechChecks(tech = {}, status) {
 
 function limitActions(items) {
   return dedupe(arrayOfObjects(items).map((item) => ({
+    entityId: getString(item.entityId),
+    source: getString(item.source),
     text: getString(item.text || item.displayText),
     role: getString(item.role),
     href: getSafeUrl(item.href),
     sectionId: getString(item.sectionId),
+    sectionRootId: getString(item.sectionRootId),
     sectionPath: getString(item.sectionPath || item.contextPath || item.parentSelector),
     comparisonScope: getString(item.comparisonScope),
-    xRatio: nullableNumber(item.xRatio),
-    yRatio: nullableNumber(item.yRatio),
+    ...compactSpatialFields(item),
+    spatialEvidence: compactSpatialEvidence(item.spatialEvidence || item),
     isHeroAction: item.isHeroAction === true,
   }))).slice(0, 6)
+}
+
+function compactSpatialEvidence(item = {}) {
+  if (!item || typeof item !== 'object') return null
+  const fields = compactSpatialFields(item)
+  const hasRatio = fields.xRatio !== null && fields.yRatio !== null && fields.widthRatio !== null && fields.heightRatio !== null && fields.widthRatio > 0 && fields.heightRatio > 0
+  const hasPixel = fields.x !== null && fields.y !== null && fields.width !== null && fields.height !== null && fields.width > 0 && fields.height > 0
+  if (!hasRatio && !hasPixel && !getString(item.sectionId) && !getString(item.sectionPath || item.path)) return null
+  return {
+    coordinateSpace: hasRatio ? 'ratio' : hasPixel ? 'pixel' : '',
+    ...fields,
+    sourceWidth: nullableNumber(item.sourceWidth || item.imageWidth || item.viewportWidth || item.scrollWidth),
+    sourceHeight: nullableNumber(item.sourceHeight || item.imageHeight || item.viewportHeight || item.scrollHeight),
+    sectionId: getString(item.sectionId),
+    sectionRootId: getString(item.sectionRootId || item.rootSourceId),
+    sectionPath: getString(item.sectionPath || item.path || item.contextPath || item.context || item.layerPath),
+  }
+}
+
+function compactSpatialFields(item = {}) {
+  const pxBox = item.boundingBox || item.absoluteBoundingBox || item.bbox || item.rect || item.bounds || item.box || item
+  const x = nullableNumber(pxBox.x ?? pxBox.left)
+  const y = nullableNumber(pxBox.y ?? pxBox.top)
+  const right = nullableNumber(pxBox.right)
+  const bottom = nullableNumber(pxBox.bottom)
+  return {
+    xRatio: nullableNumber(item.xRatio ?? item.positionRatio?.xRatio),
+    yRatio: nullableNumber(item.yRatio ?? item.positionRatio?.yRatio),
+    widthRatio: nullableNumber(item.widthRatio ?? item.positionRatio?.widthRatio),
+    heightRatio: nullableNumber(item.heightRatio ?? item.positionRatio?.heightRatio),
+    x,
+    y,
+    width: nullableNumber(pxBox.width ?? (right !== null && x !== null ? right - x : null)),
+    height: nullableNumber(pxBox.height ?? (bottom !== null && y !== null ? bottom - y : null)),
+  }
 }
 
 function sanitizeIssueArray(value) {
@@ -246,6 +350,26 @@ function sanitizeVisionInputSummary(value) {
       width: numberValue(item?.width),
       height: numberValue(item?.height),
       detail: ['low', 'high', 'auto'].includes(item?.detail) ? item.detail : 'auto',
+    })).filter((item) => item.label).slice(0, 4)
+    : []
+}
+
+function sanitizeVisionCropSummary(value) {
+  return Array.isArray(value)
+    ? value.map((item) => ({
+      label: getString(item?.label),
+      width: numberValue(item?.width),
+      height: numberValue(item?.height),
+      cropUsed: item?.cropUsed === true,
+      cropReason: getString(item?.cropReason),
+      cropFailureReason: getString(item?.cropFailureReason),
+      cropDiagnostics: item?.cropDiagnostics && typeof item.cropDiagnostics === 'object' ? {
+        validDescendantBoxCount: numberValue(item.cropDiagnostics.validDescendantBoxCount),
+        descendantUnionHeight: numberValue(item.cropDiagnostics.descendantUnionHeight),
+        finalCropHeight: numberValue(item.cropDiagnostics.finalCropHeight),
+        cropCoverageRatio: numberValue(item.cropDiagnostics.cropCoverageRatio),
+        cropQualityPassed: item.cropDiagnostics.cropQualityPassed === true,
+      } : null,
     })).filter((item) => item.label).slice(0, 4)
     : []
 }

@@ -28,7 +28,7 @@ export function buildVisualQaPayloadArtifacts({ figmaAnalysis, webAnalysis, text
 
   const figmaTextCandidates = normalizeFigmaTextCandidates(safeFigmaAnalysis.textNodes)
   const webTextCandidates = normalizeWebTextCandidates(safeWebAnalysis.textNodes)
-  const filteredDifferences = createComparisonSummaries(safeTextComparison, quality)
+  const filteredDifferences = createComparisonSummaries(safeTextComparison, quality, { figmaTextCandidates, webTextCandidates })
   const rawImages = dedupeCandidates(createMergedImageHints(safeFigmaAnalysis, safeWebAnalysis, quality), quality).slice(0, MAX_IMAGE_CANDIDATES)
   const rawVideos = dedupeCandidates(createMergedVideoHints(safeFigmaAnalysis, safeWebAnalysis, quality), quality).slice(0, MAX_VIDEO_CANDIDATES)
   const rawInteractions = createRawInteractionArtifacts({
@@ -113,16 +113,17 @@ export function buildVisualQaPayloadArtifacts({ figmaAnalysis, webAnalysis, text
   const comparisonMedia = createComparisonMedia(canonicalEvidence.media)
   const heroMediaGroup = createHeroMediaGroup({ media: canonicalEvidence.media, heroSections }, quality)
   const heroCtaGroup = createHeroCtaGroup(canonicalEvidence.actions, heroSections, quality)
+  const comparisonDifferences = enrichComparisonDifferencesWithCanonicalEvidence(filteredDifferences, canonicalEvidence)
   const heroSection = createHeroSectionHint({
     sections: canonicalEvidence.sections,
     heroSections,
-    filteredDifferences,
+    filteredDifferences: comparisonDifferences,
     ctaButtons,
     heroMediaGroup,
     texts: canonicalEvidence.texts,
     actions: canonicalEvidence.actions,
   })
-  const navigation = createNavigationHint({ sections: canonicalEvidence.sections, actions: canonicalEvidence.actions, filteredDifferences })
+  const navigation = createNavigationHint({ sections: canonicalEvidence.sections, actions: canonicalEvidence.actions, filteredDifferences: comparisonDifferences })
   const evidenceSummary = createEvidenceSummary({
     heroSection,
     heroMediaGroup,
@@ -132,7 +133,7 @@ export function buildVisualQaPayloadArtifacts({ figmaAnalysis, webAnalysis, text
     media: canonicalEvidence.media,
     prices: comparisonPrices,
     dates: comparisonDates,
-    filteredDifferences,
+    filteredDifferences: comparisonDifferences,
     canonicalEvidence,
   })
   const sectionTrace = includeDebugArtifacts ? createSectionTrace({ sections: canonicalEvidence.sections, heroSections, canonicalEvidence }) : null
@@ -211,10 +212,10 @@ export function buildVisualQaPayloadArtifacts({ figmaAnalysis, webAnalysis, text
     },
     comparison: {
       matchedCount: normalizeCount(safeTextComparison.summary?.matchedCount, 0),
-      differenceCount: filteredDifferences.length,
+      differenceCount: comparisonDifferences.length,
       figmaOnlyCount: normalizeCount(safeTextComparison.summary?.figmaOnlyCount, 0),
       webOnlyCount: normalizeCount(safeTextComparison.summary?.webOnlyCount, 0),
-      differences: filteredDifferences,
+      differences: comparisonDifferences,
     },
     aiHints: {
       canonicalEvidence: {
@@ -381,11 +382,12 @@ function createPayloadQuality({ includeDebugArtifacts = true } = {}) {
   return quality
 }
 
-function createComparisonSummaries(textComparison, quality) {
+function createComparisonSummaries(textComparison, quality, { figmaTextCandidates = [], webTextCandidates = [] } = {}) {
   return limitItems(Array.isArray(textComparison.differences) ? textComparison.differences : [], MAX_DIFFERENCES * 3)
+    .map((difference, originalIndex) => ({ difference, originalIndex }))
     .filter((difference) => {
-      const figmaText = normalizeString(difference?.figmaText)
-      const webText = normalizeString(difference?.webText)
+      const figmaText = normalizeString(difference?.difference?.figmaText)
+      const webText = normalizeString(difference?.difference?.webText)
       if (!figmaText || !webText) return true
       const normalizedFigma = normalizeTextForExactDisplayComparison(figmaText)
       const normalizedWeb = normalizeTextForExactDisplayComparison(webText)
@@ -395,15 +397,72 @@ function createComparisonSummaries(textComparison, quality) {
       }
       return true
     })
-    .map((difference) => ({
-      text: truncateText(difference?.figmaText || difference?.webText || difference?.text || '', 120),
-      figmaText: truncateText(difference?.figmaText || '', 140),
-      webText: truncateText(difference?.webText || '', 140),
-      confidence: normalizeConfidence(difference?.matchConfidence),
-      status: classifyDifferenceStatus(difference),
-      reasons: limitItems(Array.isArray(difference?.evidence) ? difference.evidence : [], 4).map((item) => truncateText(item, 120)),
-    }))
+    .map(({ difference, originalIndex }) => createComparisonSummary(difference, originalIndex, { figmaTextCandidates, webTextCandidates }))
     .slice(0, MAX_DIFFERENCES)
+}
+
+function createComparisonSummary(difference = {}, originalIndex, { figmaTextCandidates = [], webTextCandidates = [] } = {}) {
+  const figmaEntity = findFigmaDifferenceEntity(difference, figmaTextCandidates)
+  const webEntity = findWebDifferenceEntity(difference, webTextCandidates)
+  const figmaSpatialEvidence = createSpatialEvidence(figmaEntity || difference.figmaNode || difference.figmaElement || difference.figma || {})
+  const webSpatialEvidence = createSpatialEvidence(webEntity || difference.webElement || difference.webNode || difference.web || {})
+  const spatialEvidence = chooseRepresentativeSpatialEvidence(figmaSpatialEvidence, webSpatialEvidence)
+  const sourceIds = uniqueStrings([
+    normalizeString(difference?.figmaNodeId || figmaEntity?.sourceId),
+    normalizeString(difference?.webSelector || webEntity?.selector || webEntity?.sourceId),
+  ])
+  return {
+    text: truncateText(difference?.figmaText || difference?.webText || difference?.text || '', 120),
+    figmaText: truncateText(difference?.figmaText || '', 140),
+    webText: truncateText(difference?.webText || '', 140),
+    confidence: normalizeConfidence(difference?.matchConfidence || difference?.confidence),
+    status: classifyDifferenceStatus(difference),
+    reasons: limitItems(Array.isArray(difference?.evidence) ? difference.evidence : [], 4).map((item) => truncateText(item, 120)),
+    figmaNodeId: normalizeString(difference?.figmaNodeId || figmaEntity?.sourceId),
+    webSelector: normalizeString(difference?.webSelector || webEntity?.selector),
+    sourceEntityIds: sourceIds,
+    originalIndex,
+    order: originalIndex,
+    sectionId: spatialEvidence?.sectionId || '',
+    sectionRootId: spatialEvidence?.sectionRootId || '',
+    sectionPath: spatialEvidence?.sectionPath || '',
+    xRatio: spatialEvidence?.xRatio ?? null,
+    yRatio: spatialEvidence?.yRatio ?? null,
+    widthRatio: spatialEvidence?.widthRatio ?? null,
+    heightRatio: spatialEvidence?.heightRatio ?? null,
+    spatialEvidence,
+    figmaSpatialEvidence,
+    webSpatialEvidence,
+  }
+}
+
+function findFigmaDifferenceEntity(difference = {}, figmaTextCandidates = []) {
+  const nodeId = normalizeString(difference.figmaNodeId)
+  if (nodeId) {
+    const byId = figmaTextCandidates.find((item) => normalizeString(item?.sourceId) === nodeId || normalizeString(item?.id) === nodeId)
+    if (byId) return byId
+  }
+  return findTextEntityByValue(figmaTextCandidates, difference.figmaText || difference.text)
+}
+
+function findWebDifferenceEntity(difference = {}, webTextCandidates = []) {
+  const selector = normalizeString(difference.webSelector)
+  if (selector) {
+    const bySelector = webTextCandidates.find((item) => normalizeString(item?.selector) === selector || normalizeString(item?.sourceId) === selector)
+    if (bySelector) return bySelector
+  }
+  return findTextEntityByValue(webTextCandidates, difference.webText)
+}
+
+function findTextEntityByValue(candidates = [], value) {
+  const target = normalizeComparableText(value)
+  if (!target) return null
+  return candidates.find((item) => normalizeComparableText(item?.text || item?.displayText) === target)
+    || candidates.find((item) => {
+      const text = normalizeComparableText(item?.text || item?.displayText)
+      return text && (text.includes(target) || target.includes(text))
+    })
+    || null
 }
 
 function createSectionContexts({ figmaAnalysis, figmaTextCandidates }) {
@@ -1210,6 +1269,137 @@ function createHeroSectionHint({ sections, heroSections, filteredDifferences, ct
   }
 }
 
+function enrichComparisonDifferencesWithCanonicalEvidence(differences, canonicalEvidence) {
+  const texts = Array.isArray(canonicalEvidence?.texts) ? canonicalEvidence.texts : []
+  return (Array.isArray(differences) ? differences : []).map((difference) => {
+    const figmaText = findCanonicalTextForDifference(texts, 'figma', difference.figmaText || difference.text, difference.figmaNodeId)
+    const webText = findCanonicalTextForDifference(texts, 'web', difference.webText, difference.webSelector)
+    const figmaSpatialEvidence = createSpatialEvidence(figmaText || difference.figmaSpatialEvidence || {})
+    const webSpatialEvidence = createSpatialEvidence(webText || difference.webSpatialEvidence || {})
+    const spatialEvidence = chooseRepresentativeSpatialEvidence(figmaSpatialEvidence, webSpatialEvidence, difference.spatialEvidence)
+    const sourceEntityIds = uniqueStrings([
+      ...(Array.isArray(difference.sourceEntityIds) ? difference.sourceEntityIds : []),
+      figmaText?.entityId,
+      webText?.entityId,
+      figmaText?.sourceIds?.[0],
+      webText?.sourceIds?.[0],
+    ])
+    return {
+      ...difference,
+      sourceEntityIds,
+      figmaNodeId: difference.figmaNodeId || figmaText?.sourceIds?.[0] || '',
+      webSelector: difference.webSelector || webText?.selector || '',
+      figmaSpatialEvidence,
+      webSpatialEvidence,
+      spatialEvidence,
+      sectionId: difference.sectionId || spatialEvidence?.sectionId || figmaText?.sectionId || webText?.sectionId || '',
+      sectionRootId: difference.sectionRootId || spatialEvidence?.sectionRootId || figmaText?.sectionRootId || webText?.sectionRootId || '',
+      sectionPath: difference.sectionPath || spatialEvidence?.sectionPath || figmaText?.sectionPath || webText?.sectionPath || '',
+      xRatio: difference.xRatio ?? spatialEvidence?.xRatio ?? null,
+      yRatio: difference.yRatio ?? spatialEvidence?.yRatio ?? null,
+      widthRatio: difference.widthRatio ?? spatialEvidence?.widthRatio ?? null,
+      heightRatio: difference.heightRatio ?? spatialEvidence?.heightRatio ?? null,
+    }
+  })
+}
+
+function findCanonicalTextForDifference(texts, source, value, sourceIdOrSelector) {
+  const sourceKey = normalizeString(sourceIdOrSelector)
+  const sourceTexts = texts.filter((item) => item?.source === source)
+  if (sourceKey) {
+    const byId = sourceTexts.find((item) => normalizeString(item?.entityId) === sourceKey
+      || normalizeString(item?.selector) === sourceKey
+      || normalizeString(item?.sourceIds?.[0]) === sourceKey
+      || (Array.isArray(item?.sourceIds) && item.sourceIds.map(normalizeString).includes(sourceKey)))
+    if (byId) return byId
+  }
+  return findTextEntityByValue(sourceTexts, value)
+}
+
+function createSpatialEvidence(item = {}) {
+  if (!item || typeof item !== 'object') return null
+  const ratio = extractRatioBox(item)
+  const pixel = extractPixelBox(item)
+  if (!ratio && !pixel) {
+    const yRatio = sanitizeRatio(item.yRatio ?? item.sectionYRatio)
+    if (yRatio === null && !item.sectionId && !item.sectionPath) return null
+    return compactObject({
+      coordinateSpace: yRatio === null ? '' : 'ratio',
+      yRatio,
+      sectionId: normalizeString(item.sectionId),
+      sectionRootId: normalizeString(item.sectionRootId || item.rootSourceId),
+      sectionPath: normalizeString(item.sectionPath || item.path || item.contextPath || item.context || item.layerPath),
+    })
+  }
+  return compactObject({
+    coordinateSpace: ratio ? 'ratio' : 'pixel',
+    ...(pixel || {}),
+    ...(ratio || {}),
+    sourceWidth: sanitizePositiveNumber(item.sourceWidth || item.imageWidth || item.viewportWidth || item.scrollWidth),
+    sourceHeight: sanitizePositiveNumber(item.sourceHeight || item.imageHeight || item.viewportHeight || item.scrollHeight),
+    sectionId: normalizeString(item.sectionId),
+    sectionRootId: normalizeString(item.sectionRootId || item.rootSourceId),
+    sectionPath: normalizeString(item.sectionPath || item.path || item.contextPath || item.context || item.layerPath),
+  })
+}
+
+function chooseRepresentativeSpatialEvidence(first, second, fallback = null) {
+  const validFirst = first && typeof first === 'object' ? first : null
+  const validSecond = second && typeof second === 'object' ? second : null
+  if (!validFirst && !validSecond) return fallback || null
+  if (validFirst && validSecond) {
+    const firstY = sanitizeRatio(validFirst.yRatio)
+    const secondY = sanitizeRatio(validSecond.yRatio)
+    const yRatio = firstY !== null && secondY !== null ? Number(((firstY + secondY) / 2).toFixed(6)) : firstY ?? secondY
+    return compactObject({
+      ...validFirst,
+      ...validSecond,
+      coordinateSpace: validFirst.coordinateSpace === 'ratio' || validSecond.coordinateSpace === 'ratio' ? 'ratio' : (validFirst.coordinateSpace || validSecond.coordinateSpace),
+      xRatio: sanitizeRatio(validFirst.xRatio) ?? sanitizeRatio(validSecond.xRatio),
+      yRatio,
+      widthRatio: sanitizeRatio(validFirst.widthRatio) ?? sanitizeRatio(validSecond.widthRatio),
+      heightRatio: sanitizeRatio(validFirst.heightRatio) ?? sanitizeRatio(validSecond.heightRatio),
+      sectionId: validFirst.sectionId || validSecond.sectionId || '',
+      sectionRootId: validFirst.sectionRootId || validSecond.sectionRootId || '',
+      sectionPath: validFirst.sectionPath || validSecond.sectionPath || '',
+    })
+  }
+  return validFirst || validSecond || fallback || null
+}
+
+function extractRatioBox(item = {}) {
+  const xRatio = sanitizeRatio(item.xRatio ?? item.positionRatio?.xRatio)
+  const yRatio = sanitizeRatio(item.yRatio ?? item.positionRatio?.yRatio)
+  const widthRatio = sanitizeRatio(item.widthRatio ?? item.positionRatio?.widthRatio)
+  const heightRatio = sanitizeRatio(item.heightRatio ?? item.positionRatio?.heightRatio)
+  if (xRatio === null || yRatio === null || widthRatio === null || heightRatio === null || widthRatio <= 0 || heightRatio <= 0) return null
+  return { xRatio, yRatio, widthRatio, heightRatio }
+}
+
+function extractPixelBox(item = {}) {
+  const box = item.boundingBox || item.absoluteBoundingBox || item.bbox || item.rect || item.bounds || item.box || item
+  const x = normalizeNumber(box.x ?? box.left)
+  const y = normalizeNumber(box.y ?? box.top)
+  const width = normalizeNumber(box.width ?? (Number.isFinite(Number(box.right)) && Number.isFinite(Number(x)) ? Number(box.right) - Number(x) : null))
+  const height = normalizeNumber(box.height ?? (Number.isFinite(Number(box.bottom)) && Number.isFinite(Number(y)) ? Number(box.bottom) - Number(y) : null))
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null
+  return { x, y, width, height }
+}
+
+function sanitizeRatio(value) {
+  const number = Number(value)
+  return Number.isFinite(number) && number >= 0 && number <= 1 ? number : null
+}
+
+function sanitizePositiveNumber(value) {
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? number : null
+}
+
+function compactObject(value) {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== null && item !== undefined && item !== ''))
+}
+
 function findNextSectionAfterHero(sections, heroSection) {
   if (!heroSection) return null
   const heroY = normalizeNumber(heroSection.yRatio)
@@ -1763,6 +1953,7 @@ function upsertSectionEntity(sectionMap, seed) {
   existing.yRatio = minDefined(existing.yRatio, seed.yRatio)
   existing.widthRatio = maxDefined(existing.widthRatio, seed.widthRatio)
   existing.heightRatio = maxDefined(existing.heightRatio, seed.heightRatio)
+  existing.spatialEvidence = chooseRepresentativeSpatialEvidence(existing.spatialEvidence, seed.spatialEvidence)
   existing.parentSectionId = existing.parentSectionId || seed.parentSectionId || null
   existing.reasons = uniqueStrings([...(existing.reasons || []), ...(seed.reasons || [])])
   existing.confidence = mergeConfidence(existing.confidence, seed.confidence)
@@ -1792,6 +1983,16 @@ function createSectionSeedFromCandidate(candidate) {
     yRatio: minDefined(normalizeNumber(candidate.yRatio), normalizeNumber(descriptor.yRatio)),
     widthRatio: maxDefined(normalizeNumber(candidate.widthRatio), normalizeNumber(descriptor.widthRatio)),
     heightRatio: maxDefined(normalizeNumber(candidate.heightRatio), normalizeNumber(descriptor.heightRatio)),
+    spatialEvidence: createSpatialEvidence({
+      ...candidate,
+      sectionId: descriptor.sectionId,
+      sectionRootId: descriptor.rootSourceId,
+      sectionPath: descriptor.path,
+      xRatio: minDefined(normalizeNumber(candidate.xRatio), normalizeNumber(descriptor.xRatio)),
+      yRatio: minDefined(normalizeNumber(candidate.yRatio), normalizeNumber(descriptor.yRatio)),
+      widthRatio: maxDefined(normalizeNumber(candidate.widthRatio), normalizeNumber(descriptor.widthRatio)),
+      heightRatio: maxDefined(normalizeNumber(candidate.heightRatio), normalizeNumber(descriptor.heightRatio)),
+    }),
     entityIds: [],
     textEntityIds: [],
     actionEntityIds: [],
@@ -1885,6 +2086,15 @@ function finalizeSectionEntities(sections, canonicalEvidence, heroSections) {
     yRatio: section.yRatio,
     widthRatio: section.widthRatio,
     heightRatio: section.heightRatio,
+    spatialEvidence: section.spatialEvidence || createSpatialEvidence({
+      sectionId: section.sectionId,
+      sectionRootId: section.rootSourceId,
+      sectionPath: section.path,
+      xRatio: section.xRatio,
+      yRatio: section.yRatio,
+      widthRatio: section.widthRatio,
+      heightRatio: section.heightRatio,
+    }),
     entityIds: [],
     textEntityIds: [],
     actionEntityIds: [],
@@ -1983,6 +2193,7 @@ function createCanonicalActionEntities(rawCandidates, sections, heroSections, qu
 
 function createCanonicalActionEntity(candidate, heroSections) {
   const section = createSectionStub(candidate)
+  const spatialEvidence = createSpatialEvidence(candidate)
   return {
     entityId: `action:${candidate.source}:${candidate.sourceId || candidate.selector || normalizeComparableText(candidate.text)}`,
     type: 'action',
@@ -2011,6 +2222,7 @@ function createCanonicalActionEntity(candidate, heroSections) {
     y: normalizeNumber(candidate.y),
     width: normalizeNumber(candidate.width),
     height: normalizeNumber(candidate.height),
+    spatialEvidence,
     interactionEvidence: Array.isArray(candidate.interactionEvidence) ? candidate.interactionEvidence : [],
     sources: [buildSourceEvidence(candidate)],
     isHeroAction: candidate.sectionId === heroSections.figmaSectionId || candidate.sectionId === heroSections.webSectionId,
@@ -2150,6 +2362,7 @@ function createCanonicalNumericEntities(rawCandidates, sections, heroSections, q
 
 function createCanonicalNumericEntity(candidate, heroSections) {
   const section = createSectionStub(candidate)
+  const spatialEvidence = createSpatialEvidence(candidate)
   return {
     entityId: `numeric:${candidate.source}:${candidate.sourceId || normalizeComparableText(candidate.text)}`,
     type: candidate.type,
@@ -2173,6 +2386,7 @@ function createCanonicalNumericEntity(candidate, heroSections) {
     reasons: uniqueStrings(candidate.reasons || []),
     xRatio: candidate.xRatio,
     yRatio: candidate.yRatio,
+    spatialEvidence,
     sources: [buildSourceEvidence(candidate)],
   }
 }
@@ -2210,6 +2424,7 @@ function createCanonicalMediaEntities(rawMedia, sections, heroSections, quality)
     const existing = canonical.find((entity) => isSameCanonicalMedia(entity, normalized))
     if (!existing) {
       const role = classifyHeroMediaRole(normalized)
+      const spatialEvidence = createSpatialEvidence(normalized)
       canonical.push({
         entityId: `media:${normalized.source}:${normalized.sourceId || normalized.selector || normalized.layerPath}`,
         entityType: 'media',
@@ -2236,6 +2451,7 @@ function createCanonicalMediaEntities(rawMedia, sections, heroSections, quality)
         y: normalized.y,
         width: normalized.width,
         height: normalized.height,
+        spatialEvidence,
         role,
         comparisonScope: determineEntityComparisonScope({ type: 'media', candidate: normalized, section: createSectionStub(normalized), heroSections, mediaRole: role }),
         sources: [buildSourceEvidence(normalized)],
@@ -2294,6 +2510,8 @@ function createCanonicalTextHints({ textCandidates }) {
       layerPath: candidate.layerPath || '',
       parentId: candidate.parentId || '',
       sectionId: candidate?.sectionDescriptor?.sectionId || '',
+      sectionRootId: candidate?.sectionDescriptor?.rootSourceId || '',
+      sectionPath: candidate?.sectionDescriptor?.path || '',
       role: mapTextEntityRole(candidate),
       xRatio: normalizeNumber(candidate.xRatio),
       yRatio: normalizeNumber(candidate.yRatio),
@@ -2303,6 +2521,12 @@ function createCanonicalTextHints({ textCandidates }) {
       y: normalizeNumber(candidate.y),
       width: normalizeNumber(candidate.width),
       height: normalizeNumber(candidate.height),
+      spatialEvidence: createSpatialEvidence({
+        ...candidate,
+        sectionId: candidate?.sectionDescriptor?.sectionId || '',
+        sectionRootId: candidate?.sectionDescriptor?.rootSourceId || '',
+        sectionPath: candidate?.sectionDescriptor?.path || '',
+      }),
       sourceIds: uniqueStrings([candidate.sourceId]),
     })),
   }

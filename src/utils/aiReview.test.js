@@ -39,6 +39,32 @@ test('client AI Review response uses review as single source of truth', () => {
   assert.equal(response.review.visualDifferences[0].title, 'Hero media differs')
 })
 
+test('client AI Review payload preserves lightweight hero spatial evidence for vision crops', () => {
+  const qaResult = createQaResult()
+  qaResult.visual.result.aiHints.canonicalEvidence = {
+    texts: [
+      { entityId: 'text:web:hero-title', source: 'web', text: 'Generic headline', role: 'heading', sectionId: 'web-hero', xRatio: 0.1, yRatio: 0.08, widthRatio: 0.5, heightRatio: 0.04 },
+    ],
+  }
+  qaResult.visual.result.aiHints.heroCtaGroup = {
+    figma: { count: 1, actions: [{ entityId: 'action:figma:start', source: 'figma', text: 'Start', role: 'primary-action', comparisonScope: 'primary', sectionId: 'figma-hero', rect: { left: 120, top: 600, width: 220, height: 64 } }] },
+    web: { count: 1, actions: [{ entityId: 'action:web:start', source: 'web', text: 'Start', role: 'primary-action', comparisonScope: 'primary', sectionId: 'web-hero', xRatio: 0.12, yRatio: 0.32, widthRatio: 0.18, heightRatio: 0.05 }] },
+  }
+  qaResult.visual.result.aiHints.heroMediaGroup = {
+    figma: { mediaTypes: ['image'], primaryCandidates: [{ entityId: 'media:figma:image', source: 'figma', type: 'image', sectionId: 'figma-hero', xRatio: 0.5, yRatio: 0.2, widthRatio: 0.4, heightRatio: 0.18 }] },
+    web: { mediaTypes: ['video'], primaryCandidates: [{ entityId: 'media:web:video', source: 'web', type: 'video', sectionId: 'web-hero', boundingBox: { x: 700, y: 420, width: 640, height: 360 } }] },
+  }
+
+  const payload = buildAiReviewPayloadFromQaResult(qaResult)
+  const descendants = payload.visualEvidence.hero.descendants
+
+  assert.equal(descendants.some((item) => item.source === 'web' && item.kind === 'text' && item.yRatio === 0.08), true)
+  assert.equal(descendants.some((item) => item.source === 'web' && item.kind === 'media' && item.height === 360), true)
+  assert.equal(payload.visualEvidence.cta.webActions[0].widthRatio, 0.18)
+  assert.equal(payload.visualEvidence.media.figmaPrimaryCandidates[0].spatialEvidence.coordinateSpace, 'ratio')
+  assert.equal(JSON.stringify(payload).includes('data:image'), false)
+})
+
 function createQaResult() {
   return {
     visual: {

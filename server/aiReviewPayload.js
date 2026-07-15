@@ -400,6 +400,7 @@ function compactHeroSection(section = {}) {
     y: nullableNumber(section.y),
     width: nullableNumber(section.width),
     height: nullableNumber(section.height),
+    spatialEvidence: compactSpatialEvidence(section.spatialEvidence || section),
     confidence: safeText(section.confidence),
   }
 }
@@ -453,14 +454,20 @@ function limitMediaCandidates(items) {
   return arrayOfObjects(items).map((item) => {
     const pxBox = extractPixelBox(item)
     return {
+      entityId: safeText(item.entityId, 220),
       source: safeText(item.source),
       type: safeText(item.type || item.mediaType),
       role: safeText(item.role),
+      sectionId: safeText(item.sectionId, 220),
+      sectionPath: safeText(item.sectionPath || item.contextPath || item.parentSelector, 260),
+      comparisonScope: safeText(item.comparisonScope),
+      isHeroPrimary: item.isHeroPrimary === true,
       xRatio: nullableNumber(item.xRatio),
       yRatio: nullableNumber(item.yRatio),
       widthRatio: nullableNumber(item.widthRatio),
       heightRatio: nullableNumber(item.heightRatio),
       ...(pxBox || {}),
+      spatialEvidence: compactSpatialEvidence(item.spatialEvidence || item),
     }
   }).filter((item) => ['figma', 'web'].includes(item.source)).slice(0, 4)
 }
@@ -472,13 +479,18 @@ function compactHeroDescendantBox(item = {}, kind) {
   const pxBox = extractPixelBox(item)
   if (yRatio === null && !pxBox) return null
   return {
+    entityId: safeText(item.entityId, 220),
     source,
     kind,
+    sectionId: safeText(item.sectionId, 220),
+    sectionPath: safeText(item.sectionPath || item.contextPath || item.parentSelector, 260),
+    comparisonScope: safeText(item.comparisonScope),
     xRatio: nullableNumber(item.xRatio),
     yRatio,
     widthRatio: nullableNumber(item.widthRatio),
     heightRatio: nullableNumber(item.heightRatio),
     ...(pxBox || {}),
+    spatialEvidence: compactSpatialEvidence(item.spatialEvidence || item),
   }
 }
 
@@ -530,10 +542,12 @@ function limitActions(items) {
       const pxBox = extractPixelBox(item)
       return {
         source: safeText(item.source),
+        entityId: safeText(item.entityId, 220),
         text: safeText(item.text || item.displayText),
         role: safeText(item.role),
         href: safeUrl(item.href),
         sectionId: safeText(item.sectionId, 220),
+        sectionRootId: safeText(item.sectionRootId, 220),
         sectionPath: safeText(item.sectionPath || item.contextPath || item.parentSelector, 260),
         comparisonScope: safeText(item.comparisonScope),
         xRatio: nullableNumber(item.xRatio),
@@ -541,11 +555,46 @@ function limitActions(items) {
         widthRatio: nullableNumber(item.widthRatio),
         heightRatio: nullableNumber(item.heightRatio),
         ...(pxBox || {}),
+        spatialEvidence: compactSpatialEvidence(item.spatialEvidence || item),
         isHeroAction: item.isHeroAction === true,
       }
     })
     .filter(isCanonicalHeroCtaAction))
     .slice(0, 6)
+}
+
+function compactSpatialEvidence(item = {}) {
+  if (!item || typeof item !== 'object') return null
+  const pxBox = extractPixelBox(item)
+  const xRatio = sanitizeRatio(item.xRatio ?? item.positionRatio?.xRatio)
+  const yRatio = sanitizeRatio(item.yRatio ?? item.positionRatio?.yRatio)
+  const widthRatio = sanitizeRatio(item.widthRatio ?? item.positionRatio?.widthRatio)
+  const heightRatio = sanitizeRatio(item.heightRatio ?? item.positionRatio?.heightRatio)
+  const hasRatio = xRatio !== null && yRatio !== null && widthRatio !== null && heightRatio !== null && widthRatio > 0 && heightRatio > 0
+  if (!hasRatio && !pxBox && !safeText(item.sectionId) && !safeText(item.sectionPath || item.path)) return null
+  return {
+    coordinateSpace: hasRatio ? 'ratio' : pxBox ? 'pixel' : '',
+    ...(pxBox || {}),
+    xRatio,
+    yRatio,
+    widthRatio,
+    heightRatio,
+    sourceWidth: positiveNullableNumber(item.sourceWidth || item.imageWidth || item.viewportWidth || item.scrollWidth),
+    sourceHeight: positiveNullableNumber(item.sourceHeight || item.imageHeight || item.viewportHeight || item.scrollHeight),
+    sectionId: safeText(item.sectionId, 220),
+    sectionRootId: safeText(item.sectionRootId || item.rootSourceId, 220),
+    sectionPath: safeText(item.sectionPath || item.path || item.contextPath || item.context || item.layerPath, 260),
+  }
+}
+
+function sanitizeRatio(value) {
+  const number = Number(value)
+  return Number.isFinite(number) && number >= 0 && number <= 1 ? number : null
+}
+
+function positiveNullableNumber(value) {
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? number : null
 }
 
 function isCanonicalHeroCtaAction(item = {}) {

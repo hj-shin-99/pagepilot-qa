@@ -2708,7 +2708,15 @@ async function safeDomSnapshot(page, targetUrl) {
             href,
             selector: getCssSelector(element),
             area,
+            x: rect?.x ?? 0,
             y: rect?.y ?? 0,
+            width: rect?.width ?? 0,
+            height: rect?.height ?? 0,
+            xRatio: rect && window.innerWidth > 0 ? Math.max(0, Math.min(1, rect.x / window.innerWidth)) : null,
+            yRatio: rect && documentHeight > 0 ? Math.max(0, Math.min(1, rect.y / documentHeight)) : null,
+            widthRatio: rect && window.innerWidth > 0 ? Math.max(0, Math.min(1, rect.width / window.innerWidth)) : null,
+            heightRatio: rect && documentHeight > 0 ? Math.max(0, Math.min(1, rect.height / documentHeight)) : null,
+            boundingBox: rect,
             visible: true,
           })
         })

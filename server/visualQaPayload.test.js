@@ -262,6 +262,48 @@ test('same CTA text in different positions remains separate actions', () => {
   assert.equal(payload.aiHints.canonicalEvidence.actions.filter((item) => item.text === 'Apply').length, 2)
 })
 
+test('comparison differences preserve canonical spatial evidence and original order', () => {
+  const { payload } = buildVisualQaPayloadArtifacts(createBaseInput({
+    figmaAnalysis: {
+      textNodes: [createFigmaTextNode({ nodeId: 'figma-heading', characters: 'Hero headline', yRatio: 0.08, xRatio: 0.1, widthRatio: 0.5, heightRatio: 0.04 })],
+    },
+    webAnalysis: {
+      textNodes: [createWebTextNode({ id: 'web-heading', text: 'Hero headline changed', selector: '.hero h1', sectionHint: 'hero', yRatio: 0.09, xRatio: 0.12, widthRatio: 0.48, heightRatio: 0.04 })],
+    },
+    textComparison: {
+      summary: { matchedCount: 1, differenceCount: 1, figmaOnlyCount: 0, webOnlyCount: 0 },
+      differences: [{ figmaNodeId: 'figma-heading', webSelector: '.hero h1', figmaText: 'Hero headline', webText: 'Hero headline changed', matchConfidence: 'high', evidence: ['matched text'] }],
+    },
+  }))
+  const difference = payload.comparison.differences[0]
+
+  assert.equal(difference.originalIndex, 0)
+  assert.equal(difference.figmaNodeId, 'figma-heading')
+  assert.equal(difference.webSelector, '.hero h1')
+  assert.equal(difference.figmaSpatialEvidence.yRatio, 0.08)
+  assert.equal(difference.webSpatialEvidence.yRatio, 0.09)
+  assert.equal(difference.yRatio, 0.085)
+  assert.equal(Boolean(difference.sectionId), true)
+})
+
+test('one-sided text difference spatial evidence is retained', () => {
+  const { payload } = buildVisualQaPayloadArtifacts(createBaseInput({
+    figmaAnalysis: {
+      textNodes: [createFigmaTextNode({ nodeId: 'figma-only-position', characters: 'Positioned text', yRatio: 0.42, xRatio: 0.2, widthRatio: 0.3, heightRatio: 0.03 })],
+    },
+    webAnalysis: { textNodes: [createWebTextNode({ text: 'Different text without id', selector: '.content p', sectionHint: 'content', yRatio: Number.NaN, xRatio: Number.NaN, widthRatio: Number.NaN, heightRatio: Number.NaN })] },
+    textComparison: {
+      summary: { matchedCount: 1, differenceCount: 1, figmaOnlyCount: 0, webOnlyCount: 0 },
+      differences: [{ figmaNodeId: 'figma-only-position', figmaText: 'Positioned text', webText: 'Different text without id', matchConfidence: 'high' }],
+    },
+  }))
+  const difference = payload.comparison.differences[0]
+
+  assert.equal(difference.figmaSpatialEvidence.yRatio, 0.42)
+  assert.equal(difference.yRatio, 0.42)
+  assert.equal(difference.originalIndex, 0)
+})
+
 test('only hero container descendant action is included in hero CTA group', () => {
   const { payload } = buildVisualQaPayloadArtifacts(createBaseInput({
     figmaAnalysis: { textNodes: [] },

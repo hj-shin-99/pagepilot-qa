@@ -37,7 +37,10 @@ export function createVisualDifferenceReport(result = {}, aiReview = null, optio
   let sourceItems
 
   if (hasVisionPrimarySource(aiReview)) {
-    const visionItems = createVisionItems(aiReview).filter(isDefaultIssueCandidate)
+    const visionItems = createVisionItems(aiReview)
+      .map((item) => applyHeroAbsenceGate(item, result, aiReview))
+      .filter(Boolean)
+      .filter(isDefaultIssueCandidate)
     const primaryItems = mergePrimaryItemsWithCanonical(visionItems, canonicalItems, stats)
     const supplementalItems = createSupplementalCanonicalItems(canonicalItems, primaryItems, stats)
     sourceItems = [...primaryItems, ...supplementalItems]
@@ -120,6 +123,7 @@ function createVisionItems(aiReview = {}) {
         sectionPath: getString(item.sectionPath || item.layerPath || item.contextPath),
         yRatio: getNullableNumber(item.yRatio ?? item.sectionYRatio ?? item.figmaYRatio ?? item.webYRatio),
         xRatio: getNullableNumber(item.xRatio ?? item.figmaXRatio ?? item.webXRatio),
+        originalIndex: Number.isFinite(Number(item.originalIndex ?? item.order)) ? Number(item.originalIndex ?? item.order) : index,
         sectionKey: createSectionKey(item),
         provenance: {
           origin: 'vision',
@@ -132,6 +136,58 @@ function createVisionItems(aiReview = {}) {
         mergeTokens: [item.area, item.category, item.title, item.summary, item.figmaValue, item.webValue].map(getString).filter(Boolean),
       }
     })
+}
+
+function applyHeroAbsenceGate(item, result = {}, aiReview = {}) {
+  if (!isUnreliableHeroCrop(aiReview) || !isHeroAbsenceClaim(item)) return item
+  const presence = getCanonicalHeroPresence(result)
+  const claim = classifyHeroAbsenceClaim(item)
+  if ((claim === 'media' && presence.webMedia) || (claim === 'cta' && presence.webAction) || (claim === 'text' && presence.webText) || (claim === 'hero' && (presence.webText || presence.webAction || presence.webMedia))) {
+    return null
+  }
+  if (item.severity === 'critical') return { ...item, severity: 'check' }
+  return item
+}
+
+function isUnreliableHeroCrop(aiReview = {}) {
+  const crops = Array.isArray(aiReview.meta?.visionCropSummary) ? aiReview.meta.visionCropSummary : []
+  if (crops.some((item) => item?.cropDiagnostics?.cropQualityPassed === false)) return true
+  const coverage = crops.map((item) => Number(item?.cropDiagnostics?.cropCoverageRatio)).filter(Number.isFinite)
+  if (coverage.length >= 2 && Math.max(...coverage) > 0 && Math.min(...coverage) / Math.max(...coverage) < 0.45) return true
+  return false
+}
+
+function isHeroAbsenceClaim(item = {}) {
+  const text = `${item.area || ''} ${item.category || ''} ${item.title || ''} ${item.description || ''} ${item.figmaValue || ''} ${item.webValue || ''} ${(item.mergeTokens || []).join(' ')}`.toLowerCase()
+  if (!/(hero|main.?visual|kv|key.?visual|main kv|메인|히어로|비주얼)/i.test(text)) return false
+  return /(missing|not found|absent|없음|누락|부족|보이지 않|없습니다|없다)/i.test(text)
+}
+
+function classifyHeroAbsenceClaim(item = {}) {
+  const text = `${item.category || ''} ${item.title || ''} ${item.description || ''} ${item.figmaValue || ''} ${item.webValue || ''} ${(item.mergeTokens || []).join(' ')}`.toLowerCase()
+  if (/(cta|button|action|버튼|cta)/i.test(text)) return 'cta'
+  if (/(media|image|video|photo|이미지|영상|비디오|차량|visual)/i.test(text)) return 'media'
+  if (/(text|copy|heading|title|문구|텍스트|타이틀)/i.test(text)) return 'text'
+  return 'hero'
+}
+
+function getCanonicalHeroPresence(result = {}) {
+  const aiHints = result.aiHints || {}
+  const heroSection = aiHints.heroSection || {}
+  const canonical = aiHints.canonicalEvidence || {}
+  const heroWebSectionId = getString(heroSection.webSectionId)
+  const heroTextCount = Number(aiHints.evidenceSummary?.hero?.webTextCount || 0)
+  const heroCtaActions = Array.isArray(aiHints.heroCtaGroup?.web?.actions) ? aiHints.heroCtaGroup.web.actions : []
+  const heroMediaCandidates = Array.isArray(aiHints.heroMediaGroup?.web?.primaryCandidates) ? aiHints.heroMediaGroup.web.primaryCandidates : []
+  const heroMediaTypes = Array.isArray(aiHints.heroMediaGroup?.web?.mediaTypes) ? aiHints.heroMediaGroup.web.mediaTypes : []
+  const canonicalTexts = Array.isArray(canonical.texts) ? canonical.texts : []
+  const canonicalActions = Array.isArray(canonical.actions) ? canonical.actions : []
+  const canonicalMedia = Array.isArray(canonical.media) ? canonical.media : []
+  return {
+    webText: heroTextCount > 0 || canonicalTexts.some((item) => item.source === 'web' && (!heroWebSectionId || item.sectionId === heroWebSectionId)),
+    webAction: heroCtaActions.length > 0 || canonicalActions.some((item) => item.source === 'web' && (item.comparisonScope === 'primary' || item.isHeroAction === true) && /action|cta|button/i.test(item.role || '')),
+    webMedia: heroMediaCandidates.length > 0 || heroMediaTypes.length > 0 || canonicalMedia.some((item) => item.source === 'web' && (item.comparisonScope === 'primary' || item.isHeroPrimary === true)),
+  }
 }
 
 export function classifyVisualDifferenceItem(item = {}) {
@@ -285,6 +341,7 @@ function createCanonicalDifferenceItem(difference = {}, index, aiHints = {}) {
     sectionPath: getString(difference.sectionPath || difference.layerPath || difference.contextPath),
     yRatio: getNullableNumber(difference.yRatio ?? difference.sectionYRatio ?? difference.figmaYRatio ?? difference.webYRatio ?? difference.figmaNode?.yRatio ?? difference.webElement?.yRatio),
     xRatio: getNullableNumber(difference.xRatio ?? difference.figmaXRatio ?? difference.webXRatio ?? difference.figmaNode?.xRatio ?? difference.webElement?.xRatio),
+    originalIndex: Number.isFinite(Number(difference.originalIndex ?? difference.order)) ? Number(difference.originalIndex ?? difference.order) : index,
     sectionKey: createSectionKey(difference),
     provenance: {
       origin: 'canonical',
@@ -410,6 +467,9 @@ function mergeIssueItem(aiItem, canonicalItem) {
     webValue: canOverwriteValues ? canonicalItem.webValue || aiItem.webValue : aiItem.webValue,
     severity: strongerSeverity(aiItem.severity, canonicalItem.severity),
     sortRank: aiItem.source === 'vision' ? aiItem.sortRank : canonicalItem.sortRank ?? aiItem.sortRank,
+    yRatio: canonicalItem.yRatio ?? aiItem.yRatio ?? null,
+    xRatio: canonicalItem.xRatio ?? aiItem.xRatio ?? null,
+    originalIndex: canonicalItem.originalIndex ?? aiItem.originalIndex ?? null,
     sectionKey: canonicalItem.sectionKey || aiItem.sectionKey || '',
     provenance: {
       origin: 'merged',
@@ -560,8 +620,16 @@ function ctaTokens(item = {}) {
 }
 
 function compareIssueItems(first, second) {
-  const sortDiff = (first.sortRank ?? getAreaRank(first.area)) - (second.sortRank ?? getAreaRank(second.area))
-  if (sortDiff !== 0) return sortDiff
+  const firstY = getYRatio(first.yRatio)
+  const secondY = getYRatio(second.yRatio)
+  if (firstY !== null && secondY !== null && firstY !== secondY) return firstY - secondY
+  if (firstY !== null && secondY === null) return -1
+  if (firstY === null && secondY !== null) return 1
+  const sectionDiff = getAreaRank(first.area) - getAreaRank(second.area)
+  if (sectionDiff !== 0) return sectionDiff
+  const firstIndex = Number(first.originalIndex ?? first.sortRank)
+  const secondIndex = Number(second.originalIndex ?? second.sortRank)
+  if (Number.isFinite(firstIndex) && Number.isFinite(secondIndex) && firstIndex !== secondIndex) return firstIndex - secondIndex
   return 0
 }
 

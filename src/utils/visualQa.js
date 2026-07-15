@@ -365,6 +365,22 @@ function compactHeroSection(heroSection) {
     mediaTypes: heroSection.mediaTypes,
     figmaTextCount: heroSection.figmaTextCount,
     webTextCount: heroSection.webTextCount,
+    sections: Array.isArray(heroSection.sections) ? heroSection.sections.slice(0, 4).map(compactSection) : [],
+  }
+}
+
+function compactSection(item = {}) {
+  return {
+    sectionId: item.sectionId || '',
+    source: item.source || '',
+    role: item.role || '',
+    rootSourceId: item.rootSourceId || '',
+    path: item.path || item.sectionPath || '',
+    xRatio: nullableNumber(item.xRatio),
+    yRatio: nullableNumber(item.yRatio),
+    widthRatio: nullableNumber(item.widthRatio),
+    heightRatio: nullableNumber(item.heightRatio),
+    spatialEvidence: compactSpatialEvidence(item.spatialEvidence || item),
   }
 }
 
@@ -416,8 +432,12 @@ function compactAction(item = {}) {
     displayText: item.displayText || item.text || '',
     href: item.href || '',
     comparisonScope: item.comparisonScope || '',
+    sectionId: item.sectionId || '',
+    sectionRootId: item.sectionRootId || '',
     sectionRole: item.sectionRole || '',
     sectionPath: item.sectionPath || '',
+    ...compactSpatialFields(item),
+    spatialEvidence: compactSpatialEvidence(item.spatialEvidence || item),
   }
 }
 
@@ -429,7 +449,11 @@ function compactNumeric(item = {}) {
     text: item.text || '',
     displayText: item.displayText || item.text || '',
     fullContextText: item.fullContextText || '',
+    sectionId: item.sectionId || '',
+    sectionRootId: item.sectionRootId || '',
     sectionPath: item.sectionPath || '',
+    ...compactSpatialFields(item),
+    spatialEvidence: compactSpatialEvidence(item.spatialEvidence || item),
   }
 }
 
@@ -442,7 +466,48 @@ function compactMedia(item = {}) {
     text: item.text || '',
     role: item.role || '',
     sectionRole: item.sectionRole || '',
+    sectionId: item.sectionId || '',
+    sectionRootId: item.sectionRootId || '',
     sectionPath: item.sectionPath || '',
+    comparisonScope: item.comparisonScope || '',
+    isHeroPrimary: item.isHeroPrimary === true,
+    ...compactSpatialFields(item),
+    spatialEvidence: compactSpatialEvidence(item.spatialEvidence || item),
+  }
+}
+
+function compactSpatialEvidence(item = {}) {
+  if (!item || typeof item !== 'object') return null
+  const fields = compactSpatialFields(item)
+  const hasRatio = fields.xRatio !== null && fields.yRatio !== null && fields.widthRatio !== null && fields.heightRatio !== null
+  const hasPixel = fields.x !== null && fields.y !== null && fields.width !== null && fields.height !== null
+  if (!hasRatio && !hasPixel && !getString(item.sectionId) && !getString(item.sectionPath || item.path)) return null
+  return {
+    coordinateSpace: hasRatio ? 'ratio' : hasPixel ? 'pixel' : '',
+    ...fields,
+    sourceWidth: nullableNumber(item.sourceWidth || item.imageWidth || item.viewportWidth || item.scrollWidth),
+    sourceHeight: nullableNumber(item.sourceHeight || item.imageHeight || item.viewportHeight || item.scrollHeight),
+    sectionId: getString(item.sectionId),
+    sectionRootId: getString(item.sectionRootId || item.rootSourceId),
+    sectionPath: getString(item.sectionPath || item.path || item.contextPath || item.context || item.layerPath),
+  }
+}
+
+function compactSpatialFields(item = {}) {
+  const box = item.boundingBox || item.absoluteBoundingBox || item.bbox || item.rect || item.bounds || item.box || item
+  const x = nullableNumber(box.x ?? box.left)
+  const y = nullableNumber(box.y ?? box.top)
+  const right = nullableNumber(box.right)
+  const bottom = nullableNumber(box.bottom)
+  return {
+    xRatio: nullableNumber(item.xRatio ?? item.positionRatio?.xRatio),
+    yRatio: nullableNumber(item.yRatio ?? item.positionRatio?.yRatio),
+    widthRatio: nullableNumber(item.widthRatio ?? item.positionRatio?.widthRatio),
+    heightRatio: nullableNumber(item.heightRatio ?? item.positionRatio?.heightRatio),
+    x,
+    y,
+    width: nullableNumber(box.width ?? (right !== null && x !== null ? right - x : null)),
+    height: nullableNumber(box.height ?? (bottom !== null && y !== null ? bottom - y : null)),
   }
 }
 
@@ -514,6 +579,11 @@ function normalizeText(value) {
 
 function arrayOfStrings(value) {
   return Array.isArray(value) ? value.map(getString).filter(Boolean) : []
+}
+
+function nullableNumber(value) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
 }
 
 function getTrustedDisplayImageUrl(value) {

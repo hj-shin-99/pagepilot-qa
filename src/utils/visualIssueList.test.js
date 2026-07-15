@@ -91,7 +91,7 @@ test('equivalent AI and canonical issues merge while distinct issues remain', ()
 
 test('issue sorting follows page order before category order', () => {
   const items = createVisualDifferenceItems(landingResult)
-  assert.deepEqual(items.slice(0, 4).map((item) => item.categoryLabel), ['Text', 'CTA', 'KV / Media', 'Text'])
+  assert.deepEqual(items.slice(0, 4).map((item) => item.categoryLabel), ['Text', 'CTA', 'Text', 'KV / Media'])
 })
 
 test('cards expose Figma and Web values when evidence exists', () => {
@@ -407,4 +407,34 @@ test('Vision and canonical supplements share page-order sorting', () => {
   })
 
   assert.deepEqual(report.items.map((item) => item.figmaValue), ['Top text', 'image', 'Content text'])
+})
+
+test('unreliable hero crop gates Web media missing Critical when canonical Web media exists', () => {
+  const report = createVisualDifferenceReport({
+    comparison: { differences: [] },
+    aiHints: {
+      heroMediaGroup: { web: { mediaTypes: ['image'], primaryCandidates: [{ source: 'web', type: 'image', comparisonScope: 'primary' }] } },
+      canonicalEvidence: { media: [{ source: 'web', type: 'image', comparisonScope: 'primary', isHeroPrimary: true }] },
+    },
+  }, {
+    meta: { visionUsed: true, fallbackUsed: false, rawVisionCount: 1, visionCropSummary: [{ label: 'web-hero', cropDiagnostics: { cropQualityPassed: false, descendantUnionHeight: 0, cropCoverageRatio: 0.04 } }] },
+    review: { visualDifferences: [{ area: 'Hero', category: 'Missing', title: 'Web Hero vehicle image missing', summary: 'Hero image is missing on Web.', figmaValue: 'Hero image', webValue: 'missing', severity: 'critical', confidence: 'high' }], mustFix: [], verify: [] },
+  })
+
+  assert.equal(report.items.some((item) => /missing/i.test(`${item.webValue} ${item.description}`)), false)
+})
+
+test('unreliable hero crop gates Web CTA missing Critical when canonical Web CTA exists', () => {
+  const report = createVisualDifferenceReport({
+    comparison: { differences: [] },
+    aiHints: {
+      heroCtaGroup: { web: { actions: [{ source: 'web', text: 'Apply', role: 'primary-action', comparisonScope: 'primary' }] } },
+      canonicalEvidence: { actions: [{ source: 'web', text: 'Apply', role: 'primary-action', comparisonScope: 'primary', isHeroAction: true }] },
+    },
+  }, {
+    meta: { visionUsed: true, fallbackUsed: false, rawVisionCount: 1, visionCropSummary: [{ label: 'web-hero', cropDiagnostics: { cropQualityPassed: false, descendantUnionHeight: 0, cropCoverageRatio: 0.04 } }] },
+    review: { visualDifferences: [{ area: 'Hero', category: 'Missing', title: 'Web Hero CTA missing', summary: 'Hero CTA is missing on Web.', figmaValue: 'Apply', webValue: 'missing', severity: 'critical', confidence: 'high' }], mustFix: [], verify: [] },
+  })
+
+  assert.equal(report.items.some((item) => item.categoryLabel === 'CTA' || item.categoryLabel === 'Missing'), false)
 })

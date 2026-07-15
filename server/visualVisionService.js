@@ -274,7 +274,9 @@ function createDescendantUnion(descendants = [], descriptorBox, metadata) {
 }
 
 function normalizeDescendantBox(item = {}, descriptorBox, metadata) {
-  const ratioBox = hasUsableRatioBox(item) ? normalizeRatioBox(item, item.kind || item.type || '') : null
+  const spatial = item?.spatialEvidence && typeof item.spatialEvidence === 'object' ? item.spatialEvidence : null
+  const ratioSource = hasUsableRatioBox(item) ? item : hasUsableRatioBox(spatial) ? spatial : null
+  const ratioBox = ratioSource ? normalizeRatioBox(ratioSource, item.kind || item.type || '') : null
   const pxBox = ratioBox
     ? {
         left: ratioBox.xRatio * metadata.width,
@@ -282,7 +284,7 @@ function normalizeDescendantBox(item = {}, descriptorBox, metadata) {
         width: ratioBox.widthRatio * metadata.width,
         height: ratioBox.heightRatio * metadata.height,
       }
-    : getPixelBox(item)
+    : getPixelBox(item, metadata)
   if (!pxBox) return null
   const crop = clampCrop(pxBox, metadata)
   if (!isValidSemanticBox(crop)) return null
@@ -291,13 +293,24 @@ function normalizeDescendantBox(item = {}, descriptorBox, metadata) {
   return { top: crop.top, bottom: crop.top + crop.height }
 }
 
-function getPixelBox(item = {}) {
-  const box = item.boundingBox || item.absoluteBoundingBox || item.bbox || item.rect || item.bounds || item.box || item
+function getPixelBox(item = {}, metadata) {
+  const spatial = item?.spatialEvidence && typeof item.spatialEvidence === 'object' ? item.spatialEvidence : null
+  const box = spatial || item.boundingBox || item.absoluteBoundingBox || item.bbox || item.rect || item.bounds || item.box || item
   const left = nullableNumber(box.x ?? box.left)
   const top = nullableNumber(box.y ?? box.top)
   const width = nullableNumber(box.width ?? (Number.isFinite(Number(box.right)) && left !== null ? Number(box.right) - left : null))
   const height = nullableNumber(box.height ?? (Number.isFinite(Number(box.bottom)) && top !== null ? Number(box.bottom) - top : null))
   if (left === null || top === null || width === null || height === null || width <= 0 || height <= 0) return null
+  const sourceWidth = positiveNullableNumber(box.sourceWidth)
+  const sourceHeight = positiveNullableNumber(box.sourceHeight)
+  if (metadata && sourceWidth && sourceHeight && sourceWidth > 0 && sourceHeight > 0) {
+    return {
+      left: left * (metadata.width / sourceWidth),
+      top: top * (metadata.height / sourceHeight),
+      width: width * (metadata.width / sourceWidth),
+      height: height * (metadata.height / sourceHeight),
+    }
+  }
   return { left, top, width, height }
 }
 
@@ -375,6 +388,11 @@ function positiveNumber(value, fallback) {
 function nullableNumber(value) {
   const number = Number(value)
   return Number.isFinite(number) ? number : null
+}
+
+function positiveNullableNumber(value) {
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? number : null
 }
 
 function clamp(value, min, max) {

@@ -247,6 +247,28 @@ test('visual vision service accepts px bbox, rejects invalid bbox, and does not 
   assert.equal(webHero.cropDiagnostics.cropAdjustmentReason, 'next-section-clamped')
 })
 
+test('visual vision service uses canonical spatialEvidence descendants from compact payload', async () => {
+  const { paths, workspace } = await createVisionWorkspace({ width: 1200, height: 2400 })
+  const service = createVisualVisionService({ paths, cacheDir: path.join(workspace, '.cache', 'visual', 'ai-review'), heroMaxWidth: 1200 })
+  const result = await service.attachVisionInput(createGenericHeroPayload({
+    sections: [
+      { sectionId: 'figma-hero', source: 'figma', role: 'hero', xRatio: 0, yRatio: 0, widthRatio: 1, heightRatio: 0.1 },
+      { sectionId: 'web-hero', source: 'web', role: 'hero', xRatio: 0, yRatio: 0, widthRatio: 1, heightRatio: 0.1 },
+    ],
+    descendants: [
+      { source: 'figma', kind: 'cta', spatialEvidence: { coordinateSpace: 'ratio', xRatio: 0.12, yRatio: 0.34, widthRatio: 0.18, heightRatio: 0.05, sectionId: 'figma-hero' } },
+      { source: 'web', kind: 'media', spatialEvidence: { coordinateSpace: 'pixel', x: 540, y: 820, width: 500, height: 260, sourceWidth: 1200, sourceHeight: 2400, sectionId: 'web-hero' } },
+    ],
+  }))
+  const figmaHero = result.meta.visionCropSummary.find((item) => item.label === 'figma-hero')
+  const webHero = result.meta.visionCropSummary.find((item) => item.label === 'web-hero')
+
+  assert.equal(figmaHero.cropDiagnostics.validDescendantBoxCount, 1)
+  assert.equal(webHero.cropDiagnostics.validDescendantBoxCount, 1)
+  assert.equal(figmaHero.cropDiagnostics.descendantUnionHeight > 0, true)
+  assert.equal(webHero.cropDiagnostics.descendantUnionHeight > 0, true)
+})
+
 test('visual vision service handles no hero, no CTA hero, image hero, video hero, and mismatched source heights safely', async () => {
   const { paths, workspace } = await createVisionWorkspace({ width: 1400, height: 2400 })
   const service = createVisualVisionService({ paths, cacheDir: path.join(workspace, '.cache', 'visual', 'ai-review'), heroMaxWidth: 1400 })

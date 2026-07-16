@@ -23,20 +23,18 @@ function TechQaPanel({ result, copyStatus, onCopyReport }) {
       <section className="tech-kpi-grid" aria-label="Tech QA 핵심 요약">
         {view.summaryCards.map((card) => (
           <article className={`metric-card tech-kpi-card ${getStatusClass(card.status)}`} key={card.label}>
-            <p className="metric-label">{card.label}</p>
+            <div className="tech-kpi-title">
+              <span className="tech-kpi-icon" aria-hidden="true">{getKpiIcon(card.status)}</span>
+              <p className="metric-label">{card.label}</p>
+            </div>
             <p className="metric-value">{card.value}</p>
           </article>
         ))}
       </section>
 
       <section className="detail-card tech-compact-card" aria-label="우선 확인 필요">
-        <SectionHead title="우선 확인 필요" meta={`오류 ${view.counts.error} · 확인 필요 ${view.counts.warn}`} note="문제 항목만 우선 표시합니다." />
+        <SectionHead title="우선 확인 필요" meta={`오류 ${view.priorityCounts.error} · 확인 필요 ${view.priorityCounts.warn}`} note="실제 조치가 필요한 항목만 우선 표시합니다." />
         {view.priorityItems.length > 0 ? <TechCompactTable items={view.priorityItems} mode="priority" /> : <p className="empty-row">오류 또는 확인 필요 항목이 없습니다.</p>}
-      </section>
-
-      <section className="detail-card tech-compact-card" aria-label="전체 검사 결과">
-        <SectionHead title="전체 검사 항목" meta={`${view.checkItems.length}개 항목`} note="상태 우선으로 정렬한 기술 점검표입니다." />
-        <TechCompactTable items={view.checkItems} mode="checks" />
       </section>
 
       <section className="detail-card tech-compact-card" aria-label="링크 및 버튼 검사">
@@ -46,7 +44,18 @@ function TechQaPanel({ result, copyStatus, onCopyReport }) {
           note="페이지에서 발견한 링크와 이동 버튼을 실제로 검사한 결과입니다. 오류와 확인 필요 항목을 우선 표시합니다."
         />
         <LinkTable groups={linkGroups} />
+        <ClickActionGroups groups={view.clickActionGroups} />
       </section>
+
+      <details className="detail-card tech-detail-accordion tech-normal-checks">
+        <summary>
+          <span>정상 검사 {view.normalCheckItems.length}개 펼치기</span>
+          <strong>기본 접힘</strong>
+        </summary>
+        <div className="tech-accordion-body">
+          <TechCompactTable items={view.normalCheckItems} mode="normal" />
+        </div>
+      </details>
 
       <details className="detail-card tech-detail-accordion">
         <summary>
@@ -60,6 +69,13 @@ function TechQaPanel({ result, copyStatus, onCopyReport }) {
       </details>
     </section>
   )
+}
+
+function getKpiIcon(status) {
+  if (status === 'error') return 'x'
+  if (status === 'warn') return '!'
+  if (status === 'info') return 'i'
+  return '✓'
 }
 
 function SectionHead({ title, meta, note }) {
@@ -140,6 +156,43 @@ function LinkTableRow({ item }) {
   )
 }
 
+function ClickActionGroups({ groups }) {
+  if (!groups || !groups.total) return null
+  return (
+    <div className="tech-click-groups" aria-label="클릭 동작 검사 상세 분류">
+      {groups.definitions.map((group) => {
+        const items = groups[group.id] || []
+        return (
+          <details className={`tech-click-group is-${group.id}`} key={group.id} open={group.id === 'actualErrors' || group.id === 'warnings'}>
+            <summary>
+              <span>{group.label}</span>
+              <strong>{items.length}개</strong>
+            </summary>
+            {items.length > 0 ? <ClickActionList items={items} /> : <p className="empty-row">해당 항목이 없습니다.</p>}
+          </details>
+        )
+      })}
+    </div>
+  )
+}
+
+function ClickActionList({ items }) {
+  return (
+    <ol className="tech-click-list">
+      {items.map((item, index) => (
+        <li key={`${index}-${item.auditId || item.selector || item.label || ''}`}>
+          <strong>{item.label || item.text || item.selector || `클릭 요소 ${index + 1}`}</strong>
+          <span>href: {item.href || '-'}</span>
+          <span>selector: {item.selector || '-'}</span>
+          <span>화면 문구: {item.label || item.text || '-'}</span>
+          <span>action type: {item.actionType || '-'}</span>
+          <span>판정 이유: {item.reason || item.note || item.message || '-'}</span>
+        </li>
+      ))}
+    </ol>
+  )
+}
+
 function CollapsedRows({ label, items }) {
   return (
     <details className="tech-detail-list tech-link-more">
@@ -186,7 +239,7 @@ function IssueDetails({ item }) {
         <Meta label="source count" value={item.raw?.sourceCount} />
         <Meta label="확인할 내용" value={item.status === 'ok' ? '' : `${item.owner}에서 ${item.technicalTerm || item.title} 근거를 확인해 주세요.`} />
       </dl>
-      <ProblemElementList items={item.raw?.items} owner={item.owner} />
+      <ProblemElementList items={item.problemItems || item.raw?.items} owner={item.owner} />
     </details>
   )
 }
@@ -279,6 +332,7 @@ function Meta({ label, value }) {
 function getStatusClass(status) {
   if (status === 'error') return 'status-error'
   if (status === 'warn') return 'status-warn'
+  if (status === 'info') return 'status-info'
   return 'status-ok'
 }
 

@@ -4183,9 +4183,68 @@
   padding: 12px 14px;
 }
 
+.tech-kpi-card.status-ok {
+  border-color: #abefc6;
+  background: #ecfdf3;
+}
+
+.tech-kpi-card.status-warn {
+  border-color: #fedf89;
+  background: #fffaeb;
+}
+
+.tech-kpi-card.status-error {
+  border-color: #fecdca;
+  background: #fef3f2;
+}
+
+.tech-kpi-card.status-info {
+  border-color: #b2ddff;
+  background: #eff8ff;
+}
+
+.tech-kpi-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tech-kpi-icon {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.tech-kpi-card.status-ok .tech-kpi-icon {
+  background: #12b76a;
+}
+
+.tech-kpi-card.status-warn .tech-kpi-icon {
+  background: #f79009;
+}
+
+.tech-kpi-card.status-error .tech-kpi-icon {
+  background: #d92d20;
+}
+
+.tech-kpi-card.status-info .tech-kpi-icon {
+  background: #1570ef;
+}
+
 .tech-kpi-card .metric-value {
   font-size: 20px;
   line-height: 1.15;
+}
+
+.tech-kpi-card.status-info .metric-value {
+  color: #175cd3;
 }
 
 .tech-compact-card {
@@ -4255,6 +4314,64 @@
 .tech-table-row.status-ok,
 .tech-link-row.status-ok {
   box-shadow: inset 3px 0 0 #12b76a;
+}
+
+.tech-table-row.status-info,
+.tech-link-row.status-info {
+  box-shadow: inset 3px 0 0 #1570ef;
+}
+
+.tech-normal-checks .tech-accordion-body {
+  margin-top: 0;
+}
+
+.tech-click-groups {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tech-click-group {
+  overflow: hidden;
+  border: 1px solid #e5edf6;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.tech-click-group > summary {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.tech-click-group > summary strong {
+  color: #667085;
+}
+
+.tech-click-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0 10px 10px 28px;
+  color: #475467;
+  font-size: 12px;
+}
+
+.tech-click-list li {
+  display: grid;
+  gap: 4px;
+  word-break: break-all;
+}
+
+.tech-click-list strong {
+  color: var(--ink);
 }
 
 .tech-table-title {
@@ -4497,6 +4614,10 @@
   .tech-raw-grid {
     grid-template-columns: 1fr;
   }
+
+  .tech-click-groups {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 760px) {
@@ -4510,6 +4631,10 @@
 
   .developer-info-grid div,
   .tech-issue-meta div {
+    grid-template-columns: 1fr;
+  }
+
+  .tech-click-groups {
     grid-template-columns: 1fr;
   }
 }

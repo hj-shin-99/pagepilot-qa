@@ -2,7 +2,16 @@ export const TECH_STATUS_LABELS = {
   ok: '정상',
   warn: '확인 필요',
   error: '오류',
+  info: '완료',
 }
+
+const CLICK_ACTION_GROUPS = [
+  { id: 'actualErrors', label: '실제 오류' },
+  { id: 'warnings', label: '확인 필요' },
+  { id: 'safeSkipped', label: '안전상 클릭 생략' },
+  { id: 'uiControls', label: 'URL이 필요 없는 UI control' },
+  { id: 'verified', label: '정상 검증 완료' },
+]
 
 const CHECK_DEFINITIONS = {
   access: { section: 'planning', owner: '개발팀', label: '페이지 접속 여부', description: '검사 대상 페이지가 브라우저에서 정상으로 열리는지 확인합니다. 접속에 실패하면 사용자가 페이지를 볼 수 없으므로 가장 먼저 확인해야 합니다.' },
@@ -38,13 +47,16 @@ const SECTION_TITLES = {
 
 export function createTechQaViewModel(result = {}) {
   const checks = arrayOfObjects(result.checks)
+  const clickActionGroups = createClickActionGroups(result)
   const links = createLinkItems(result.links)
-  const checkItems = checks.map(createCheckItem)
+  const checkItems = checks.map((check) => createCheckItem(check, clickActionGroups))
   const allItems = checkItems.concat(links)
-  const priorityItems = allItems.filter((item) => item.status !== 'ok').sort(comparePriorityItems)
+  const priorityItems = allItems.filter(isPriorityItem).sort(comparePriorityItems)
+  const normalCheckItems = checkItems.filter((item) => item.status === 'ok').sort(comparePriorityItems)
   const counts = countStatuses(allItems)
+  const priorityCounts = countStatuses(priorityItems)
   const linkSummary = createLinkSummary(links, result.linkAudit)
-  const statusMessage = counts.error > 0 ? `우선 확인이 필요한 오류가 ${counts.error}건 있습니다.` : counts.warn > 0 ? `확인이 필요한 항목이 ${counts.warn}건 있습니다.` : '배포 차단 오류는 확인되지 않았습니다.'
+  const statusMessage = priorityCounts.error > 0 ? `우선 확인이 필요한 오류가 ${priorityCounts.error}건 있습니다.` : priorityCounts.warn > 0 ? `확인이 필요한 항목이 ${priorityCounts.warn}건 있습니다.` : '배포 차단 오류는 확인되지 않았습니다.'
 
   return {
     title: result.pageTitle || '페이지 타이틀 없음',
@@ -52,11 +64,14 @@ export function createTechQaViewModel(result = {}) {
     scannedAt: result.scannedAt || '',
     statusMessage,
     counts,
-    summaryCards: createSummaryCards(result, counts, linkSummary),
+    priorityCounts,
+    summaryCards: createSummaryCards(result, priorityCounts, linkSummary),
     checkItems,
+    normalCheckItems,
     priorityItems,
     sections: createSections(checkItems, links),
     linkSummary,
+    clickActionGroups,
     links,
     allItems: allItems.sort(comparePriorityItems),
     developer: createDeveloperInfo(result, linkSummary),
@@ -105,9 +120,10 @@ export function countStatuses(items = []) {
   return items.reduce((counts, item) => ({ ...counts, [item.status]: (counts[item.status] || 0) + 1 }), { ok: 0, warn: 0, error: 0 })
 }
 
-function createCheckItem(check = {}) {
+function createCheckItem(check = {}, clickActionGroups = createEmptyClickActionGroups()) {
   const definition = CHECK_DEFINITIONS[check.id] || { section: 'frontend', owner: 'UID팀', label: check.title || check.id || '검사 항목', description: check.detail || '자동 수집한 기술 검사 항목입니다.' }
-  const status = normalizeStatus(check.status)
+  const display = check.id === 'click-actions' ? createClickActionDisplay(clickActionGroups, check) : null
+  const status = display?.status || normalizeStatus(check.status)
   return {
     id: check.id || definition.label,
     type: 'check',
@@ -115,7 +131,7 @@ function createCheckItem(check = {}) {
     title: definition.label || check.title,
     status,
     statusLabel: TECH_STATUS_LABELS[status],
-    value: check.value || '',
+    value: display?.value || check.value || '',
     description: definition.description,
     shortDescription: getShortDescription(definition.description),
     technicalTerm: check.title || definition.label,
@@ -124,6 +140,7 @@ function createCheckItem(check = {}) {
     owner: getOwnerForCheck(check, definition),
     categoryLabel: getSectionLabel(definition.section),
     priority: getCheckPriority(check),
+    problemItems: display?.problemItems || arrayOfObjects(check.items),
     raw: check,
   }
 }
@@ -163,8 +180,56 @@ function createSummaryCards(result, counts, linkSummary) {
     { label: '페이지 접속', value: `${accessStatus} · HTTP ${result.httpStatus || '응답 없음'}`, status: result.accessible ? 'ok' : 'error' },
     { label: '확인 필요', value: `${counts.warn}건`, status: counts.warn > 0 ? 'warn' : 'ok' },
     { label: '오류', value: `${counts.error}건`, status: counts.error > 0 ? 'error' : 'ok' },
-    { label: '검사 완료', value: `링크 ${linkSummary.total}개 · 이미지 ${imageTotal}개`, status: 'ok' },
+    { label: '검사 완료', value: `링크 ${linkSummary.total}개 · 이미지 ${imageTotal}개`, status: 'info' },
   ]
+}
+
+function createClickActionDisplay(groups, check = {}) {
+  const problemItems = groups.actualErrors.concat(groups.warnings)
+  const status = groups.actualErrors.length > 0 ? 'error' : groups.warnings.length > 0 ? 'warn' : 'ok'
+  const value = problemItems.length > 0 ? `${problemItems.length}개 확인 필요` : check.value && normalizeStatus(check.status) === 'ok' ? check.value : '정상'
+  return { status, value, problemItems }
+}
+
+function createClickActionGroups(result = {}) {
+  const clickCheck = arrayOfObjects(result.checks).find((check) => check.id === 'click-actions')
+  const items = arrayOfObjects(result.clickActions).length > 0 ? arrayOfObjects(result.clickActions) : arrayOfObjects(clickCheck?.items)
+  const groups = createEmptyClickActionGroups()
+  items.forEach((item) => {
+    groups[getClickActionGroupId(item)].push(item)
+  })
+  groups.definitions = CLICK_ACTION_GROUPS
+  groups.total = items.length
+  return groups
+}
+
+function createEmptyClickActionGroups() {
+  return {
+    actualErrors: [],
+    warnings: [],
+    safeSkipped: [],
+    uiControls: [],
+    verified: [],
+    definitions: CLICK_ACTION_GROUPS,
+    total: 0,
+  }
+}
+
+function getClickActionGroupId(item = {}) {
+  const category = String(item.category || item.hrefState || '')
+  const reason = String(item.reason || '')
+  if (category === 'skipped-safe-click' || item.safeClickSkippedReason) return 'safeSkipped'
+  if (category === 'UI-control-no-url-required') return 'uiControls'
+  if (item.status === 'ok' || category === 'valid-url' || category === 'observable-action') return 'verified'
+  if (category === 'covered-or-not-interactable' || category === 'no-observable-action') return 'actualErrors'
+  if (/pointer-events|hit-test|가리고|관찰 가능한 변화가 없습니다/i.test(reason)) return 'actualErrors'
+  return 'warnings'
+}
+
+function isPriorityItem(item = {}) {
+  if (item.status === 'ok') return false
+  if (item.id !== 'click-actions') return true
+  return arrayOfObjects(item.problemItems).length > 0
 }
 
 function getSectionLabel(section) {

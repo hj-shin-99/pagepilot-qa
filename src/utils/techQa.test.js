@@ -119,6 +119,7 @@ test('Q all normal result does not use blocking copy and has no priority items',
   const view = createTechQaViewModel(result({ checks: [check({ id: 'access', status: 'ok' }), check({ id: 'bad-links', status: 'ok' })], links: [link()] }))
   assert.equal(view.counts.error, 0)
   assert.equal(view.priorityItems.length, 0)
+  assert.equal(view.normalCheckItems.length, 2)
   assert.equal(view.statusMessage, '배포 차단 오류는 확인되지 않았습니다.')
 })
 
@@ -141,6 +142,7 @@ test('compact Tech QA summary cards use four meaningful KPI values', () => {
 
   assert.deepEqual(labels, ['페이지 접속', '확인 필요', '오류', '검사 완료'])
   assert.equal(view.summaryCards.length, 4)
+  assert.deepEqual(view.summaryCards.map((card) => card.status), ['ok', 'warn', 'ok', 'info'])
   assert.equal(view.summaryCards.find((card) => card.label === '검사 완료').value, '링크 2개 · 이미지 1개')
   assert.equal(labels.includes('콘솔'), false)
   assert.equal(labels.includes('이미지'), false)
@@ -154,6 +156,9 @@ test('compact Tech QA source keeps table UI and closed detail policy', () => {
   assert.equal(source.includes('tech-link-table'), true)
   assert.equal(source.includes('tech-owner-badge'), true)
   assert.equal(source.includes('정상 링크 ${groups.hiddenNormals.length}개 더보기'), true)
+  assert.equal(source.includes('전체 검사 항목'), false)
+  assert.equal(source.includes('정상 검사 {view.normalCheckItems.length}개 펼치기'), true)
+  assert.equal(source.includes('tech-kpi-icon'), true)
   assert.equal(source.includes('<details className="detail-card tech-detail-accordion">'), true)
   assert.equal(source.includes('<details className="detail-card tech-detail-accordion" open>'), false)
   assert.equal(source.includes('문제 예시:'), false)
@@ -165,6 +170,16 @@ test('compact Tech QA source keeps table UI and closed detail policy', () => {
   assert.equal(source.includes('우선 확인 팀'), true)
   assert.equal(source.includes('UID팀'), false)
   assert.equal(source.includes('개발팀'), false)
+})
+
+test('Tech QA source defines separated click action display groups', () => {
+  const source = fs.readFileSync('src/utils/techQa.js', 'utf8')
+
+  assert.equal(source.includes('실제 오류'), true)
+  assert.equal(source.includes('확인 필요'), true)
+  assert.equal(source.includes('안전상 클릭 생략'), true)
+  assert.equal(source.includes('URL이 필요 없는 UI control'), true)
+  assert.equal(source.includes('정상 검증 완료'), true)
 })
 
 test('Tech QA click action detail preserves technical evidence items', () => {
@@ -195,6 +210,50 @@ test('Tech QA click action detail preserves technical evidence items', () => {
   assert.equal(item.technicalTerm, '클릭 동작 검사')
   assert.equal(item.raw.items[0].technicalTerm, 'javascript:void(0)')
   assert.equal(item.raw.items[0].selector, '#apply')
+})
+
+test('Tech QA priority count excludes safe click skips and normal UI controls', () => {
+  const view = createTechQaViewModel(result({
+    checks: [check({
+      id: 'click-actions',
+      status: 'warn',
+      value: '3개 확인 필요',
+      items: [{ category: 'skipped-safe-click', status: 'warn', label: 'Delete', safeClickSkippedReason: 'dangerous-action' }],
+    })],
+    clickActions: [
+      { category: 'skipped-safe-click', status: 'warn', label: 'Delete', safeClickSkippedReason: 'dangerous-action' },
+      { category: 'UI-control-no-url-required', status: 'ok', label: 'Open modal' },
+      { category: 'valid-url', status: 'ok', label: 'Product', href: '/product' },
+    ],
+  }))
+  const clickItem = view.checkItems.find((entry) => entry.id === 'click-actions')
+
+  assert.equal(clickItem.status, 'ok')
+  assert.equal(view.priorityItems.some((item) => item.id === 'click-actions'), false)
+  assert.equal(view.priorityCounts.warn, 0)
+  assert.equal(view.clickActionGroups.safeSkipped.length, 1)
+  assert.equal(view.clickActionGroups.uiControls.length, 1)
+  assert.equal(view.clickActionGroups.verified.length, 1)
+})
+
+test('Tech QA click action priority keeps only actionable click failures', () => {
+  const view = createTechQaViewModel(result({
+    checks: [check({ id: 'click-actions', status: 'error', value: '4개 확인 필요' })],
+    clickActions: [
+      { category: 'covered-or-not-interactable', status: 'error', label: 'Hidden CTA', selector: '#hidden', reason: 'pointer-events:none 상태라 사용자가 클릭할 수 없습니다.' },
+      { category: 'no-observable-action', status: 'error', label: 'No change', selector: '#no-change', reason: '안전 클릭 후 관찰 가능한 변화가 없습니다.' },
+      { category: 'ambiguous-action', status: 'warn', label: 'Apply', selector: '#apply', hrefState: 'missing-href', reason: '이동 버튼처럼 보이지만 href 또는 action 근거가 불완전합니다.' },
+      { category: 'skipped-safe-click', status: 'warn', label: 'Delete', safeClickSkippedReason: 'dangerous-action' },
+    ],
+  }))
+  const clickItem = view.priorityItems.find((entry) => entry.id === 'click-actions')
+
+  assert.equal(clickItem.status, 'error')
+  assert.equal(clickItem.value, '3개 확인 필요')
+  assert.equal(clickItem.problemItems.length, 3)
+  assert.equal(view.clickActionGroups.actualErrors.length, 2)
+  assert.equal(view.clickActionGroups.warnings.length, 1)
+  assert.equal(view.clickActionGroups.safeSkipped.length, 1)
 })
 
 test('compact Tech QA CSS uses table rows instead of large repeated cards', () => {

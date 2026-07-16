@@ -1,8 +1,9 @@
 import OpenAI from 'openai'
+import { DEFAULT_AI_QA_MODEL } from './aiModelConfig.js'
 import { createAiReviewMessages } from './prompts/aiReviewPrompt.js'
 import { createVisualVisionReviewMessages } from './prompts/visualVisionPrompt.js'
 
-const DEFAULT_MODEL = 'gpt-4.1-mini'
+const DEFAULT_MODEL = DEFAULT_AI_QA_MODEL
 const DEFAULT_TIMEOUT_MS = 60000
 const VALID_RELEASE_DECISIONS = new Set(['ready', 'caution', 'blocked'])
 

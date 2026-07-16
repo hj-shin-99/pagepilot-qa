@@ -203,15 +203,15 @@ export function createCompactVisualResult(result = {}) {
     web: result.web || {},
     comparison: {
       ...(result.comparison || {}),
-      differences: Array.isArray(result.comparison?.differences) ? result.comparison.differences.slice(0, 12) : [],
+      differences: Array.isArray(result.comparison?.differences) ? result.comparison.differences : [],
     },
     aiHints: {
       evidenceSummary: aiHints.evidenceSummary || {},
       heroSection: compactHeroSection(aiHints.heroSection),
       heroMediaGroup: compactHeroMediaGroup(aiHints.heroMediaGroup),
       heroCtaGroup: compactHeroCtaGroup(aiHints.heroCtaGroup),
-      ctaButtons: Array.isArray(aiHints.ctaButtons) ? aiHints.ctaButtons.slice(0, 12).map(compactAction) : [],
-      prices: Array.isArray(aiHints.prices) ? aiHints.prices.slice(0, 12).map(compactNumeric) : [],
+      ctaButtons: Array.isArray(aiHints.ctaButtons) ? aiHints.ctaButtons.map(compactAction) : [],
+      prices: Array.isArray(aiHints.prices) ? aiHints.prices.map(compactNumeric) : [],
     },
   }
 }
@@ -392,13 +392,13 @@ function compactHeroMediaGroup(group) {
       mediaTypes: arrayOfStrings(group.figma?.mediaTypes),
       candidateCount: Number(group.figma?.candidateCount || 0),
       primaryCount: Number(group.figma?.primaryCount || 0),
-      primaryCandidates: Array.isArray(group.figma?.primaryCandidates) ? group.figma.primaryCandidates.slice(0, 4).map(compactMedia) : [],
+      primaryCandidates: Array.isArray(group.figma?.primaryCandidates) ? group.figma.primaryCandidates.map(compactMedia) : [],
     },
     web: {
       mediaTypes: arrayOfStrings(group.web?.mediaTypes),
       candidateCount: Number(group.web?.candidateCount || 0),
       primaryCount: Number(group.web?.primaryCount || 0),
-      primaryCandidates: Array.isArray(group.web?.primaryCandidates) ? group.web.primaryCandidates.slice(0, 4).map(compactMedia) : [],
+      primaryCandidates: Array.isArray(group.web?.primaryCandidates) ? group.web.primaryCandidates.map(compactMedia) : [],
     },
     comparisonHint: group.comparisonHint || '',
     confidence: group.confidence || '',
@@ -411,14 +411,14 @@ function compactHeroCtaGroup(group) {
     type: group.type,
     figma: {
       count: Number(group.figma?.count || 0),
-      actions: Array.isArray(group.figma?.actions) ? group.figma.actions.slice(0, 6).map(compactAction) : [],
+      actions: Array.isArray(group.figma?.actions) ? group.figma.actions.map(compactAction) : [],
     },
     web: {
       count: Number(group.web?.count || 0),
-      actions: Array.isArray(group.web?.actions) ? group.web.actions.slice(0, 6).map(compactAction) : [],
+      actions: Array.isArray(group.web?.actions) ? group.web.actions.map(compactAction) : [],
     },
     countDifference: Number(group.countDifference || 0),
-    textDifferences: Array.isArray(group.textDifferences) ? group.textDifferences.slice(0, 8) : [],
+    textDifferences: Array.isArray(group.textDifferences) ? group.textDifferences : [],
     confidence: group.confidence || '',
   }
 }

@@ -44,7 +44,7 @@ test('Hero Body Footer groups sort top to bottom', () => {
     issue({ area: 'Main KV', figmaValue: 'Hero A', webValue: 'Hero B', yRatio: 0.1 }),
     issue({ area: 'Body', figmaValue: 'Body A', webValue: 'Body B', yRatio: 0.52 }),
   ])
-  assert.deepEqual(groups.map((group) => group.label), ['Main KV', 'Body', 'Footer'])
+  assert.deepEqual(groups.map((group) => group.label), ['Main Visual', 'Body', 'Footer'])
 })
 
 test('nine source issues keep nine grouped internal issues', () => {
@@ -70,6 +70,40 @@ test('history restored compact issues produce the same group result', () => {
   assert.equal(groups.length, 1)
   assert.equal(groups[0].items.length, 2)
   assert.equal(groups[0].label, 'Product / Price')
+})
+
+test('long technical layer paths are not exposed as user-facing area names', () => {
+  const groups = createVisualIssueGroups([
+    issue({ area: 'Frame / Group / Instance / Component / Deep Layer Name / Text Node', figmaValue: 'A', webValue: 'B', yRatio: 0.48 }),
+  ])
+  assert.equal(groups.length, 1)
+  assert.equal(groups[0].label, '페이지 콘텐츠')
+})
+
+test('readable canonical area is preferred over technical section path', () => {
+  const groups = createVisualIssueGroups([
+    issue({ readableCanonicalArea: 'Product / Price', sectionPath: 'Frame / Group / Instance / Node 123 / Text', area: 'Frame / Group / Instance / Node 123 / Text', category: 'price', figmaValue: '47만원', webValue: '50만원' }),
+  ])
+  assert.equal(groups[0].label, 'Product / Price')
+})
+
+test('core grouping can merge same Main Visual readable area across source sections', () => {
+  const groups = createVisualIssueGroups([
+    issue({ sectionId: 'ai-hero', area: 'Main Visual', category: 'media', figmaValue: 'image', webValue: 'video', yRatio: 0.1 }),
+    issue({ sectionId: 'canonical-hero', area: 'Main Visual', category: 'cta', figmaValue: '신청하기', webValue: '구매하기', yRatio: 0.12 }),
+    issue({ sectionId: 'text-hero', area: 'Main Visual', category: 'text', figmaValue: '혜택 포함', webValue: '혜택 제외', yRatio: 0.14 }),
+  ], { mergeReadableAreas: true })
+  assert.equal(groups.length, 1)
+  assert.equal(groups[0].label, 'Main Visual')
+  assert.equal(groups[0].items.length, 3)
+})
+
+test('core grouping keeps Main Visual and Footer separate', () => {
+  const groups = createVisualIssueGroups([
+    issue({ area: 'Main Visual', figmaValue: 'Hero A', webValue: 'Hero B', yRatio: 0.1 }),
+    issue({ area: 'Footer', figmaValue: 'Footer A', webValue: 'Footer B', yRatio: 0.9 }),
+  ], { mergeReadableAreas: true })
+  assert.deepEqual(groups.map((group) => group.label), ['Main Visual', 'Footer'])
 })
 
 function issue(overrides = {}) {

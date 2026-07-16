@@ -1,0 +1,190 @@
+{
+  "qaMeta": {
+    "webScanInvocationCount": 1,
+    "openAiCalled": false,
+    "startedAt": "2026-07-15T01:17:27.338Z",
+    "completedAt": "2026-07-15T01:17:37.216Z",
+    "browserLaunchCount": 1,
+    "desktopPageCount": 1,
+    "mobilePageCount": 1
+  },
+  "ai": {
+    "success": true,
+    "meta": {
+      "visionPrepared": true,
+      "figmaImagePrepared": true,
+      "webImagePrepared": true,
+      "visionInputSummary": [
+        {
+          "label": "figma-overview",
+          "width": 1299,
+          "height": 3849,
+          "detail": "low"
+        },
+        {
+          "label": "web-overview",
+          "width": 1260,
+          "height": 3963,
+          "detail": "low"
+        }
+      ],
+      "visionCropSummary": [
+        {
+          "label": "figma-hero",
+          "width": 1600,
+          "height": 1707,
+          "cropUsed": true,
+          "cropReason": "hero-section-descriptor",
+          "cropFailureReason": "",
+          "cropDiagnostics": {
+            "descriptorHeight": 4533,
+            "validDescendantBoxCount": 16,
+            "invalidDescendantBoxCount": 0,
+            "descendantUnionHeight": 4938,
+            "nextSectionBoundary": 6454,
+            "finalCropHeight": 3590,
+            "cropCoverageRatio": 0.3601,
+            "cropQualityPassed": true,
+            "cropAdjusted": true,
+            "cropAdjustmentReason": "descendant-union-adjusted",
+            "descendantUnionFailureReason": ""
+          }
+        },
+        {
+          "label": "web-hero",
+          "width": 1600,
+          "height": 206,
+          "cropUsed": true,
+          "cropReason": "hero-section-descriptor",
+          "cropFailureReason": "",
+          "cropDiagnostics": {
+            "descriptorHeight": 484,
+            "validDescendantBoxCount": 0,
+            "invalidDescendantBoxCount": 0,
+            "descendantUnionHeight": 0,
+            "nextSectionBoundary": 1520,
+            "finalCropHeight": 484,
+            "cropCoverageRatio": 0.0401,
+            "cropQualityPassed": false,
+            "cropAdjusted": false,
+            "cropAdjustmentReason": "",
+            "descendantUnionFailureReason": "no-valid-semantic-descendant-box"
+          }
+        }
+      ],
+      "heroCropPairQuality": {
+        "compatible": false,
+        "figmaCoverageRatio": 0.3601,
+        "webCoverageRatio": 0.0401,
+        "coverageRatioDelta": 0.32,
+        "reason": "hero-crop-quality-failed"
+      },
+      "figmaImage": {
+        "width": 1299,
+        "height": 3849,
+        "originalWidth": 3365,
+        "originalHeight": 9970,
+        "cached": true,
+        "sizeBytes": 338777
+      },
+      "webImage": {
+        "width": 1260,
+        "height": 3963,
+        "originalWidth": 3840,
+        "originalHeight": 12078,
+        "cached": false,
+        "sizeBytes": 345367
+      },
+      "openAiCalled": true,
+      "model": "gpt-4.1-mini",
+      "visionUsed": true,
+      "imageInputCount": 2,
+      "rawVisionCount": 6,
+      "fallbackStage": "",
+      "fallbackReason": "",
+      "openAiRequestDurationMs": 18435,
+      "openAiResponseReceived": true,
+      "openAiResponseParsed": true,
+      "aiReviewDurationMs": 18440,
+      "fallbackUsed": false,
+      "visionFailureReason": ""
+    },
+    "review": {
+      "releaseDecision": "caution",
+      "summary": "자동 QA 결과 배포 전에 수정해야 할 차단 이슈가 확인되었습니다. 숫자, 접속, 핵심 CTA 또는 주요 오류를 우선 확인해야 합니다.",
+      "mustFix": [],
+      "verify": [
+        {
+          "category": "Text",
+          "title": "히어로 섹션 내 문구 띄어쓰기, 오탈자 차이가 사용자 경험에 영향 있는지 확인 필요.",
+          "description": "히어로 섹션 내 문구 띄어쓰기, 오탈자 차이가 사용자 경험에 영향 있는지 확인 필요.",
+          "evidence": [],
+          "severity": "warning"
+        },
+        {
+          "category": "Text",
+          "title": "하단 프로모션 및 관련 안내 문구 내용 일부 차이(특히 '% 월 납입금' 관련 텍스트) 확인 필요.",
+          "description": "하단 프로모션 및 관련 안내 문구 내용 일부 차이(특히 '% 월 납입금' 관련 텍스트) 확인 필요.",
+          "evidence": [],
+          "severity": "warning"
+        }
+      ],
+      "developerNotes": [
+        {
+          "category": "CTA",
+          "title": "웹에서 히어로 섹션 이미지와 CTA 버튼의 로딩 혹은 출력 이슈 점검 필요.",
+          "description": "웹에서 히어로 섹션 이미지와 CTA 버튼의 로딩 혹은 출력 이슈 점검 필요.",
+          "evidence": [],
+          "severity": "check"
+        }
+      ],
+      "visualDifferences": [
+        {
+          "area": "메인 비주얼",
+          "category": "CTA",
+          "title": "CTA 구성을 확인해주세요.",
+          "summary": "Hero crop pair 범위가 호환되지 않아 Vision만으로 CTA 누락을 단정하지 않고 구성 확인 항목으로 분류했습니다.",
+          "figmaValue": "프로모션 바로가가기 / 구매상담 바로가기 / 바로가기",
+          "webValue": "확인되지 않음",
+          "severity": "check",
+          "confidence": "medium",
+          "order": 1
+        },
+        {
+          "area": "메인 비주얼",
+          "category": "Media",
+          "title": "히어로 섹션 대표 이미지 미노출",
+          "summary": "Figma에는 고화질 자동차 이미지가 명확히 보이나, 웹에서는 이 이미지가 누락되어 있습니다.",
+          "figmaValue": "고화질 자동차 이미지(정지 이미지)",
+          "webValue": "이미지 미노출",
+          "severity": "check",
+          "confidence": "medium",
+          "order": 2
+        },
+        {
+          "area": "푸터",
+          "category": "Text",
+          "title": "텍스트 표현 차이",
+          "summary": "Figma에는 '월 납입금에는 선납금을 포함한...' 텍스트, 웹에는 '월 납입금에는 선납금을 제외한...'으로 내용이 상반되어 금융조건 해석에 영향을 줄 수 있음.",
+          "figmaValue": "월 납입금에는 선납금을 포함한 할부 원금 및 잔가보장금액에 대한 이자 모두 포함.",
+          "webValue": "월 납입금에는 선납금을 제외한 할부 원금 및 잔가보장금액에 대한 이자 모두 포함.",
+          "severity": "warning",
+          "confidence": "high",
+          "order": 4
+        },
+        {
+          "area": "메인 비주얼",
+          "category": "Text",
+          "title": "히어로 섹션 앞 숫자 표기 미표기",
+          "summary": "Figma에서는 '02 낮은 월납입금으로 BMW 이용'과 같이 숫자 2가 앞에 있으나, 웹에는 숫자가 빠진 '낮은 월 납입금으로 BMW 이용'으로 표시.",
+          "figmaValue": "02 낮은 월납입금으로 BMW 이용",
+          "webValue": "낮은 월 납입금으로 BMW 이용",
+          "severity": "critical",
+          "confidence": "high",
+          "order": 6
+        }
+      ],
+      "clientReplyDraft": "자동 QA 검토 결과, 배포 전 우선 수정이 필요한 항목이 확인되었습니다. 수정 후 동일 기준으로 재검증하겠습니다."
+    }
+  }
+}

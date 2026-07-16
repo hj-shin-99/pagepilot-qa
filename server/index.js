@@ -4,6 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import OpenAI from 'openai'
 import { chromium, request as playwrightRequest } from 'playwright'
+import { getAiQaModel } from './aiModelConfig.js'
 import { createAiReviewFromPayloadHandler, createAiReviewHandler, createAiReviewPayloadHandler } from './aiReviewPayload.js'
 import { createAiReviewService } from './aiReviewService.js'
 import { createFigmaApiClient, FigmaApiError, FigmaRateLimitError } from './figmaApiClient.js'
@@ -14,6 +15,8 @@ import { extractFigmaStructure } from './figmaStructure.js'
 import { createFigmaTextPreview, extractVisibleFigmaTextNodes } from './figmaText.js'
 import { createTextDifferenceCandidates } from './textDiff.js'
 import { matchTextNodes } from './textMatcher.js'
+import { createCheckedLinkFailure, createTechLinkAudit, mergeTechLinkAuditResults, normalizeCheckedLinkResult } from './techLinkAudit.js'
+import { auditClickableActions, summarizeClickActionAudit } from './techClickAudit.js'
 import { buildVisualQaPayloadArtifacts } from './visualQaPayload.js'
 import { buildQaRunResponse, createQaRunHandler, isWebScanNavigationFailure } from './qaRunRoute.js'
 import { buildVisualPayloadFromScanResult, createVisualPayloadHandler } from './visualPayloadRoute.js'
@@ -22,7 +25,7 @@ import { createWebVisualAnalysis } from './webVisualAnalysis.js'
 import { extractVisibleWebTextElements } from './webText.js'
 
 const PORT = Number(process.env.PORT || 3001)
-const AI_QA_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini'
+const AI_QA_MODEL = getAiQaModel()
 const AI_QA_TIMEOUT_MS = 60000
 const MAX_AI_IMAGE_DATA_URL_LENGTH = 50_000_000
 const MAX_MOCKUP_AI_TEXT_HINTS = 100
@@ -114,7 +117,7 @@ const aiReviewPayloadHandler = createAiReviewPayloadHandler({
 
 const aiReviewService = createAiReviewService({
   apiKey: process.env.OPENAI_API_KEY?.trim() || '',
-  model: process.env.OPENAI_REVIEW_MODEL || AI_QA_MODEL,
+  model: AI_QA_MODEL,
   timeoutMs: AI_QA_TIMEOUT_MS,
 })
 
@@ -1896,6 +1899,7 @@ async function scanUrl(targetUrl, options = {}) {
   let mobileResult
   let webScreenshot
   let visualPayloadData = null
+  let clickActionAuditResult
 
   try {
     const context = await browser.newContext({
@@ -1932,6 +1936,10 @@ async function scanUrl(targetUrl, options = {}) {
     }
     mobileResult = scanOptions.includeMobile ? await scanMobile(browser, targetUrl, scanOptions.instrumentation) : createMobileFallback()
     await context.close()
+    clickActionAuditResult = await auditClickableActions(browser, targetUrl, domSnapshot?.clickableCandidates || [], scanOptions.instrumentation).catch((error) => ({
+      items: [],
+      meta: { candidateCount: domSnapshot?.clickableCandidates?.length || 0, safeClickAttemptCount: 0, safeClickLimit: 0, error: error instanceof Error ? error.message : 'click audit failed' },
+    }))
   } finally {
     await browser.close()
   }
@@ -1939,11 +1947,15 @@ async function scanUrl(targetUrl, options = {}) {
   const safePageTitle = pageTitle || ''
   const snapshot = domSnapshot || createEmptyDomSnapshot()
   const safeMobileResult = mobileResult || createMobileFallback()
-  const linksToCheck = getLinksToCheck(snapshot.links)
-  const linkStatuses = await checkLinkStatuses(linksToCheck)
+  const linkAudit = createTechLinkAudit(snapshot.interactionTargets, targetUrl)
+  const linksToCheck = getLinksToCheck(linkAudit.requestableLinks)
+  const checkedLinks = await checkLinkStatuses(linksToCheck)
+  const linkAuditResult = mergeTechLinkAuditResults(linkAudit, checkedLinks)
+  const linkStatuses = linkAuditResult.links
   const images = mergeImageFailures(snapshot.images, failedImageRequests)
-  const missingHrefLinks = snapshot.interactionTargets.filter(isMissingNavigationHref)
+  const missingHrefLinks = linkAudit.missingHrefLinks
   const networkIssueSummary = classifyNetworkIssues(failedResourceRequests.concat(badResourceResponses))
+  const clickActionSummary = summarizeClickActionAudit(clickActionAuditResult.items, clickActionAuditResult.meta)
   const checks = buildChecks({
     mainResponse,
     mainError,
@@ -1966,6 +1978,8 @@ async function scanUrl(targetUrl, options = {}) {
     networkIssues: networkIssueSummary.actionable,
     referenceNetworkIssues: networkIssueSummary.reference,
     unlabeledClickables: snapshot.unlabeledClickables,
+    linkAuditMeta: linkAuditResult.meta,
+    clickActionSummary,
   })
 
   return {
@@ -1980,6 +1994,10 @@ async function scanUrl(targetUrl, options = {}) {
     links: linkStatuses,
     uncheckedLinkCount: 0,
     missingHrefLinks,
+    uiControlWithoutUrlCount: linkAudit.uiControlsWithoutUrl.length,
+    linkAudit: linkAuditResult.meta,
+    clickActions: clickActionAuditResult.items,
+    clickActionAudit: clickActionSummary.meta,
     images,
     designElements: snapshot.designElements,
     webCtaHints: snapshot.webCtaHints || [],
@@ -2379,7 +2397,17 @@ async function safeDomSnapshot(page, targetUrl) {
           text: normalizeText(anchor.innerText || anchor.textContent || ''),
           ariaLabel: anchor.getAttribute('aria-label') || '',
           href,
+          hasHrefAttribute: anchor.hasAttribute('href'),
           url: isInspectableUrl(url) ? url : '',
+          role: anchor.getAttribute('role') || '',
+          type: anchor.getAttribute('type') || '',
+          target: anchor.getAttribute('target') || '',
+          rel: anchor.getAttribute('rel') || '',
+          ariaControls: anchor.getAttribute('aria-controls') || '',
+          ariaExpanded: anchor.getAttribute('aria-expanded') || '',
+          dataTarget: anchor.getAttribute('data-target') || anchor.getAttribute('data-bs-target') || '',
+          dataToggle: anchor.getAttribute('data-toggle') || anchor.getAttribute('data-bs-toggle') || '',
+          hasOnClick: anchor.hasAttribute('onclick'),
           selector: getCssSelector(anchor),
           domPath: getElementPath(anchor),
           section: estimateSection(anchor, documentHeight),
@@ -2399,7 +2427,19 @@ async function safeDomSnapshot(page, targetUrl) {
           text: normalizeText(button.value || button.innerText || button.textContent || ''),
           ariaLabel: button.getAttribute('aria-label') || '',
           href,
+          hasHrefAttribute: button.hasAttribute('href') || button.hasAttribute('data-href') || button.hasAttribute('data-url') || button.hasAttribute('formaction'),
           url: isInspectableUrl(url) ? url : '',
+          role: button.getAttribute('role') || '',
+          type: button.getAttribute('type') || '',
+          target: button.getAttribute('target') || '',
+          rel: button.getAttribute('rel') || '',
+          ariaControls: button.getAttribute('aria-controls') || '',
+          ariaExpanded: button.getAttribute('aria-expanded') || '',
+          dataTarget: button.getAttribute('data-target') || button.getAttribute('data-bs-target') || '',
+          dataToggle: button.getAttribute('data-toggle') || button.getAttribute('data-bs-toggle') || '',
+          hasOnClick: button.hasAttribute('onclick'),
+          formId: button.form?.id || '',
+          formAction: button.formAction || '',
           selector: getCssSelector(button),
           domPath: getElementPath(button),
           section: estimateSection(button, documentHeight),
@@ -2451,6 +2491,7 @@ async function safeDomSnapshot(page, targetUrl) {
       const headingInfo = collectHeadingInfo()
       const largeResources = collectLargeResources()
       const unlabeledClickables = collectUnlabeledClickables().slice(0, 30)
+      const clickableCandidates = collectClickableCandidates().slice(0, 80)
 
       return {
         links,
@@ -2467,6 +2508,7 @@ async function safeDomSnapshot(page, targetUrl) {
         headingInfo,
         largeResources,
         unlabeledClickables,
+        clickableCandidates,
         counts: {
           anchors: links.length,
           buttons: buttonTargets.length,
@@ -2627,6 +2669,90 @@ async function safeDomSnapshot(page, targetUrl) {
           || normalizeText(element.getAttribute('aria-labelledby') || '')
           || normalizeText(element.getAttribute('title') || '')
           || normalizeText(element.querySelector('img')?.getAttribute('alt') || '')
+      }
+
+      function collectClickableCandidates() {
+        const candidates = []
+        const seen = new Set()
+        const selector = 'a, button, input[type="button"], input[type="submit"], [role="button"], [tabindex], [onclick], [data-href], [data-url], [aria-controls], [aria-expanded]'
+        Array.from(document.querySelectorAll(selector)).forEach((element) => pushClickableCandidate(element, 'dom-evidence'))
+        Array.from(document.querySelectorAll('body *')).forEach((element) => {
+          if (candidates.length >= 80) return
+          const styles = window.getComputedStyle(element)
+          const className = typeof element.className === 'string' ? element.className : ''
+          if (styles.cursor === 'pointer' || /\b(btn|button|cta|link|clickable)\b/i.test(className)) pushClickableCandidate(element, 'visual-evidence')
+        })
+        return candidates
+
+        function pushClickableCandidate(element, source) {
+          if (!element || !isVisibleElement(element)) return
+          const key = getElementKey(element)
+          if (seen.has(key)) return
+          seen.add(key)
+          const rect = getPageRect(element)
+          const viewportX = Math.max(0, Math.min(window.innerWidth - 1, (rect.x - window.scrollX) + rect.width / 2))
+          const viewportY = Math.max(0, Math.min(window.innerHeight - 1, (rect.y - window.scrollY) + rect.height / 2))
+          const hitTarget = document.elementFromPoint(viewportX, viewportY)
+          const href = element.getAttribute('href')?.trim() || ''
+          const url = resolveInspectableUrl(href, baseUrl)
+          const styles = window.getComputedStyle(element)
+          const tagName = element.tagName.toLowerCase()
+          candidates.push({
+            auditId: `${candidates.length + 1}-${key}`,
+            source,
+            tagName,
+            kind: tagName,
+            role: element.getAttribute('role') || '',
+            type: element.getAttribute('type') || '',
+            label: getAccessibleLabel(element) || getElementLabel(element, `Clickable ${candidates.length + 1}`),
+            text: normalizeText(element.value || element.innerText || element.textContent || ''),
+            ariaLabel: element.getAttribute('aria-label') || '',
+            ariaControls: element.getAttribute('aria-controls') || '',
+            ariaExpanded: element.getAttribute('aria-expanded') || '',
+            ariaDisabled: element.getAttribute('aria-disabled') || '',
+            dataTarget: element.getAttribute('data-target') || element.getAttribute('data-bs-target') || '',
+            dataToggle: element.getAttribute('data-toggle') || element.getAttribute('data-bs-toggle') || '',
+            dataHref: element.getAttribute('data-href') || '',
+            dataUrl: element.getAttribute('data-url') || '',
+            href,
+            hasHrefAttribute: element.hasAttribute('href'),
+            url: isInspectableUrl(url) ? url : '',
+            formId: element.form?.id || '',
+            formAction: element.formAction || '',
+            hasOnClick: element.hasAttribute('onclick'),
+            disabled: element.disabled === true,
+            selector: getCssSelector(element),
+            domPath: getElementPath(element),
+            section: estimateSection(element, documentHeight),
+            className: classNameSample(element),
+            cursor: styles.cursor,
+            pointerEvents: styles.pointerEvents,
+            display: styles.display,
+            visibility: styles.visibility,
+            opacity: styles.opacity,
+            boundingBox: rect,
+            hitTargetSelector: hitTarget ? getCssSelector(hitTarget) : '',
+            hitTargetSame: Boolean(hitTarget && (hitTarget === element || element.contains(hitTarget) || hitTarget.contains(element))),
+            actionEvidence: createActionEvidence(element),
+          })
+        }
+      }
+
+      function classNameSample(element) {
+        const className = typeof element.className === 'string' ? element.className : ''
+        return className.split(/\s+/).filter(Boolean).slice(0, 5).join(' ')
+      }
+
+      function createActionEvidence(element) {
+        const evidence = []
+        if (element.hasAttribute('href')) evidence.push('href')
+        if (element.hasAttribute('onclick')) evidence.push('onclick')
+        if (element.hasAttribute('data-href')) evidence.push('data-href')
+        if (element.hasAttribute('data-url')) evidence.push('data-url')
+        if (element.hasAttribute('aria-controls')) evidence.push('aria-controls')
+        if (element.hasAttribute('aria-expanded')) evidence.push('aria-expanded')
+        if (element.form) evidence.push('form-associated')
+        return evidence.join(', ')
       }
 
       function getAncestorClassText(element) {
@@ -3061,20 +3187,11 @@ async function checkLinkStatuses(links) {
           maxRedirects: 3,
         })
         const statusCode = response.status()
+        const finalUrl = typeof response.url === 'function' ? response.url() : link.url
         await response.dispose()
-        return {
-          ...link,
-          statusCode,
-          status: getLinkStatus(statusCode),
-          note: getLinkNote(statusCode),
-        }
+        return normalizeCheckedLinkResult(link, { statusCode, finalUrl })
       } catch (error) {
-        return {
-          ...link,
-          statusCode: null,
-          status: 'warn',
-          note: error instanceof Error ? error.message : '응답 상태 확인 실패',
-        }
+        return createCheckedLinkFailure(link, error)
       }
     })
   } finally {
@@ -3145,51 +3262,6 @@ function sanitizePlaywrightMessage(value) {
     .join(' ')
 }
 
-function isMissingNavigationHref(target = {}) {
-  if (target.href || target.url) return false
-  if (!hasVisibleBox(target.boundingBox)) return false
-
-  const text = normalizeTargetText(target)
-  if (isUiControlTarget(target, text)) return false
-
-  if (String(target.kind || '').toLowerCase() === 'a') {
-    return looksLikeNavigationAction(target, text)
-  }
-
-  return looksLikeNavigationAction(target, text)
-}
-
-function hasVisibleBox(box) {
-  return Boolean(box && Number(box.width) > 0 && Number(box.height) > 0)
-}
-
-function normalizeTargetText(target = {}) {
-  return String([
-    target.label,
-    target.text,
-    target.ariaLabel,
-    target.selector,
-    target.domPath,
-    target.section,
-  ].filter(Boolean).join(' ')).replace(/\s+/g, ' ').trim().toLowerCase()
-}
-
-function isUiControlTarget(target = {}, text = '') {
-  const kind = String(target.kind || '').toLowerCase()
-  const box = target.boundingBox || {}
-  if (Number(box.width) <= 24 && Number(box.height) <= 24 && /^(x|×|<|>|\+|-|•|·|\.|)$/i.test(String(target.label || target.text || '').trim())) return true
-  if (kind === 'input' && /submit|reset|button/i.test(text)) return true
-  return /\b(tab|tabpanel|accordion|modal|dialog|drawer|carousel|slider|swiper|pagination|prev|previous|next|play|pause|mute|unmute|volume|close|dismiss|menu|hamburger|toggle|scroll|top|search|filter|sort|submit|reset)\b/i.test(text)
-    || /(닫기|이전|다음|재생|정지|음소거|메뉴|탭|토글|검색|필터|정렬|맨 위|위로|제출|초기화)/i.test(text)
-}
-
-function looksLikeNavigationAction(target = {}, text = '') {
-  const kind = String(target.kind || '').toLowerCase()
-  if (kind === 'a' && /\S/.test(String(target.label || target.text || target.ariaLabel || ''))) return true
-  return /\b(link|navigation|nav|cta|button|btn|more|details|learn|view|read|shop|buy|apply|reserve|book|download|contact|start|continue|go)\b/i.test(text)
-    || /(바로가기|더보기|더 알아보기|자세히|상세|보기|구매|신청|예약|문의|상담|견적|다운로드|이동|계속)/i.test(text)
-}
-
 function classifyNetworkIssues(networkIssues = []) {
   const actionable = []
   const reference = []
@@ -3254,6 +3326,8 @@ function buildChecks({
   networkIssues = [],
   referenceNetworkIssues = [],
   unlabeledClickables = [],
+  linkAuditMeta = {},
+  clickActionSummary = { status: 'ok', value: '정상', items: [], meta: {} },
 }) {
   const httpStatus = mainResponse?.status() ?? null
   const brokenImages = images.filter((image) => image.status === 'error')
@@ -3312,17 +3386,17 @@ function buildChecks({
     {
       id: 'missing-href',
       title: '링크/버튼 URL 누락 여부',
-      status: missingHrefCount > 0 ? 'warn' : 'ok',
+      status: missingHrefCount > 0 ? 'error' : 'ok',
       value: `${missingHrefCount}개`,
-      detail: missingHrefCount > 0 ? 'href 또는 이동 URL이 없는 a/button 요소가 있습니다.' : 'URL 누락 링크/버튼이 없습니다.',
+      detail: missingHrefCount > 0 ? '이동 목적 CTA로 보이지만 href 또는 action 근거가 없는 요소가 있습니다.' : `URL 누락 이동 CTA가 없습니다. URL이 필요 없는 UI control ${Number(linkAuditMeta.uiControlWithoutUrlCount || 0)}개는 제외했습니다.`,
       items: missingHrefLinks,
     },
     {
       id: 'bad-links',
       title: '404/500 계열 링크 여부',
       status: badLinks.length > 0 ? 'error' : warningLinks.length > 0 ? 'warn' : 'ok',
-      value: `${badLinks.length}개 오류`,
-      detail: `전체 링크 ${linkStatuses.length}개 응답 상태를 확인했습니다.`,
+      value: `${badLinks.length}개 오류 / ${warningLinks.length}개 확인 필요`,
+      detail: `발견 ${Number(linkAuditMeta.discoveredLinkCount || linkStatuses.length)}개 중 unique URL ${Number(linkAuditMeta.uniqueRequestUrlCount || 0)}개를 실제 요청했고 중복 ${Number(linkAuditMeta.dedupedLinkCount || 0)}개를 병합했습니다.`,
       items: badLinks.concat(warningLinks),
     },
     {
@@ -3415,6 +3489,17 @@ function buildChecks({
       detail: mobileResult.hasHorizontalOverflow ? '모바일 화면 너비보다 문서가 넓어 가로 스크롤이 생길 수 있습니다.' : '모바일 viewport 기준 가로 넘침이 감지되지 않았습니다.',
     },
     {
+      id: 'click-actions',
+      title: '클릭 동작 검사',
+      status: clickActionSummary.status,
+      value: clickActionSummary.value,
+      detail: clickActionSummary.status === 'ok'
+        ? '버튼이나 링크처럼 보이는 요소의 기본 동작 근거가 확인되었습니다.'
+        : '버튼이나 링크처럼 보이는 요소 중 동작 근거 또는 실제 클릭 가능 여부 확인이 필요한 항목이 있습니다.',
+      items: clickActionSummary.items,
+      meta: clickActionSummary.meta,
+    },
+    {
       id: 'unlabeled-clickables',
       title: '클릭 가능 요소 텍스트 검사',
       status: unlabeledClickables.length > 0 ? 'warn' : 'ok',
@@ -3456,12 +3541,6 @@ function getHttpStatus(statusCode) {
   return 'ok'
 }
 
-function getLinkStatus(statusCode) {
-  if (statusCode === 404 || statusCode >= 500) return 'error'
-  if (statusCode >= 400) return 'warn'
-  return 'ok'
-}
-
 function getLinkNote(statusCode) {
   if (statusCode === 404) return '404 Not Found'
   if (statusCode >= 500) return '5xx 서버 오류'
@@ -3486,6 +3565,7 @@ function createEmptyDomSnapshot() {
     headingInfo: { h1Count: 0, headings: [], skipped: [] },
     largeResources: [],
     unlabeledClickables: [],
+    clickableCandidates: [],
     counts: { anchors: 0, buttons: 0, missingHrefs: 0 },
   }
 }

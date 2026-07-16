@@ -1,0 +1,174 @@
+{
+  "success": true,
+  "meta": {
+    "visionPrepared": true,
+    "figmaImagePrepared": true,
+    "webImagePrepared": true,
+    "visionInputSummary": [
+      {
+        "label": "figma-overview",
+        "width": 1299,
+        "height": 3849,
+        "detail": "low"
+      },
+      {
+        "label": "web-overview",
+        "width": 1260,
+        "height": 3963,
+        "detail": "low"
+      }
+    ],
+    "visionCropSummary": [
+      {
+        "label": "figma-hero",
+        "width": 1600,
+        "height": 1707,
+        "cropUsed": true,
+        "cropReason": "hero-section-descriptor",
+        "cropFailureReason": "",
+        "cropDiagnostics": {
+          "descriptorHeight": 4533,
+          "validDescendantBoxCount": 16,
+          "invalidDescendantBoxCount": 0,
+          "descendantUnionHeight": 4938,
+          "nextSectionBoundary": 6454,
+          "finalCropHeight": 3590,
+          "cropCoverageRatio": 0.3601,
+          "cropQualityPassed": true,
+          "cropAdjusted": true,
+          "cropAdjustmentReason": "descendant-union-adjusted",
+          "descendantUnionFailureReason": ""
+        }
+      },
+      {
+        "label": "web-hero",
+        "width": 1600,
+        "height": 206,
+        "cropUsed": true,
+        "cropReason": "hero-section-descriptor",
+        "cropFailureReason": "",
+        "cropDiagnostics": {
+          "descriptorHeight": 484,
+          "validDescendantBoxCount": 0,
+          "invalidDescendantBoxCount": 0,
+          "descendantUnionHeight": 0,
+          "nextSectionBoundary": 1520,
+          "finalCropHeight": 484,
+          "cropCoverageRatio": 0.0401,
+          "cropQualityPassed": false,
+          "cropAdjusted": false,
+          "cropAdjustmentReason": "",
+          "descendantUnionFailureReason": "no-valid-semantic-descendant-box"
+        }
+      }
+    ],
+    "heroCropPairQuality": {
+      "compatible": false,
+      "figmaCoverageRatio": 0.3601,
+      "webCoverageRatio": 0.0401,
+      "coverageRatioDelta": 0.32,
+      "reason": "hero-crop-quality-failed"
+    },
+    "figmaImage": {
+      "width": 1299,
+      "height": 3849,
+      "originalWidth": 3365,
+      "originalHeight": 9970,
+      "cached": true,
+      "sizeBytes": 338777
+    },
+    "webImage": {
+      "width": 1260,
+      "height": 3963,
+      "originalWidth": 3840,
+      "originalHeight": 12078,
+      "cached": true,
+      "sizeBytes": 344083
+    },
+    "openAiCalled": true,
+    "model": "gpt-4.1-mini",
+    "visionUsed": true,
+    "imageInputCount": 2,
+    "rawVisionCount": 5,
+    "fallbackStage": "",
+    "fallbackReason": "",
+    "openAiRequestDurationMs": 20310,
+    "openAiResponseReceived": true,
+    "openAiResponseParsed": true,
+    "aiReviewDurationMs": 20322,
+    "fallbackUsed": false,
+    "visionFailureReason": ""
+  },
+  "review": {
+    "releaseDecision": "caution",
+    "summary": "자동 QA 결과 확인이 필요한 차이가 있습니다. 의도된 차이인지 확인 후 진행을 권장합니다.",
+    "mustFix": [],
+    "verify": [
+      {
+        "category": "Media",
+        "title": "웹 Hero 영역 이미지 크기가 Figma 대비 비약적으로 작아 시각적 임팩트 및 전달력 저하 우려 존재.",
+        "description": "웹 Hero 영역 이미지 크기가 Figma 대비 비약적으로 작아 시각적 임팩트 및 전달력 저하 우려 존재.",
+        "evidence": [],
+        "severity": "warning"
+      },
+      {
+        "category": "Text",
+        "title": "텍스트 띄어쓰기 및 오탈자 차이(예: '진행중인' vs '진행 중인', 'BMWW' 오타, '낮은 월납입금으로 BMW 이용' 앞 '02' 숫자 누락) 수정 필요.",
+        "description": "텍스트 띄어쓰기 및 오탈자 차이(예: '진행중인' vs '진행 중인', 'BMWW' 오타, '낮은 월납입금으로 BMW 이용' 앞 '02' 숫자 누락) 수정 필요.",
+        "evidence": [],
+        "severity": "warning"
+      },
+      {
+        "category": "CTA",
+        "title": "웹에서 CTA 버튼 스타일 및 눌림 반응 정상 동작 여부 검증 필요.",
+        "description": "웹에서 CTA 버튼 스타일 및 눌림 반응 정상 동작 여부 검증 필요.",
+        "evidence": [],
+        "severity": "warning"
+      },
+      {
+        "category": "Text",
+        "title": "세부 약관, 안내 문구 일부 문장 차이(예: '금융 프로그램'과 '금융 상품')가 UX 정책에 맞는지 검토 필요.",
+        "description": "세부 약관, 안내 문구 일부 문장 차이(예: '금융 프로그램'과 '금융 상품')가 UX 정책에 맞는지 검토 필요.",
+        "evidence": [],
+        "severity": "warning"
+      }
+    ],
+    "developerNotes": [
+      {
+        "category": "Media",
+        "title": "Hero 영역 이미지가 Figma 대비 매우 축소되어 나타나므로 이미지 배치 및 크기 설정 재검토 권고.",
+        "description": "Hero 영역 이미지가 Figma 대비 매우 축소되어 나타나므로 이미지 배치 및 크기 설정 재검토 권고.",
+        "evidence": [],
+        "severity": "check"
+      },
+      {
+        "category": "CTA",
+        "title": "웹 페이지 내 CTA 영역 마크업 존재 여부 및 자바스크립트 이벤트 바인딩 상태 점검 필요.",
+        "description": "웹 페이지 내 CTA 영역 마크업 존재 여부 및 자바스크립트 이벤트 바인딩 상태 점검 필요.",
+        "evidence": [],
+        "severity": "check"
+      },
+      {
+        "category": "Text",
+        "title": "텍스트 내용 일부 문구 및 띄어쓰기 자동 교정이 적용되어 다소 차이가 발생함. 클라이언트 의도 반영 여부 확인 필요.",
+        "description": "텍스트 내용 일부 문구 및 띄어쓰기 자동 교정이 적용되어 다소 차이가 발생함. 클라이언트 의도 반영 여부 확인 필요.",
+        "evidence": [],
+        "severity": "warning"
+      }
+    ],
+    "visualDifferences": [
+      {
+        "area": "페이지 콘텐츠",
+        "category": "Text",
+        "title": "프로그램/상품 표현 차이",
+        "summary": "BMW 스마트 할부 프로그램 설명에서 Figma는 '금융 프로그램'이라 표현, 웹은 '금융 상품'으로 다름.",
+        "figmaValue": "금융 프로그램",
+        "webValue": "금융 상품",
+        "severity": "warning",
+        "confidence": "high",
+        "order": 5
+      }
+    ],
+    "clientReplyDraft": "자동 QA 검토 결과, 확인이 필요한 차이가 일부 확인되었습니다. 의도된 차이인지 확인 후 진행하겠습니다."
+  }
+}

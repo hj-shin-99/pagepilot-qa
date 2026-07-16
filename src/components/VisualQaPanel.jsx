@@ -11,6 +11,7 @@ import {
   createWebDisplayImageUrl,
 } from '../utils/visualQa'
 import { createVisualDisplayIssues } from '../utils/visualDisplayIssues.js'
+import { createCoreVisualIssues } from '../utils/visualDisplayHierarchy.js'
 import { createVisualIssueGroups } from '../utils/visualIssueGroups.js'
 import { createVisualQaTitle } from '../utils/visualTitle'
 
@@ -24,15 +25,20 @@ function VisualQaPanel({ result, copyStatus, onCopyResult, aiReview, aiReviewSta
   const figmaImage = createFigmaImageUrl(result.figma)
   const webImage = createWebDisplayImageUrl(result.web)
   const displayIssues = createVisualDisplayIssues(result, aiReview)
-  const issueGroups = createVisualIssueGroups(displayIssues)
+  const coreIssues = createCoreVisualIssues(displayIssues)
+  const coreIssueGroups = createVisualIssueGroups(coreIssues, { mergeReadableAreas: true })
+  const fullIssueGroups = createVisualIssueGroups(displayIssues)
   const displayMeta = displayIssues.meta || {}
-  const groupMeta = issueGroups.meta || {}
+  const coreMeta = coreIssues.meta || {}
+  const coreGroupMeta = coreIssueGroups.meta || {}
+  const fullGroupMeta = fullIssueGroups.meta || {}
+  const coreCategoryCounts = coreMeta.coreCategoryCounts || {}
   const differenceMeta = displayMeta.finalReportMeta || {}
   const visualTitle = createVisualQaTitle({ pageTitle, result })
 
   useEffect(() => {
-    console.info(`[Visual QA Display Issues] finalReportItems=${displayMeta.finalReportItemCount} comparisonDifferences=${displayMeta.comparisonDifferenceCount} aiVisualDifferences=${displayMeta.aiVisualDifferenceCount} ctaEvidence=${displayMeta.ctaEvidenceCount} mediaEvidence=${displayMeta.mediaEvidenceCount} priceNumericEvidence=${displayMeta.priceNumericEvidenceCount} candidates=${displayMeta.candidateCount} uiCount=${displayIssues.length} groupCount=${groupMeta.groupCount} groupedIssueCount=${groupMeta.groupedIssueCount} duplicateIssueCount=${groupMeta.duplicateIssueCount} rawVisionCount=${differenceMeta.rawVisionCount} canonicalSupplementCount=${differenceMeta.canonicalSupplementCount} mergedCount=${differenceMeta.mergedCount} dedupedCount=${differenceMeta.dedupedCount} invalidIssueDroppedCount=${differenceMeta.invalidIssueDroppedCount} crossCategoryMergeRejectedCount=${differenceMeta.crossCategoryMergeRejectedCount}`)
-  }, [displayIssues.length, displayMeta.finalReportItemCount, displayMeta.comparisonDifferenceCount, displayMeta.aiVisualDifferenceCount, displayMeta.ctaEvidenceCount, displayMeta.mediaEvidenceCount, displayMeta.priceNumericEvidenceCount, displayMeta.candidateCount, groupMeta.groupCount, groupMeta.groupedIssueCount, groupMeta.duplicateIssueCount, differenceMeta.rawVisionCount, differenceMeta.canonicalSupplementCount, differenceMeta.mergedCount, differenceMeta.dedupedCount, differenceMeta.invalidIssueDroppedCount, differenceMeta.crossCategoryMergeRejectedCount])
+    console.info(`[Visual QA Display Issues] finalReportItems=${displayMeta.finalReportItemCount} comparisonDifferences=${displayMeta.comparisonDifferenceCount} aiVisualDifferences=${displayMeta.aiVisualDifferenceCount} ctaEvidence=${displayMeta.ctaEvidenceCount} mediaEvidence=${displayMeta.mediaEvidenceCount} priceNumericEvidence=${displayMeta.priceNumericEvidenceCount} candidates=${displayMeta.candidateCount} uiCount=${displayIssues.length} coreCount=${coreIssues.length} fullDisplayedCount=${fullGroupMeta.groupedIssueCount} exactDuplicateRemoved=${fullGroupMeta.duplicateIssueCount} excludedFromCore=${coreMeta.excludedFromCoreCount} coreCta=${coreCategoryCounts.cta || 0} coreMedia=${coreCategoryCounts.media || 0} corePrice=${coreCategoryCounts.price || 0} coreText=${coreCategoryCounts.text || 0} engineDataDeleted=0 fullGroupCount=${fullGroupMeta.groupCount} rawVisionCount=${differenceMeta.rawVisionCount} canonicalSupplementCount=${differenceMeta.canonicalSupplementCount} mergedCount=${differenceMeta.mergedCount} dedupedCount=${differenceMeta.dedupedCount} invalidIssueDroppedCount=${differenceMeta.invalidIssueDroppedCount} crossCategoryMergeRejectedCount=${differenceMeta.crossCategoryMergeRejectedCount}`)
+  }, [displayIssues.length, coreIssues.length, displayMeta.finalReportItemCount, displayMeta.comparisonDifferenceCount, displayMeta.aiVisualDifferenceCount, displayMeta.ctaEvidenceCount, displayMeta.mediaEvidenceCount, displayMeta.priceNumericEvidenceCount, displayMeta.candidateCount, fullGroupMeta.groupCount, fullGroupMeta.groupedIssueCount, fullGroupMeta.duplicateIssueCount, coreMeta.excludedFromCoreCount, coreCategoryCounts.cta, coreCategoryCounts.media, coreCategoryCounts.price, coreCategoryCounts.text, differenceMeta.rawVisionCount, differenceMeta.canonicalSupplementCount, differenceMeta.mergedCount, differenceMeta.dedupedCount, differenceMeta.invalidIssueDroppedCount, differenceMeta.crossCategoryMergeRejectedCount])
 
   return (
     <section className="section-stack visual-qa-panel" aria-label="Visual QA 결과">
@@ -47,7 +53,7 @@ function VisualQaPanel({ result, copyStatus, onCopyResult, aiReview, aiReviewSta
             결과 복사
           </button>
         </div>
-        <div className="summary-box">{formatIssueCountSummary(groupMeta.groupedIssueCount ?? displayIssues.length)}</div>
+        <div className="summary-box">{formatIssueCountSummary(coreGroupMeta.groupedIssueCount ?? coreIssues.length)}</div>
         {copyStatus ? <p className="copy-status">{copyStatus}</p> : null}
       </header>
 
@@ -71,13 +77,23 @@ function VisualQaPanel({ result, copyStatus, onCopyResult, aiReview, aiReviewSta
       <article className="detail-card difference-list-card">
         <div className="section-title-row">
           <div>
-            <h3>발견된 차이</h3>
-            <p className="panel-note relaxed-note">수정 또는 확인이 필요한 실무형 이슈만 합쳐서 표시합니다.</p>
+            <h3>핵심 차이</h3>
+            <p className="panel-note relaxed-note">실무자가 먼저 확인해야 하는 차이만 표시합니다. 전체 근거는 아래에서 모두 확인할 수 있습니다.</p>
           </div>
-          <span>{formatGroupIssueCount(issueGroups.length, groupMeta.groupedIssueCount ?? displayIssues.length)}</span>
+          <span>{formatGroupIssueCount(coreIssueGroups.length, coreGroupMeta.groupedIssueCount ?? coreIssues.length)}</span>
         </div>
-        <IssueGroupList groups={issueGroups} />
+        <IssueGroupList groups={coreIssueGroups} />
       </article>
+
+      <details className="detail-card full-findings-accordion">
+        <summary>
+          <span>전체 발견 항목 보기</span>
+          <strong>{formatGroupIssueCount(fullIssueGroups.length, fullGroupMeta.groupedIssueCount ?? displayIssues.length)}</strong>
+        </summary>
+        <div className="full-findings-body">
+          <IssueGroupList groups={fullIssueGroups} compact />
+        </div>
+      </details>
 
       <details className="detail-card visual-detail-accordion">
         <summary>
@@ -144,9 +160,20 @@ function VisualQaPanel({ result, copyStatus, onCopyResult, aiReview, aiReviewSta
           <KeyValue label="Media Evidence" value={displayMeta.mediaEvidenceCount} />
           <KeyValue label="Price/Numeric Evidence" value={displayMeta.priceNumericEvidenceCount} />
           <KeyValue label="Display Candidates" value={displayMeta.candidateCount} />
-          <KeyValue label="Display Groups" value={groupMeta.groupCount} />
-          <KeyValue label="Grouped Issue Count" value={groupMeta.groupedIssueCount} />
-          <KeyValue label="Exact Duplicate Removed" value={groupMeta.duplicateIssueCount} />
+          <KeyValue label="Display Groups" value={fullGroupMeta.groupCount} />
+          <KeyValue label="Grouped Issue Count" value={fullGroupMeta.groupedIssueCount} />
+          <KeyValue label="Exact Duplicate Removed" value={fullGroupMeta.duplicateIssueCount} />
+          <KeyValue label="Core Issue Count" value={coreIssues.length} />
+          <KeyValue label="Core Candidate Count" value={coreMeta.coreCandidateCount} />
+          <KeyValue label="Core After Semantic Dedupe" value={coreMeta.coreAfterSemanticDedupeCount} />
+          <KeyValue label="Core Group Count" value={coreGroupMeta.groupCount} />
+          <KeyValue label="Core Group Internal Issue Count" value={coreGroupMeta.groupedIssueCount} />
+          <KeyValue label="Excluded From Core" value={coreMeta.excludedFromCoreCount} />
+          <KeyValue label="Core Semantic Duplicate Removed" value={coreMeta.semanticDuplicateRemovedCount} />
+          <KeyValue label="Merged Readable Area Groups" value={coreGroupMeta.mergedReadableAreaGroupCount} />
+          <KeyValue label="Core CTA / Media / Price / Text" value={formatCoreCategoryCounts(coreCategoryCounts)} />
+          <KeyValue label="Core Excluded Reasons" value={formatExcludedReasonCounts(coreMeta.excludedReasonCounts)} />
+          <KeyValue label="Engine Data Deleted" value="0" />
           <KeyValue label="Raw Vision Count" value={differenceMeta.rawVisionCount} />
           <KeyValue label="Canonical Supplement Count" value={differenceMeta.canonicalSupplementCount} />
           <KeyValue label="Merged Count" value={differenceMeta.mergedCount} />
@@ -236,11 +263,11 @@ function AiVisionSummary({ aiReview, state, finalIssueCount }) {
   )
 }
 
-function IssueGroupList({ groups = [] }) {
+function IssueGroupList({ groups = [], compact = false }) {
   if (!groups.length) return <p className="empty-row">표시할 다른 부분이 없습니다.</p>
 
   return (
-    <ol className="issue-group-list">
+    <ol className={`issue-group-list ${compact ? 'is-compact' : ''}`}>
       {groups.map((group, index) => (
         <li className="issue-group-card" key={group.id || `${group.label}-${index}`}>
           <div className="issue-group-header">
@@ -251,7 +278,7 @@ function IssueGroupList({ groups = [] }) {
             </div>
           </div>
           <ol className="issue-group-items">
-            {group.items.map((item, itemIndex) => <IssueGroupItem item={item} key={item.groupItemId || item.id || `${item.categoryLabel}-${item.title}-${itemIndex}`} />)}
+            {group.items.map((item, itemIndex) => <IssueGroupItem compact={compact} item={item} key={item.groupItemId || item.id || `${item.categoryLabel}-${item.title}-${itemIndex}`} />)}
           </ol>
         </li>
       ))}
@@ -259,12 +286,12 @@ function IssueGroupList({ groups = [] }) {
   )
 }
 
-function IssueGroupItem({ item }) {
+function IssueGroupItem({ item, compact = false }) {
   return (
-    <li className={`issue-group-item ${getDifferenceCategoryClass(item)}`}>
+    <li className={`issue-group-item ${compact ? 'is-compact' : ''} ${getDifferenceCategoryClass(item)}`}>
       <div className="issue-group-item-main">
         <div className="difference-meta-row">
-          <span className="difference-category-chip">{item.categoryLabel}</span>
+              <span className="difference-category-chip">{item.displayCategoryLabel || item.categoryLabel}</span>
         </div>
         <strong>{item.title}</strong>
         {shouldShowDifferenceDescription(item) ? <p>{item.description}</p> : null}
@@ -391,6 +418,12 @@ function formatDuration(value) {
 
 function getDifferenceCategoryClass(item = {}) {
   const value = `${item.category || ''} ${item.categoryLabel || ''}`.toLowerCase()
+  const displayCategory = `${item.displayCategory || ''} ${item.displayCategoryLabel || ''}`.toLowerCase()
+  if (/cta|button|action/.test(displayCategory)) return 'is-cta'
+  if (/media|image|kv|video/.test(displayCategory)) return 'is-media'
+  if (/price|numeric|amount/.test(displayCategory)) return 'is-price'
+  if (/missing|count/.test(displayCategory)) return 'is-missing'
+  if (/text/.test(displayCategory)) return 'is-text'
   if (/cta|button|action/.test(value)) return 'is-cta'
   if (/media|image|kv|video/.test(value)) return 'is-media'
   if (/price|numeric|amount/.test(value)) return 'is-price'
@@ -416,6 +449,14 @@ function formatGroupIssueCount(groupCount, issueCount) {
   const safeGroupCount = Number.isFinite(Number(groupCount)) ? Number(groupCount) : 0
   const safeIssueCount = Number.isFinite(Number(issueCount)) ? Number(issueCount) : 0
   return `${safeGroupCount}개 영역 · ${safeIssueCount}개 항목`
+}
+
+function formatCoreCategoryCounts(counts = {}) {
+  return `CTA ${counts.cta || 0} / Media ${counts.media || 0} / Price ${counts.price || 0} / Text ${counts.text || 0}`
+}
+
+function formatExcludedReasonCounts(counts = {}) {
+  return `low-value ${counts['low-value-text'] || 0} / ordinal ${counts['ordinal-only'] || 0} / duplicate ${counts['semantic-duplicate'] || 0} / non-core ${counts['non-core'] || 0} / invalid ${counts.invalid || 0}`
 }
 
 function formatDate(value) {

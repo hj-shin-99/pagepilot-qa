@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { loadHistoryItems, saveHistoryItem } from './history.js'
+import { deleteHistoryItem, loadHistoryItems, saveHistoryItem } from './history.js'
 
 function installLocalStorage() {
   const store = new Map()
@@ -79,4 +79,17 @@ test('history stores and restores combined sessions', () => {
   assert.equal(item.aiReview.review.releaseDecision, 'caution')
   assert.equal(item.aiReview.review.verify[0].title, '미디어 확인')
   assert.equal(item.aiReview.review.visualDifferences[0].title, 'Hero KV 비주얼 차이')
+})
+
+test('history deletes one item without changing stored item schema', () => {
+  installLocalStorage()
+  saveHistoryItem({ type: 'tech', id: 't1', url: 'https://a.example', scannedAt: '2026-01-01T00:00:00.000Z', counts: { total: 1, high: 0 }, topIssueSummaries: ['A'], result: { targetUrl: 'https://a.example' } })
+  saveHistoryItem({ type: 'visual', id: 'v1', url: 'https://b.example', figmaUrl: 'https://figma.com/design/b', scannedAt: '2026-01-02T00:00:00.000Z', counts: { total: 2, high: 1 }, topIssueSummaries: ['B'], result: { meta: { webUrl: 'https://b.example' } } })
+
+  const remaining = deleteHistoryItem('v1')
+
+  assert.equal(remaining.length, 1)
+  assert.equal(remaining[0].id, 't1')
+  assert.deepEqual(Object.keys(remaining[0]), ['type', 'id', 'url', 'webUrl', 'figmaUrl', 'scannedAt', 'createdAt', 'summary', 'totalIssueCount', 'counts', 'topIssueSummaries', 'designImageFilenames', 'result', 'visual', 'tech', 'aiReview'])
+  assert.equal(loadHistoryItems()[0].id, 't1')
 })

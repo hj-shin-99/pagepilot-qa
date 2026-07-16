@@ -25,6 +25,7 @@ test('final report and canonical text duplicate merge into one item', () => {
   assert.equal(report.items.length, 1)
   assert.equal(report.items[0].figmaValue, 'Hello World')
   assert.equal(report.items[0].webValue, 'Hello Page')
+  assert.deepEqual(report.items[0].evidenceSources.sort(), ['ai', 'comparison', 'final'])
 })
 
 test('CTA candidates alone do not create a default display issue', () => {
@@ -71,4 +72,13 @@ test('history compact result creates the same integrated display list', () => {
   assert.equal(issues.length, 1)
   assert.equal(issues[0].categoryLabel, 'Price / Numeric')
   assert.equal(issues.meta.priceNumericEvidenceCount, 2)
+})
+
+test('readable area fields are preserved for frontend grouping only', () => {
+  const issues = createVisualDisplayIssues({
+    comparison: { differences: [{ figmaText: 'A', webText: 'B', readableCanonicalArea: 'Product / Price', sectionPath: 'Frame / Group / Node 1' }] },
+    aiHints: {},
+  })
+  assert.equal(issues[0].readableCanonicalArea, 'Product / Price')
+  assert.equal(issues[0].sectionPath, 'Frame / Group / Node 1')
 })

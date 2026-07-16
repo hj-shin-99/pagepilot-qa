@@ -1,0 +1,344 @@
+{
+  "qaMeta": {
+    "webScanInvocationCount": 1,
+    "openAiCalled": false,
+    "startedAt": "2026-07-14T07:01:54.074Z",
+    "completedAt": "2026-07-14T07:02:04.985Z",
+    "browserLaunchCount": 1,
+    "desktopPageCount": 1,
+    "mobilePageCount": 1
+  },
+  "aiMeta": {
+    "visionPrepared": true,
+    "figmaImagePrepared": true,
+    "webImagePrepared": true,
+    "visionInputSummary": [
+      {
+        "label": "figma-overview",
+        "width": 1299,
+        "height": 3849,
+        "detail": "low"
+      },
+      {
+        "label": "web-overview",
+        "width": 1260,
+        "height": 3963,
+        "detail": "low"
+      },
+      {
+        "label": "figma-hero",
+        "width": 1600,
+        "height": 1707,
+        "detail": "high"
+      },
+      {
+        "label": "web-hero",
+        "width": 1600,
+        "height": 206,
+        "detail": "high"
+      }
+    ],
+    "visionCropSummary": [
+      {
+        "label": "figma-hero",
+        "width": 1600,
+        "height": 1707,
+        "cropUsed": true,
+        "cropReason": "hero-section-descriptor",
+        "cropFailureReason": ""
+      },
+      {
+        "label": "web-hero",
+        "width": 1600,
+        "height": 206,
+        "cropUsed": true,
+        "cropReason": "hero-section-descriptor",
+        "cropFailureReason": ""
+      }
+    ],
+    "figmaImage": {
+      "width": 1299,
+      "height": 3849,
+      "originalWidth": 3365,
+      "originalHeight": 9970,
+      "cached": true,
+      "sizeBytes": 338777
+    },
+    "webImage": {
+      "width": 1260,
+      "height": 3963,
+      "originalWidth": 3840,
+      "originalHeight": 12078,
+      "cached": false,
+      "sizeBytes": 345394
+    },
+    "openAiCalled": true,
+    "model": "gpt-4.1-mini",
+    "visionUsed": true,
+    "imageInputCount": 4,
+    "rawVisionCount": 5,
+    "fallbackStage": "",
+    "fallbackReason": "",
+    "openAiRequestDurationMs": 36643,
+    "openAiResponseReceived": true,
+    "openAiResponseParsed": true,
+    "aiReviewDurationMs": 36649,
+    "fallbackUsed": false,
+    "visionFailureReason": ""
+  },
+  "visualDifferences": [
+    {
+      "area": "메인 비주얼",
+      "category": "Text",
+      "title": "Hero 텍스트 개수 및 내용 차이",
+      "summary": "Figma Hero에는 37개 텍스트 노드가 있지만 웹 Hero는 2개 노드로 대폭 축소되어 상세 설명 문장이 많이 누락됨.",
+      "figmaValue": "본문 및 상세설명 텍스트 다수 포함",
+      "webValue": "주요 헤드라인 및 간략한 텍스트만 존재",
+      "severity": "critical",
+      "confidence": "high",
+      "order": 2
+    },
+    {
+      "area": "메인 비주얼",
+      "category": "CTA",
+      "title": "웹에 Hero 내 CTA 버튼 3개 누락",
+      "summary": "Figma Hero 영역에 3개의 CTA 버튼(프로모션 바로가기, 구매상담 바로가기, 바로가기)이 있으나 웹에는 CTA 버튼이 전혀 없음.",
+      "figmaValue": "3개 CTA 버튼 존재",
+      "webValue": "CTA 버튼 없음",
+      "severity": "critical",
+      "confidence": "high",
+      "order": 3
+    },
+    {
+      "area": "Product Card",
+      "category": "Text",
+      "title": "텍스트 띄어쓰기 및 문장 부호 미묘한 차이 있음",
+      "summary": "예: '잔존가치를 보장함으로써낮은' vs '잔존가치를 보장함으로써 낮은', '진행중인 프로모션' vs '진행 중인 프로모션' 등 일부 띄어쓰기 차이가 존재.",
+      "figmaValue": "문장 띄어쓰기 다소 붙어있음",
+      "webValue": "띄어쓰기 정상 적용",
+      "severity": "check",
+      "confidence": "high",
+      "order": 4
+    }
+  ],
+  "reportMeta": {
+    "rawVisionCount": 5,
+    "canonicalSupplementCount": 6,
+    "mergedCount": 7,
+    "dedupedCount": 7,
+    "displayCount": 7,
+    "invalidIssueDroppedCount": 0,
+    "crossCategoryMergeRejectedCount": 2
+  },
+  "finalIssues": [
+    {
+      "id": "vision-1-웹에hero내cta버튼3개누락",
+      "source": "merged",
+      "category": "cta",
+      "categoryLabel": "CTA",
+      "area": "Main KV",
+      "title": "CTA 구성을 확인해주세요.",
+      "description": "Figma Hero 영역에 3개의 CTA 버튼(프로모션 바로가기, 구매상담 바로가기, 바로가기)이 있으나 웹에는 CTA 버튼이 전혀 없음.",
+      "figmaValue": "BMW 스마트 할부는 계약기간 동안 중고차 가치(잔존가치)를 보장함으로써 일반할부보다 낮은 월 할부금으로 차량 구매가 가능합니다. 또한 계약 만기 시 차량 인수, 반납, 혹은 재금융 중 한 가지 옵션을 부담 없이 선택할 수 있는 금융 프로그램입니다.",
+      "webValue": "BMW 스마트 할부는 계약기간 동안 중고차 가치(잔존가치)를 보장함으로써 일반할부보다 낮은 월 할부금으로 차량 구매가 가능합니다. 또한 계약 만기 시 차량 인수, 반납, 혹은 재금융 중 한 가지 옵션을 부담 없이 선택할 수 있는 금융 상품입니다.",
+      "severity": "critical",
+      "confidence": "high",
+      "sortRank": 3,
+      "sectionKey": "",
+      "provenance": {
+        "origin": "merged",
+        "matchedVisionIndex": 1,
+        "matchedCanonicalEntityIds": [],
+        "canonicalCategory": "cta",
+        "canonicalSectionId": "",
+        "mergeReason": "same-category"
+      },
+      "mergeTokens": [
+        "메인 비주얼",
+        "CTA",
+        "웹에 Hero 내 CTA 버튼 3개 누락",
+        "Figma Hero 영역에 3개의 CTA 버튼(프로모션 바로가기, 구매상담 바로가기, 바로가기)이 있으나 웹에는 CTA 버튼이 전혀 없음.",
+        "3개 CTA 버튼 존재",
+        "CTA 버튼 없음",
+        "cta",
+        "Main KV",
+        "BMW 스마트 할부는 계약기간 동안 중고차 가치(잔존가치)를 보장함으로써 일반할부보다 낮은 월 할부금으로 차량 구매가 가능합니다. 또한 계약 만기 시 차량 인수, 반납, 혹은 재금융 중 한 가지 옵션을 부담 없이 선택할 수 있는 금융 프로그램입니다.",
+        "BMW 스마트 할부는 계약기간 동안 중고차 가치(잔존가치)를 보장함으로써 일반할부보다 낮은 월 할부금으로 차량 구매가 가능합니다. 또한 계약 만기 시 차량 인수, 반납, 혹은 재금융 중 한 가지 옵션을 부담 없이 선택할 수 있는 금융 상품입니다."
+      ]
+    },
+    {
+      "id": "canonical-difference-3-03타던차량이싫증날때새로운bmw차량으로바꿔탈수있는기회타던차량계속소유하고싶을때bmww가보장한금액을내고계속이용-타던차량이싫증날때새로운bmw차량으로바꿔탈수있는기회타던차량계속소유하고싶을때bmw가보장한금액을내고계속이용",
+      "source": "canonical",
+      "category": "price",
+      "categoryLabel": "Text",
+      "area": "Page Content",
+      "title": "텍스트가 다릅니다.",
+      "description": "금액, 퍼센트, 기간 등 숫자 값이 서로 다릅니다.",
+      "figmaValue": "03 타던 차량이 싫증날 때, 새로운 BMW 차량으로 바꿔탈 수 있는 기회 타던 차량 계속 소유하고 싶을 때, BMWW가 보장한 금액을 내고 계속 이용",
+      "webValue": "타던 차량이 싫증날 때, 새로운 BMW 차량으로 바꿔탈 수 있는 기회 타던 차량 계속 소유하고 싶을 때, BMW가 보장한 금액을 내고 계속 이용",
+      "severity": "critical",
+      "confidence": "high",
+      "sortRank": 90,
+      "sectionKey": "",
+      "provenance": {
+        "origin": "canonical",
+        "matchedVisionIndex": null,
+        "matchedCanonicalEntityIds": [],
+        "canonicalCategory": "price",
+        "canonicalSectionId": "",
+        "mergeReason": ""
+      },
+      "mergeTokens": [
+        "price",
+        "Page Content",
+        "03 타던 차량이 싫증날 때, 새로운 BMW 차량으로 바꿔탈 수 있는 기회 타던 차량 계속 소유하고 싶을 때, BMWW가 보장한 금액을 내고 계속 이용",
+        "타던 차량이 싫증날 때, 새로운 BMW 차량으로 바꿔탈 수 있는 기회 타던 차량 계속 소유하고 싶을 때, BMW가 보장한 금액을 내고 계속 이용"
+      ]
+    },
+    {
+      "id": "canonical-difference-4-프로모션바로가가기-프로모션바로가기",
+      "source": "canonical",
+      "category": "text",
+      "categoryLabel": "Text",
+      "area": "Page Content",
+      "title": "텍스트가 다릅니다.",
+      "description": "Figma와 Web에서 표시되는 문구가 서로 다릅니다.",
+      "figmaValue": "프로모션 바로가가기",
+      "webValue": "프로모션 바로가기",
+      "severity": "warning",
+      "confidence": "high",
+      "sortRank": 90,
+      "sectionKey": "",
+      "provenance": {
+        "origin": "canonical",
+        "matchedVisionIndex": null,
+        "matchedCanonicalEntityIds": [],
+        "canonicalCategory": "text",
+        "canonicalSectionId": "",
+        "mergeReason": ""
+      },
+      "mergeTokens": [
+        "text",
+        "Page Content",
+        "프로모션 바로가가기",
+        "프로모션 바로가기"
+      ]
+    },
+    {
+      "id": "canonical-difference-6-※월납입금에는선납금을포함한할부원금및잔가보장금액에대한이자모두포함-*월납입금에는선납금을제외한할부원금및잔가보장금액에대한이자모두포함",
+      "source": "canonical",
+      "category": "text",
+      "categoryLabel": "Text",
+      "area": "Page Content",
+      "title": "텍스트가 다릅니다.",
+      "description": "Figma와 Web에서 표시되는 문구가 서로 다릅니다.",
+      "figmaValue": "※ 월 납입금에는 선납금을 포함한 할부 원금 및 잔가보장금액에 대한 이자 모두 포함.",
+      "webValue": "* 월 납입금에는 선납금을 제외한 할부 원금 및 잔가보장금액에 대한 이자 모두 포함.",
+      "severity": "warning",
+      "confidence": "high",
+      "sortRank": 90,
+      "sectionKey": "",
+      "provenance": {
+        "origin": "canonical",
+        "matchedVisionIndex": null,
+        "matchedCanonicalEntityIds": [],
+        "canonicalCategory": "text",
+        "canonicalSectionId": "",
+        "mergeReason": ""
+      },
+      "mergeTokens": [
+        "text",
+        "Page Content",
+        "※ 월 납입금에는 선납금을 포함한 할부 원금 및 잔가보장금액에 대한 이자 모두 포함.",
+        "* 월 납입금에는 선납금을 제외한 할부 원금 및 잔가보장금액에 대한 이자 모두 포함."
+      ]
+    },
+    {
+      "id": "canonical-difference-7-02낮은월납입금으로bmw이용-낮은월납입금으로bmw이용",
+      "source": "canonical",
+      "category": "price",
+      "categoryLabel": "Text",
+      "area": "Page Content",
+      "title": "텍스트가 다릅니다.",
+      "description": "금액, 퍼센트, 기간 등 숫자 값이 서로 다릅니다.",
+      "figmaValue": "02 낮은 월납입금으로 BMW 이용",
+      "webValue": "낮은 월 납입금으로 BMW 이용",
+      "severity": "critical",
+      "confidence": "high",
+      "sortRank": 90,
+      "sectionKey": "",
+      "provenance": {
+        "origin": "canonical",
+        "matchedVisionIndex": null,
+        "matchedCanonicalEntityIds": [],
+        "canonicalCategory": "price",
+        "canonicalSectionId": "",
+        "mergeReason": ""
+      },
+      "mergeTokens": [
+        "price",
+        "Page Content",
+        "02 낮은 월납입금으로 BMW 이용",
+        "낮은 월 납입금으로 BMW 이용"
+      ]
+    },
+    {
+      "id": "canonical-difference-8-01bmw신차를바꿔탈수있는프로그램bmw가미래의잔존가치를예측하여중고차가치를보장-bmw신차를바꿔탈수있는상품bmw가미래의잔존가치를예측하여중고차가치를보장",
+      "source": "canonical",
+      "category": "text",
+      "categoryLabel": "Text",
+      "area": "Page Content",
+      "title": "텍스트가 다릅니다.",
+      "description": "Figma와 Web에서 표시되는 문구가 서로 다릅니다.",
+      "figmaValue": "01 BMW 신차를 바꿔탈 수 있는 프로그램 BMW가 미래의 잔존가치를 예측하여 중고차 가치를 보장",
+      "webValue": "BMW 신차를 바꿔탈 수 있는 상품 BMW가 미래의 잔존가치를 예측하여 중고차 가치를 보장",
+      "severity": "warning",
+      "confidence": "high",
+      "sortRank": 90,
+      "sectionKey": "",
+      "provenance": {
+        "origin": "canonical",
+        "matchedVisionIndex": null,
+        "matchedCanonicalEntityIds": [],
+        "canonicalCategory": "text",
+        "canonicalSectionId": "",
+        "mergeReason": ""
+      },
+      "mergeTokens": [
+        "text",
+        "Page Content",
+        "01 BMW 신차를 바꿔탈 수 있는 프로그램 BMW가 미래의 잔존가치를 예측하여 중고차 가치를 보장",
+        "BMW 신차를 바꿔탈 수 있는 상품 BMW가 미래의 잔존가치를 예측하여 중고차 가치를 보장"
+      ]
+    },
+    {
+      "id": "canonical-difference-11-약정기간이후잔여금액지불후소유and차량반납선택가능-약정기간이후잔여금액지불후소유or차량반납선택가능",
+      "source": "canonical",
+      "category": "text",
+      "categoryLabel": "Text",
+      "area": "Page Content",
+      "title": "텍스트가 다릅니다.",
+      "description": "Figma와 Web에서 표시되는 문구가 서로 다릅니다.",
+      "figmaValue": "약정기간 이후 잔여금액 지불 후 소유 and 차량 반납 선택가능",
+      "webValue": "약정기간 이후 잔여금액 지불 후 소유 or 차량 반납 선택가능",
+      "severity": "warning",
+      "confidence": "high",
+      "sortRank": 90,
+      "sectionKey": "",
+      "provenance": {
+        "origin": "canonical",
+        "matchedVisionIndex": null,
+        "matchedCanonicalEntityIds": [],
+        "canonicalCategory": "text",
+        "canonicalSectionId": "",
+        "mergeReason": ""
+      },
+      "mergeTokens": [
+        "text",
+        "Page Content",
+        "약정기간 이후 잔여금액 지불 후 소유 and 차량 반납 선택가능",
+        "약정기간 이후 잔여금액 지불 후 소유 or 차량 반납 선택가능"
+      ]
+    }
+  ]
+}

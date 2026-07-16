@@ -1,0 +1,407 @@
+{
+  "qaMeta": {
+    "webScanInvocationCount": 1,
+    "openAiCalled": false,
+    "startedAt": "2026-07-15T02:21:50.779Z",
+    "completedAt": "2026-07-15T02:22:04.606Z",
+    "browserLaunchCount": 1,
+    "desktopPageCount": 1,
+    "mobilePageCount": 1
+  },
+  "aiMeta": {
+    "visionPrepared": true,
+    "figmaImagePrepared": true,
+    "webImagePrepared": true,
+    "visionInputSummary": [
+      {
+        "label": "figma-overview",
+        "width": 1299,
+        "height": 3849,
+        "detail": "low"
+      },
+      {
+        "label": "web-overview",
+        "width": 1260,
+        "height": 3963,
+        "detail": "low"
+      }
+    ],
+    "visionCropSummary": [
+      {
+        "label": "figma-hero",
+        "width": 1600,
+        "height": 1707,
+        "cropUsed": true,
+        "cropReason": "hero-section-descriptor",
+        "cropFailureReason": "",
+        "cropDiagnostics": {
+          "descriptorHeight": 4533,
+          "validDescendantBoxCount": 16,
+          "invalidDescendantBoxCount": 0,
+          "descendantUnionHeight": 4938,
+          "nextSectionBoundary": 6454,
+          "finalCropHeight": 3590,
+          "cropCoverageRatio": 0.3601,
+          "cropQualityPassed": true,
+          "cropAdjusted": true,
+          "cropAdjustmentReason": "descendant-union-adjusted",
+          "descendantUnionFailureReason": ""
+        }
+      },
+      {
+        "label": "web-hero",
+        "width": 1600,
+        "height": 206,
+        "cropUsed": true,
+        "cropReason": "hero-section-descriptor",
+        "cropFailureReason": "",
+        "cropDiagnostics": {
+          "descriptorHeight": 484,
+          "validDescendantBoxCount": 0,
+          "invalidDescendantBoxCount": 0,
+          "descendantUnionHeight": 0,
+          "nextSectionBoundary": 1520,
+          "finalCropHeight": 484,
+          "cropCoverageRatio": 0.0401,
+          "cropQualityPassed": false,
+          "cropAdjusted": false,
+          "cropAdjustmentReason": "",
+          "descendantUnionFailureReason": "no-valid-semantic-descendant-box"
+        }
+      }
+    ],
+    "heroCropPairQuality": {
+      "compatible": false,
+      "figmaCoverageRatio": 0.3601,
+      "webCoverageRatio": 0.0401,
+      "coverageRatioDelta": 0.32,
+      "reason": "hero-crop-quality-failed"
+    },
+    "figmaImage": {
+      "width": 1299,
+      "height": 3849,
+      "originalWidth": 3365,
+      "originalHeight": 9970,
+      "cached": true,
+      "sizeBytes": 338777
+    },
+    "webImage": {
+      "width": 1260,
+      "height": 3963,
+      "originalWidth": 3840,
+      "originalHeight": 12078,
+      "cached": true,
+      "sizeBytes": 344083
+    },
+    "openAiCalled": true,
+    "model": "gpt-4.1-mini",
+    "visionUsed": true,
+    "imageInputCount": 2,
+    "rawVisionCount": 5,
+    "fallbackStage": "",
+    "fallbackReason": "",
+    "openAiRequestDurationMs": 20310,
+    "openAiResponseReceived": true,
+    "openAiResponseParsed": true,
+    "aiReviewDurationMs": 20322,
+    "fallbackUsed": false,
+    "visionFailureReason": ""
+  },
+  "reportMeta": {
+    "rawVisionCount": 5,
+    "canonicalSupplementCount": 6,
+    "mergedCount": 7,
+    "dedupedCount": 7,
+    "displayCount": 7,
+    "invalidIssueDroppedCount": 0,
+    "crossCategoryMergeRejectedCount": 0
+  },
+  "finalIssues": [
+    {
+      "id": "canonical-difference-8-01bmw신차를바꿔탈수있는프로그램bmw가미래의잔존가치를예측하여중고차가치를보장-bmw신차를바꿔탈수있는상품bmw가미래의잔존가치를예측하여중고차가치를보장",
+      "source": "canonical",
+      "category": "text",
+      "categoryLabel": "Text",
+      "area": "Page Content",
+      "title": "텍스트가 다릅니다.",
+      "description": "Figma와 Web에서 표시되는 문구가 서로 다릅니다.",
+      "figmaValue": "01 BMW 신차를 바꿔탈 수 있는 프로그램 BMW가 미래의 잔존가치를 예측하여 중고차 가치를 보장",
+      "webValue": "BMW 신차를 바꿔탈 수 있는 상품 BMW가 미래의 잔존가치를 예측하여 중고차 가치를 보장",
+      "severity": "warning",
+      "confidence": "high",
+      "sortRank": 20.2035,
+      "sectionId": "section:figma:3345:17413",
+      "sectionPath": "BMW 스마트 상품_1920(W) / con / 01_BMW 스마트 프로그램(1) / Group 172 / txt / Frame 51365 / 01 BMW 신차를 바꿔탈 수 있는 프로그램 BMW가 미래의 잔존가치를 예측하여 중고차 가치를 보장",
+      "yRatio": 0.202035,
+      "xRatio": 0.552604,
+      "originalIndex": 9,
+      "sectionKey": "sectionfigma334517413",
+      "provenance": {
+        "origin": "canonical",
+        "matchedVisionIndex": null,
+        "matchedCanonicalEntityIds": [
+          "section:figma:3345:17413",
+          "3345:17451",
+          "div.content > div.program_area:nth-of-type(1) > div.bg:nth-of-type(1) > div.text:nth-of-type(2) > dl:nth-of-type(1) > dd"
+        ],
+        "canonicalCategory": "text",
+        "canonicalSectionId": "sectionfigma334517413",
+        "mergeReason": ""
+      },
+      "mergeTokens": [
+        "text",
+        "Page Content",
+        "01 BMW 신차를 바꿔탈 수 있는 프로그램 BMW가 미래의 잔존가치를 예측하여 중고차 가치를 보장",
+        "BMW 신차를 바꿔탈 수 있는 상품 BMW가 미래의 잔존가치를 예측하여 중고차 가치를 보장",
+        "BMW 스마트 상품_1920(W) / con / 01_BMW 스마트 프로그램(1) / Group 172 / txt / Frame 51365 / 01 BMW 신차를 바꿔탈 수 있는 프로그램 BMW가 미래의 잔존가치를 예측하여 중고차 가치를 보장",
+        "section:figma:3345:17413"
+      ]
+    },
+    {
+      "id": "canonical-difference-7-02낮은월납입금으로bmw이용-낮은월납입금으로bmw이용",
+      "source": "canonical",
+      "category": "text",
+      "categoryLabel": "Text",
+      "area": "Page Content",
+      "title": "텍스트가 다릅니다.",
+      "description": "Figma와 Web에서 표시되는 문구가 서로 다릅니다.",
+      "figmaValue": "02 낮은 월납입금으로 BMW 이용",
+      "webValue": "낮은 월 납입금으로 BMW 이용",
+      "severity": "warning",
+      "confidence": "high",
+      "sortRank": 22.637,
+      "sectionId": "section:figma:3345:17413",
+      "sectionPath": "BMW 스마트 상품_1920(W) / con / 01_BMW 스마트 프로그램(1) / Group 172 / txt / Frame 51366 / 02 낮은 월납입금으로 BMW 이용",
+      "yRatio": 0.22637,
+      "xRatio": 0.552604,
+      "originalIndex": 8,
+      "sectionKey": "sectionfigma334517413",
+      "provenance": {
+        "origin": "canonical",
+        "matchedVisionIndex": null,
+        "matchedCanonicalEntityIds": [
+          "section:figma:3345:17413",
+          "3345:17453",
+          "div.content > div.program_area:nth-of-type(1) > div.bg:nth-of-type(1) > div.text:nth-of-type(2) > dl:nth-of-type(2) > dd"
+        ],
+        "canonicalCategory": "text",
+        "canonicalSectionId": "sectionfigma334517413",
+        "mergeReason": ""
+      },
+      "mergeTokens": [
+        "text",
+        "Page Content",
+        "02 낮은 월납입금으로 BMW 이용",
+        "낮은 월 납입금으로 BMW 이용",
+        "BMW 스마트 상품_1920(W) / con / 01_BMW 스마트 프로그램(1) / Group 172 / txt / Frame 51366 / 02 낮은 월납입금으로 BMW 이용",
+        "section:figma:3345:17413"
+      ]
+    },
+    {
+      "id": "canonical-difference-3-03타던차량이싫증날때새로운bmw차량으로바꿔탈수있는기회타던차량계속소유하고싶을때bmww가보장한금액을내고계속이용-타던차량이싫증날때새로운bmw차량으로바꿔탈수있는기회타던차량계속소유하고싶을때bmw가보장한금액을내고계속이용",
+      "source": "canonical",
+      "category": "text",
+      "categoryLabel": "Text",
+      "area": "Page Content",
+      "title": "텍스트가 다릅니다.",
+      "description": "Figma와 Web에서 표시되는 문구가 서로 다릅니다.",
+      "figmaValue": "03 타던 차량이 싫증날 때, 새로운 BMW 차량으로 바꿔탈 수 있는 기회 타던 차량 계속 소유하고 싶을 때, BMWW가 보장한 금액을 내고 계속 이용",
+      "webValue": "타던 차량이 싫증날 때, 새로운 BMW 차량으로 바꿔탈 수 있는 기회 타던 차량 계속 소유하고 싶을 때, BMW가 보장한 금액을 내고 계속 이용",
+      "severity": "warning",
+      "confidence": "high",
+      "sortRank": 24.5586,
+      "sectionId": "section:figma:3345:17413",
+      "sectionPath": "BMW 스마트 상품_1920(W) / con / 01_BMW 스마트 프로그램(1) / Group 172 / txt / Frame 51367 / 03 타던 차량이 싫증날 때, 새로운 BMW 차량으로 바꿔탈 수 있는 기회 타던 차량 계속 소유하고 싶을 때, BMWW가 보장한 금액을 내고 계속 이용",
+      "yRatio": 0.245586,
+      "xRatio": 0.552604,
+      "originalIndex": 3,
+      "sectionKey": "sectionfigma334517413",
+      "provenance": {
+        "origin": "canonical",
+        "matchedVisionIndex": null,
+        "matchedCanonicalEntityIds": [
+          "section:figma:3345:17413",
+          "3345:17455",
+          "div.content > div.program_area:nth-of-type(1) > div.bg:nth-of-type(1) > div.text:nth-of-type(2) > dl:nth-of-type(3) > dd"
+        ],
+        "canonicalCategory": "text",
+        "canonicalSectionId": "sectionfigma334517413",
+        "mergeReason": ""
+      },
+      "mergeTokens": [
+        "text",
+        "Page Content",
+        "03 타던 차량이 싫증날 때, 새로운 BMW 차량으로 바꿔탈 수 있는 기회 타던 차량 계속 소유하고 싶을 때, BMWW가 보장한 금액을 내고 계속 이용",
+        "타던 차량이 싫증날 때, 새로운 BMW 차량으로 바꿔탈 수 있는 기회 타던 차량 계속 소유하고 싶을 때, BMW가 보장한 금액을 내고 계속 이용",
+        "BMW 스마트 상품_1920(W) / con / 01_BMW 스마트 프로그램(1) / Group 172 / txt / Frame 51367 / 03 타던 차량이 싫증날 때, 새로운 BMW 차량으로 바꿔탈 수 있는 기회 타던 차량 계속 소유하고 싶을 때, BMWW가 보장한 금액을 내고 계속 이용",
+        "section:figma:3345:17413"
+      ]
+    },
+    {
+      "id": "canonical-difference-6-※월납입금에는선납금을포함한할부원금및잔가보장금액에대한이자모두포함-*월납입금에는선납금을제외한할부원금및잔가보장금액에대한이자모두포함",
+      "source": "canonical",
+      "category": "text",
+      "categoryLabel": "Text",
+      "area": "Page Content",
+      "title": "텍스트가 다릅니다.",
+      "description": "Figma와 Web에서 표시되는 문구가 서로 다릅니다.",
+      "figmaValue": "※ 월 납입금에는 선납금을 포함한 할부 원금 및 잔가보장금액에 대한 이자 모두 포함.",
+      "webValue": "* 월 납입금에는 선납금을 제외한 할부 원금 및 잔가보장금액에 대한 이자 모두 포함.",
+      "severity": "warning",
+      "confidence": "high",
+      "sortRank": 26.088099999999997,
+      "sectionId": "section:figma:3345:17413",
+      "sectionPath": "BMW 스마트 상품_1920(W) / con / 01_BMW 스마트 프로그램(1) / Group 172 / 다이어그램 / ※ 월 납입금에는 선납금을 포함한 할부 원금 및 잔가보장금액에 대한 이자 모두 포함.",
+      "yRatio": 0.260881,
+      "xRatio": 0.279167,
+      "originalIndex": 7,
+      "sectionKey": "sectionfigma334517413",
+      "provenance": {
+        "origin": "canonical",
+        "matchedVisionIndex": null,
+        "matchedCanonicalEntityIds": [
+          "section:figma:3345:17413",
+          "3345:17448",
+          "div.section:nth-of-type(2) > div.content > div.program_area:nth-of-type(1) > div.bg:nth-of-type(1) > div.diagram:nth-of-type(1) > p"
+        ],
+        "canonicalCategory": "text",
+        "canonicalSectionId": "sectionfigma334517413",
+        "mergeReason": ""
+      },
+      "mergeTokens": [
+        "text",
+        "Page Content",
+        "※ 월 납입금에는 선납금을 포함한 할부 원금 및 잔가보장금액에 대한 이자 모두 포함.",
+        "* 월 납입금에는 선납금을 제외한 할부 원금 및 잔가보장금액에 대한 이자 모두 포함.",
+        "BMW 스마트 상품_1920(W) / con / 01_BMW 스마트 프로그램(1) / Group 172 / 다이어그램 / ※ 월 납입금에는 선납금을 포함한 할부 원금 및 잔가보장금액에 대한 이자 모두 포함.",
+        "section:figma:3345:17413"
+      ]
+    },
+    {
+      "id": "canonical-difference-11-약정기간이후잔여금액지불후소유and차량반납선택가능-약정기간이후잔여금액지불후소유or차량반납선택가능",
+      "source": "canonical",
+      "category": "text",
+      "categoryLabel": "Text",
+      "area": "Page Content",
+      "title": "텍스트가 다릅니다.",
+      "description": "Figma와 Web에서 표시되는 문구가 서로 다릅니다.",
+      "figmaValue": "약정기간 이후 잔여금액 지불 후 소유 and 차량 반납 선택가능",
+      "webValue": "약정기간 이후 잔여금액 지불 후 소유 or 차량 반납 선택가능",
+      "severity": "warning",
+      "confidence": "high",
+      "sortRank": 27.9895,
+      "sectionId": "section:figma:3345:17413",
+      "sectionPath": "BMW 스마트 상품_1920(W) / con / 01_BMW 스마트 프로그램(1) / 약정기간 이후 잔여금액 지불 후 소유 or 차량 반납 선택가능 / 약정기간 이후 잔여금액 지불 후 소유 and 차량 반납 선택가능",
+      "yRatio": 0.279895,
+      "xRatio": 0.341667,
+      "originalIndex": 12,
+      "sectionKey": "sectionfigma334517413",
+      "provenance": {
+        "origin": "canonical",
+        "matchedVisionIndex": null,
+        "matchedCanonicalEntityIds": [
+          "section:figma:3345:17413",
+          "3345:17421",
+          "div.container:nth-of-type(1) > div.section:nth-of-type(2) > div.content > div.program_area:nth-of-type(1) > div.bot_txt:nth-of-type(2) > p"
+        ],
+        "canonicalCategory": "text",
+        "canonicalSectionId": "sectionfigma334517413",
+        "mergeReason": ""
+      },
+      "mergeTokens": [
+        "text",
+        "Page Content",
+        "약정기간 이후 잔여금액 지불 후 소유 and 차량 반납 선택가능",
+        "약정기간 이후 잔여금액 지불 후 소유 or 차량 반납 선택가능",
+        "BMW 스마트 상품_1920(W) / con / 01_BMW 스마트 프로그램(1) / 약정기간 이후 잔여금액 지불 후 소유 or 차량 반납 선택가능 / 약정기간 이후 잔여금액 지불 후 소유 and 차량 반납 선택가능",
+        "section:figma:3345:17413"
+      ]
+    },
+    {
+      "id": "vision-0-프로그램상품표현차이",
+      "source": "merged",
+      "category": "text",
+      "categoryLabel": "Text",
+      "area": "Page Content",
+      "title": "텍스트가 다릅니다.",
+      "description": "BMW 스마트 할부 프로그램 설명에서 Figma는 '금융 프로그램'이라 표현, 웹은 '금융 상품'으로 다름.",
+      "figmaValue": "BMW 스마트 할부는 계약기간 동안 중고차 가치(잔존가치)를 보장함으로써 일반할부보다 낮은 월 할부금으로 차량 구매가 가능합니다. 또한 계약 만기 시 차량 인수, 반납, 혹은 재금융 중 한 가지 옵션을 부담 없이 선택할 수 있는 금융 프로그램입니다.",
+      "webValue": "BMW 스마트 할부는 계약기간 동안 중고차 가치(잔존가치)를 보장함으로써 일반할부보다 낮은 월 할부금으로 차량 구매가 가능합니다. 또한 계약 만기 시 차량 인수, 반납, 혹은 재금융 중 한 가지 옵션을 부담 없이 선택할 수 있는 금융 상품입니다.",
+      "severity": "warning",
+      "confidence": "high",
+      "sortRank": 5,
+      "sectionId": "",
+      "sectionPath": "",
+      "yRatio": 0.387499,
+      "xRatio": 0.126042,
+      "originalIndex": 2,
+      "sectionKey": "sectionfigma334517413",
+      "provenance": {
+        "origin": "merged",
+        "matchedVisionIndex": 0,
+        "matchedCanonicalEntityIds": [
+          "section:figma:3345:17413",
+          "3345:17476",
+          "ul > li:nth-of-type(1) > div.txt:nth-of-type(2) > dl > dd > p"
+        ],
+        "canonicalCategory": "text",
+        "canonicalSectionId": "sectionfigma334517413",
+        "mergeReason": "same-category+same-values"
+      },
+      "mergeTokens": [
+        "페이지 콘텐츠",
+        "Text",
+        "프로그램/상품 표현 차이",
+        "BMW 스마트 할부 프로그램 설명에서 Figma는 '금융 프로그램'이라 표현, 웹은 '금융 상품'으로 다름.",
+        "금융 프로그램",
+        "금융 상품",
+        "text",
+        "Page Content",
+        "BMW 스마트 할부는 계약기간 동안 중고차 가치(잔존가치)를 보장함으로써 일반할부보다 낮은 월 할부금으로 차량 구매가 가능합니다. 또한 계약 만기 시 차량 인수, 반납, 혹은 재금융 중 한 가지 옵션을 부담 없이 선택할 수 있는 금융 프로그램입니다.",
+        "BMW 스마트 할부는 계약기간 동안 중고차 가치(잔존가치)를 보장함으로써 일반할부보다 낮은 월 할부금으로 차량 구매가 가능합니다. 또한 계약 만기 시 차량 인수, 반납, 혹은 재금융 중 한 가지 옵션을 부담 없이 선택할 수 있는 금융 상품입니다.",
+        "BMW 스마트 상품_1920(W) / con / 02_프로그램종류 / BMW 스마트 할부 / Frame 51360 / Frame 51362 / BMW 스마트 할부는 계약기간 동안 중고차 가치(잔존가치)를 보장함으로써 일반할부보다 낮은 월 할부금으로 차량 구매가 가능합니다. 또한 계약 만기 시 차량 인수, 반납, 혹은 재금...",
+        "section:figma:3345:17413"
+      ]
+    },
+    {
+      "id": "canonical-difference-4-프로모션바로가가기-프로모션바로가기",
+      "source": "canonical",
+      "category": "text",
+      "categoryLabel": "Text",
+      "area": "Page Content",
+      "title": "텍스트가 다릅니다.",
+      "description": "Figma와 Web에서 표시되는 문구가 서로 다릅니다.",
+      "figmaValue": "프로모션 바로가가기",
+      "webValue": "프로모션 바로가기",
+      "severity": "warning",
+      "confidence": "high",
+      "sortRank": 54.702600000000004,
+      "sectionId": "section:figma:3345:17413",
+      "sectionPath": "BMW 스마트 상품_1920(W) / con / 03_서류 / btn / basic-button_2026 / content",
+      "yRatio": 0.547026,
+      "xRatio": 0.377604,
+      "originalIndex": 4,
+      "sectionKey": "sectionfigma334517413",
+      "provenance": {
+        "origin": "canonical",
+        "matchedVisionIndex": null,
+        "matchedCanonicalEntityIds": [
+          "section:figma:3345:17413",
+          "I3345:17531;2524:530",
+          "div.section:nth-of-type(2) > div.content > div.papers_list:nth-of-type(3) > div.inner > div.btn_wrap.center:nth-of-type(3) > a.btn.md:nth-of-type(1)"
+        ],
+        "canonicalCategory": "text",
+        "canonicalSectionId": "sectionfigma334517413",
+        "mergeReason": ""
+      },
+      "mergeTokens": [
+        "text",
+        "Page Content",
+        "프로모션 바로가가기",
+        "프로모션 바로가기",
+        "BMW 스마트 상품_1920(W) / con / 03_서류 / btn / basic-button_2026 / content",
+        "section:figma:3345:17413"
+      ]
+    }
+  ]
+}

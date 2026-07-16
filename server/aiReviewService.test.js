@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createAiReviewService, normalizeAiReview, parseJsonObject } from './aiReviewService.js'
+import { DEFAULT_AI_QA_MODEL } from './aiModelConfig.js'
 
 test('AI review service calls OpenAI client exactly once and normalizes structured review', async () => {
   const calls = { create: 0, request: null }
@@ -83,6 +84,56 @@ test('AI review service sends four images with request detail in a single multim
   assert.equal(result.meta.rawVisionCount, 1)
   assert.deepEqual(result.meta.visionInputSummary.map((item) => item.label), ['figma-overview', 'web-overview', 'figma-hero', 'web-hero'])
   assert.equal(result.review.visualDifferences[0].category, 'Media')
+})
+
+test('AI review service uses AI QA default model and records it in meta', async () => {
+  const calls = { create: 0, request: null }
+  const service = createAiReviewService({
+    client: {
+      chat: {
+        completions: {
+          async create(request) {
+            calls.create += 1
+            calls.request = request
+            return { choices: [{ message: { content: validAiResponse() } }] }
+          },
+        },
+      },
+    },
+    model: '   ',
+  })
+
+  const result = await service.review(createPayload())
+
+  assert.equal(calls.create, 1)
+  assert.equal(calls.request.model, DEFAULT_AI_QA_MODEL)
+  assert.equal(result.meta.model, DEFAULT_AI_QA_MODEL)
+})
+
+test('AI review model errors do not retry with a mini fallback model', async () => {
+  const calls = { create: 0, models: [] }
+  const modelError = new Error('model not found')
+  modelError.status = 404
+  const service = createAiReviewService({
+    client: {
+      chat: {
+        completions: {
+          async create(request) {
+            calls.create += 1
+            calls.models.push(request.model)
+            throw modelError
+          },
+        },
+      },
+    },
+  })
+
+  await assert.rejects(
+    service.review(createPayload()),
+    (error) => error.openAiCalled === true && error.model === DEFAULT_AI_QA_MODEL && error.fallbackStage === 'openai-http-error',
+  )
+  assert.equal(calls.create, 1)
+  assert.deepEqual(calls.models, [DEFAULT_AI_QA_MODEL])
 })
 
 test('AI review normalizes Korean visual differences and removes minor/generic duplicates', () => {

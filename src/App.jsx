@@ -1,17 +1,14 @@
 import { useMemo, useState } from 'react'
 import './App.css'
 import { buildReportText, createResultSummary, getStatusCounts } from './utils/report'
-import { loadHistoryItems, saveHistoryItem } from './utils/history'
+import { deleteHistoryItem, loadHistoryItems, saveHistoryItem } from './utils/history'
 import { buildAiReviewPayloadFromSession, sanitizeAiReviewResponse } from './utils/aiReview'
 import { isValidHttpUrl } from './utils/scanSession'
 import { countIssueCards, createCompactVisualResult, createVisualIssueCards, createVisualSummary } from './utils/visualQa'
-import AuditHeader from './components/AuditHeader'
-import CheckList from './components/CheckList'
-import DetailPanel from './components/DetailPanel'
 import EmptyState from './components/EmptyState'
 import HistoryPanel from './components/HistoryPanel'
 import InputPanel from './components/InputPanel'
-import SummaryCards from './components/SummaryCards'
+import TechQaPanel from './components/TechQaPanel'
 import VisualQaPanel from './components/VisualQaPanel'
 import WorkspaceTabs from './components/WorkspaceTabs'
 
@@ -22,7 +19,7 @@ function App() {
   const [techResult, setTechResult] = useState(null)
   const [visualScanState, setVisualScanState] = useState('idle')
   const [techScanState, setTechScanState] = useState('idle')
-  const [activeTab, setActiveTab] = useState('visual')
+  const [activeTab, setActiveTab] = useState('overview')
   const [inputError, setInputError] = useState('')
   const [figmaError, setFigmaError] = useState('')
   const [visualCopyStatus, setVisualCopyStatus] = useState('')
@@ -33,12 +30,20 @@ function App() {
   const [aiReviewState, setAiReviewState] = useState('idle')
   const [scanStage, setScanStage] = useState('idle')
   const [historyItems, setHistoryItems] = useState(() => loadHistoryItems())
+  const [selectedHistoryId, setSelectedHistoryId] = useState('')
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
 
   const visualSummary = useMemo(() => (visualResult ? createVisualSummary(visualResult) : ''), [visualResult])
   const techSummary = useMemo(() => (techResult ? createResultSummary(techResult) : ''), [techResult])
-  const techStatusCounts = useMemo(() => (techResult ? getStatusCounts(techResult.checks || []) : null), [techResult])
   const isScanning = visualScanState === 'loading' || techScanState === 'loading' || aiReviewState === 'loading'
+  const isVisualTabEnabled = Boolean(visualResult) || visualScanState === 'loading' || visualScanState === 'success' || visualScanState === 'error'
+  const isTechTabEnabled = Boolean(techResult) || techScanState === 'loading' || techScanState === 'success' || techScanState === 'error'
+
+  const handleTabChange = (tabId) => {
+    if (tabId === 'visual' && !isVisualTabEnabled) return
+    if (tabId === 'tech' && !isTechTabEnabled) return
+    setActiveTab(tabId)
+  }
 
   const handleStartScan = async () => {
     const webUrl = url.trim()
@@ -55,13 +60,14 @@ function App() {
     setAiReview(null)
     setAiReviewState('idle')
     setScanStage('idle')
+    setSelectedHistoryId('')
 
     if (!isValidHttpUrl(webUrl)) {
       setInputError('http:// 또는 https://로 시작하는 Web URL을 입력해 주세요.')
       setTechScanState('idle')
-      setVisualScanState(frameUrl ? 'error' : 'skipped')
+      setVisualScanState('idle')
       setScanStage('idle')
-      setActiveTab('tech')
+      setActiveTab('overview')
       return
     }
 
@@ -119,8 +125,9 @@ function App() {
   }
 
   const handleRestoreHistory = (item) => {
+    setSelectedHistoryId(item.id)
     setUrl(item.url)
-    if (item.figmaUrl) setFigmaUrl(item.figmaUrl)
+    setFigmaUrl(item.figmaUrl || '')
     setInputError('')
     setFigmaError('')
     setVisualScanError('')
@@ -129,6 +136,7 @@ function App() {
     setTechCopyStatus('')
     setAiReview(null)
     setAiReviewState('idle')
+    setScanStage('idle')
 
     if (item.type === 'combined') {
       setVisualResult(item.visual?.compactResult || null)
@@ -144,20 +152,61 @@ function App() {
     }
 
     if (!item.result) {
+      setVisualResult(null)
+      setTechResult(null)
+      setVisualScanState('idle')
+      setTechScanState('idle')
       setActiveTab('history')
       return
     }
 
     if (item.type === 'tech' || item.result?.targetUrl) {
+      setVisualResult(null)
       setTechResult(item.result)
+      setVisualScanState('skipped')
       setTechScanState('success')
       setActiveTab('tech')
       return
     }
 
     setVisualResult(item.result)
+    setTechResult(null)
     setVisualScanState('success')
+    setTechScanState('idle')
     setActiveTab('visual')
+  }
+
+  const clearResultState = () => {
+    setVisualResult(null)
+    setTechResult(null)
+    setInputError('')
+    setFigmaError('')
+    setVisualScanState('idle')
+    setTechScanState('idle')
+    setVisualScanError('')
+    setTechScanError('')
+    setVisualCopyStatus('')
+    setTechCopyStatus('')
+    setAiReview(null)
+    setAiReviewState('idle')
+    setScanStage('idle')
+  }
+
+  const resetToNewScan = () => {
+    if (isScanning) return
+    clearResultState()
+    setSelectedHistoryId('')
+    setActiveTab('overview')
+  }
+
+  const handleDeleteHistory = (id) => {
+    const nextItems = deleteHistoryItem(id)
+    setHistoryItems(nextItems)
+    if (selectedHistoryId === id) {
+      clearResultState()
+      setSelectedHistoryId('')
+      setActiveTab('history')
+    }
   }
 
   const handleCopyVisualResult = async () => {
@@ -192,20 +241,25 @@ function App() {
       />
 
       <section className="workspace" aria-live="polite">
-        <WorkspaceTabs activeTab={activeTab} onTabChange={setActiveTab} />
+        <WorkspaceTabs
+          activeTab={activeTab}
+          disabledTabs={{ visual: !isVisualTabEnabled, tech: !isTechTabEnabled }}
+          onTabChange={handleTabChange}
+        />
 
         {activeTab === 'history' ? (
-          <HistoryPanel historyItems={historyItems} onRestoreHistory={handleRestoreHistory} />
+          <HistoryPanel
+            historyItems={historyItems}
+            isScanning={isScanning}
+            onDeleteHistory={handleDeleteHistory}
+            onNewScan={resetToNewScan}
+            onRestoreHistory={handleRestoreHistory}
+          />
         ) : activeTab === 'tech' ? (
           techResult ? (
-            <section className="section-stack">
-              <AuditHeader copyStatus={techCopyStatus} result={techResult} summary={techSummary} onCopyReport={handleCopyTechResult} />
-              <SummaryCards counts={techStatusCounts} result={techResult} />
-              <CheckList checks={techResult.checks || []} />
-              <DetailPanel result={techResult} />
-            </section>
+            <TechQaPanel copyStatus={techCopyStatus} result={techResult} summary={techSummary} onCopyReport={handleCopyTechResult} />
           ) : <EmptyState scanState={techScanState} scanError={techScanError} mode="tech" combined={visualScanState === 'loading'} scanStage={scanStage} />
-        ) : visualResult ? (
+        ) : activeTab === 'visual' && visualResult ? (
           <VisualQaPanel
             copyStatus={visualCopyStatus}
             result={visualResult}
@@ -215,8 +269,10 @@ function App() {
             summary={visualSummary}
             onCopyResult={handleCopyVisualResult}
           />
-        ) : (
+        ) : activeTab === 'visual' ? (
           <EmptyState scanState={visualScanState} scanError={visualScanError} mode="visual" combined={techScanState === 'loading'} scanStage={scanStage} />
+        ) : (
+          <EmptyState scanState="idle" scanError="" mode="overview" combined={false} scanStage={scanStage} />
         )}
       </section>
     </main>
@@ -443,13 +499,15 @@ function createCompactTechResult(result) {
     accessible: result.accessible,
     navigationError: result.navigationError,
     checks: result.checks || [],
-    links: Array.isArray(result.links) ? result.links.slice(0, 50) : [],
+    links: Array.isArray(result.links) ? result.links : [],
     uncheckedLinkCount: result.uncheckedLinkCount || 0,
-    missingHrefLinks: Array.isArray(result.missingHrefLinks) ? result.missingHrefLinks.slice(0, 50) : [],
-    images: Array.isArray(result.images) ? result.images.slice(0, 50) : [],
-    consoleMessages: Array.isArray(result.consoleMessages) ? result.consoleMessages.slice(0, 50) : [],
+    missingHrefLinks: Array.isArray(result.missingHrefLinks) ? result.missingHrefLinks : [],
+    images: Array.isArray(result.images) ? result.images : [],
+    consoleMessages: Array.isArray(result.consoleMessages) ? result.consoleMessages : [],
     counts: result.counts || {},
     mobile: result.mobile || { viewport: { width: 0, height: 0 }, statusCode: null, note: '' },
+    linkAudit: result.linkAudit || {},
+    uiControlWithoutUrlCount: result.uiControlWithoutUrlCount || 0,
   }
 }
 

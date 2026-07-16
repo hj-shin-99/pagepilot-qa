@@ -1,0 +1,176 @@
+{
+  "success": true,
+  "meta": {
+    "visionPrepared": true,
+    "figmaImagePrepared": true,
+    "webImagePrepared": true,
+    "visionInputSummary": [
+      {
+        "label": "figma-overview",
+        "width": 1299,
+        "height": 3849,
+        "detail": "low"
+      },
+      {
+        "label": "web-overview",
+        "width": 1260,
+        "height": 3963,
+        "detail": "low"
+      }
+    ],
+    "visionCropSummary": [
+      {
+        "label": "figma-hero",
+        "width": 1600,
+        "height": 1707,
+        "cropUsed": true,
+        "cropReason": "hero-section-descriptor",
+        "cropFailureReason": "",
+        "cropDiagnostics": {
+          "descriptorHeight": 4533,
+          "validDescendantBoxCount": 16,
+          "invalidDescendantBoxCount": 0,
+          "descendantUnionHeight": 4938,
+          "nextSectionBoundary": 6454,
+          "finalCropHeight": 3590,
+          "cropCoverageRatio": 0.3601,
+          "cropQualityPassed": true,
+          "cropAdjusted": true,
+          "cropAdjustmentReason": "descendant-union-adjusted",
+          "descendantUnionFailureReason": ""
+        }
+      },
+      {
+        "label": "web-hero",
+        "width": 1600,
+        "height": 206,
+        "cropUsed": true,
+        "cropReason": "hero-section-descriptor",
+        "cropFailureReason": "",
+        "cropDiagnostics": {
+          "descriptorHeight": 484,
+          "validDescendantBoxCount": 0,
+          "invalidDescendantBoxCount": 0,
+          "descendantUnionHeight": 0,
+          "nextSectionBoundary": 1520,
+          "finalCropHeight": 484,
+          "cropCoverageRatio": 0.0401,
+          "cropQualityPassed": false,
+          "cropAdjusted": false,
+          "cropAdjustmentReason": "",
+          "descendantUnionFailureReason": "no-valid-semantic-descendant-box"
+        }
+      }
+    ],
+    "heroCropPairQuality": {
+      "compatible": false,
+      "figmaCoverageRatio": 0.3601,
+      "webCoverageRatio": 0.0401,
+      "coverageRatioDelta": 0.32,
+      "reason": "hero-crop-quality-failed"
+    },
+    "figmaImage": {
+      "width": 1299,
+      "height": 3849,
+      "originalWidth": 3365,
+      "originalHeight": 9970,
+      "cached": true,
+      "sizeBytes": 338777
+    },
+    "webImage": {
+      "width": 1260,
+      "height": 3963,
+      "originalWidth": 3840,
+      "originalHeight": 12078,
+      "cached": false,
+      "sizeBytes": 345392
+    },
+    "openAiCalled": true,
+    "model": "gpt-4.1-mini",
+    "visionUsed": true,
+    "imageInputCount": 2,
+    "rawVisionCount": 5,
+    "fallbackStage": "",
+    "fallbackReason": "",
+    "openAiRequestDurationMs": 18327,
+    "openAiResponseReceived": true,
+    "openAiResponseParsed": true,
+    "aiReviewDurationMs": 18337,
+    "fallbackUsed": false,
+    "visionFailureReason": ""
+  },
+  "review": {
+    "releaseDecision": "caution",
+    "summary": "자동 QA 결과 확인이 필요한 차이가 있습니다. 의도된 차이인지 확인 후 진행을 권장합니다.",
+    "mustFix": [
+      {
+        "category": "CTA",
+        "title": "Hero 섹션 내 주요 CTA 3개가 Web에 전혀 노출되지 않음",
+        "description": "Hero 섹션 내 주요 CTA 3개가 Web에 전혀 노출되지 않음",
+        "evidence": [],
+        "severity": "critical"
+      },
+      {
+        "category": "Text",
+        "title": "텍스트 내 숫자 및 단락 오류 수정 필요 (예: 'BMWW' 오타 → 'BMW')",
+        "description": "텍스트 내 숫자 및 단락 오류 수정 필요 (예: 'BMWW' 오타 → 'BMW')",
+        "evidence": [],
+        "severity": "critical"
+      }
+    ],
+    "verify": [
+      {
+        "category": "Text",
+        "title": "프로모션 및 기타 하단 정보 문구 동일성 점검 권고",
+        "description": "프로모션 및 기타 하단 정보 문구 동일성 점검 권고",
+        "evidence": [],
+        "severity": "warning"
+      }
+    ],
+    "developerNotes": [
+      {
+        "category": "Tech",
+        "title": "오타 및 띄어쓰기, 문장 부호 등의 작은 차이는 우선은 큰 영향 없음",
+        "description": "오타 및 띄어쓰기, 문장 부호 등의 작은 차이는 우선은 큰 영향 없음",
+        "evidence": [],
+        "severity": "check"
+      }
+    ],
+    "visualDifferences": [
+      {
+        "area": "페이지 콘텐츠",
+        "category": "Text",
+        "title": "텍스트 내 오타 및 띄어쓰기 차이",
+        "summary": "Figma 내 일부 문장에 오타 'BMWW'가 'BMW'로 수정되어야 하며, Web에는 띄어쓰기(예: '진행중인' → '진행 중인')가 올바르게 적용되어 있습니다.",
+        "figmaValue": "텍스트 중 'BMWW', '진행중인' 등 오타 및 띄어쓰기 오류 존재",
+        "webValue": "정확한 'BMW', '진행 중인' 표기",
+        "severity": "warning",
+        "confidence": "high",
+        "order": 3
+      },
+      {
+        "area": "메인 비주얼",
+        "category": "Text",
+        "title": "문단 내 숫자 및 접두어 표기 차이",
+        "summary": "Figma에서는 일부 문장이 '02 낮은 월납입금으로 BMW 이용', '03 타던 차량이 싫증날 때...' 등 숫자 접두어가 붙어 있으나 Web에서는 숫자 접두어 없이 문장으로만 표기됩니다.",
+        "figmaValue": "'02', '03'과 같은 접두어 숫자가 문장 앞에 명시됨",
+        "webValue": "숫자 없이 단순 문장 표기",
+        "severity": "check",
+        "confidence": "high",
+        "order": 4
+      },
+      {
+        "area": "푸터",
+        "category": "Text",
+        "title": "프로모션 및 하단 링크 텍스트 일부 차이",
+        "summary": "Figma와 Web 각각 하단 프로모션, 내 예산으로 BMW 찾기, 전시장 위치 등 링크 영역 텍스트가 '프로모션 바로가기'와 '프로모션 바로가기' 등 약간 다르지만 큰 의미 차이는 없습니다.",
+        "figmaValue": "하단 링크 문구 예: '진행중인 프로모션', '내 예산으로 BMW 찾기', '전시장 위치'",
+        "webValue": "하단 링크 문구 예: '진행 중인 프로모션', '월 납입 금 계산', '전시장 위치'",
+        "severity": "check",
+        "confidence": "medium",
+        "order": 5
+      }
+    ],
+    "clientReplyDraft": "자동 QA 검토 결과, 확인이 필요한 차이가 일부 확인되었습니다. 의도된 차이인지 확인 후 진행하겠습니다."
+  }
+}

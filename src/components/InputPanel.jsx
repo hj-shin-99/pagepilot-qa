@@ -32,7 +32,7 @@ function InputPanel({
         <div className="sidebar-content">
           <div className="sidebar-intro">
             <h1>PagePilot QA v0.3</h1>
-            <p className="sidebar-description">Figma 시안과 실제 Web 페이지를 AI 멀티모달로 비교하여 텍스트, 이미지, CTA 및 콘텐츠 차이를 자동 검수합니다.</p>
+            <p className="sidebar-description">Web 페이지의 기술 품질을 점검하고, Figma 시안과 실제 화면의 콘텐츠·디자인 차이를 AI로 함께 검수합니다.</p>
           </div>
 
           <form className="scan-form sidebar-input-section" onSubmit={handleSubmit}>

@@ -64,6 +64,7 @@ export function createVisualDisplayIssueReport(result = {}, aiReview = null) {
       ...sourceCounts,
       candidateCount: candidates.length,
       displayIssueCount: deduped.length,
+      semanticDuplicateRemovedCount: candidates.length - deduped.length,
       finalReportMeta: finalReport.meta,
     },
   }
@@ -96,6 +97,13 @@ function fromAiDifference(item = {}, index) {
     xRatio: firstNumber(item.xRatio, item.figmaXRatio, item.webXRatio, item.spatialEvidence?.xRatio),
     originalIndex: firstNumber(item.originalIndex, item.order, index),
     sectionKey: createSectionKey(item),
+    readableCanonicalArea: item.readableCanonicalArea,
+    canonicalArea: item.canonicalArea,
+    canonicalAreaName: item.canonicalAreaName,
+    readableSectionLabel: item.readableSectionLabel,
+    sectionLabel: item.sectionLabel,
+    sectionName: item.sectionName,
+    normalizedArea: item.normalizedArea,
   })
 }
 
@@ -117,6 +125,13 @@ function fromComparisonDifference(item = {}, index, prices = []) {
     xRatio: firstNumber(item.xRatio, item.figmaXRatio, item.webXRatio, item.spatialEvidence?.xRatio),
     originalIndex: firstNumber(item.originalIndex, item.order, index),
     sectionKey: createSectionKey(item),
+    readableCanonicalArea: item.readableCanonicalArea,
+    canonicalArea: item.canonicalArea,
+    canonicalAreaName: item.canonicalAreaName,
+    readableSectionLabel: item.readableSectionLabel,
+    sectionLabel: item.sectionLabel,
+    sectionName: item.sectionName,
+    normalizedArea: item.normalizedArea,
   })
 }
 
@@ -286,8 +301,23 @@ function normalizeIssue(item = {}) {
     sectionId: textOf(item.sectionId),
     sectionRootId: textOf(item.sectionRootId),
     sectionPath: textOf(item.sectionPath),
+    canonicalCategory: textOf(item.canonicalCategory),
+    mediaType: textOf(item.mediaType),
+    figmaMediaType: textOf(item.figmaMediaType),
+    webMediaType: textOf(item.webMediaType),
+    mediaPair: textOf(item.mediaPair),
+    numericType: textOf(item.numericType),
+    role: textOf(item.role),
+    readableCanonicalArea: textOf(item.readableCanonicalArea),
+    canonicalArea: textOf(item.canonicalArea),
+    canonicalAreaName: textOf(item.canonicalAreaName),
+    readableSectionLabel: textOf(item.readableSectionLabel),
+    sectionLabel: textOf(item.sectionLabel),
+    sectionName: textOf(item.sectionName),
+    normalizedArea: textOf(item.normalizedArea),
     sectionKey: createSectionKey(item),
     sortRank: firstNumber(item.sortRank),
+    evidenceSources: normalizeEvidenceSources(item),
   }
 }
 
@@ -350,7 +380,22 @@ function mergeDisplayIssue(current, next) {
     xRatio: firstNumber(canonical.xRatio, preferred.xRatio, current.xRatio),
     originalIndex: firstNumber(canonical.originalIndex, preferred.originalIndex, current.originalIndex),
     sectionKey: canonical.sectionKey || preferred.sectionKey || current.sectionKey,
+    canonicalCategory: canonical.canonicalCategory || preferred.canonicalCategory || current.canonicalCategory,
+    mediaType: canonical.mediaType || preferred.mediaType || current.mediaType,
+    figmaMediaType: canonical.figmaMediaType || preferred.figmaMediaType || current.figmaMediaType,
+    webMediaType: canonical.webMediaType || preferred.webMediaType || current.webMediaType,
+    mediaPair: canonical.mediaPair || preferred.mediaPair || current.mediaPair,
+    numericType: canonical.numericType || preferred.numericType || current.numericType,
+    role: canonical.role || preferred.role || current.role,
+    readableCanonicalArea: canonical.readableCanonicalArea || preferred.readableCanonicalArea || current.readableCanonicalArea,
+    canonicalArea: canonical.canonicalArea || preferred.canonicalArea || current.canonicalArea,
+    canonicalAreaName: canonical.canonicalAreaName || preferred.canonicalAreaName || current.canonicalAreaName,
+    readableSectionLabel: canonical.readableSectionLabel || preferred.readableSectionLabel || current.readableSectionLabel,
+    sectionLabel: canonical.sectionLabel || preferred.sectionLabel || current.sectionLabel,
+    sectionName: canonical.sectionName || preferred.sectionName || current.sectionName,
+    normalizedArea: canonical.normalizedArea || preferred.normalizedArea || current.normalizedArea,
     inputIndex: Math.min(current.inputIndex, next.inputIndex),
+    evidenceSources: uniqueStrings([...(current.evidenceSources || []), ...(next.evidenceSources || [])]),
   }
 }
 
@@ -502,6 +547,14 @@ function textOf(value) {
 
 function array(value) {
   return Array.isArray(value) ? value.filter((item) => item && typeof item === 'object') : []
+}
+
+function normalizeEvidenceSources(item = {}) {
+  return uniqueStrings([...(Array.isArray(item.evidenceSources) ? item.evidenceSources : []), item.source])
+}
+
+function uniqueStrings(values = []) {
+  return [...new Set(values.map(textOf).filter(Boolean))]
 }
 
 function numberOrNull(value) {

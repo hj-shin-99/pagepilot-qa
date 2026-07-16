@@ -39,6 +39,22 @@ export function saveHistoryItem(item) {
   return nextItems
 }
 
+export function deleteHistoryItem(id) {
+  const targetId = getString(id)
+  const currentItems = loadHistoryItems()
+  if (!targetId) return currentItems
+
+  const nextItems = currentItems.filter((historyItem) => historyItem.id !== targetId)
+
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(nextItems))
+  } catch {
+    return currentItems
+  }
+
+  return nextItems
+}
+
 function sanitizeHistoryItem(item, index = 0) {
   if (!item || typeof item !== 'object') return null
 

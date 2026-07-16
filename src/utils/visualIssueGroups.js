@@ -12,9 +12,9 @@ const SECTION_ORDER = {
   page: 100,
 }
 
-export function createVisualIssueGroups(items = []) {
+export function createVisualIssueGroups(items = [], options = {}) {
   const sourceItems = Array.isArray(items) ? items.filter((item) => item && typeof item === 'object') : []
-  const seededGroups = createSeededGroups(sourceItems)
+  const seededGroups = createSeededGroups(sourceItems, options)
   const mergedGroups = mergeAreaFallbackGroups(seededGroups)
   const groups = mergedGroups
     .map((group, index) => finalizeGroup(group, index))
@@ -27,14 +27,15 @@ export function createVisualIssueGroups(items = []) {
     groupCount: groups.length,
     groupedIssueCount,
     duplicateIssueCount: sourceItems.length - groupedIssueCount,
+    mergedReadableAreaGroupCount: groups.filter((group) => String(group.key || '').startsWith('readable:')).length,
   })
 }
 
-function createSeededGroups(items) {
+function createSeededGroups(items, options) {
   const groups = []
   const groupMap = new Map()
   items.forEach((item, inputIndex) => {
-    const seed = createGroupSeed(item, inputIndex)
+    const seed = createGroupSeed(item, inputIndex, options)
     let group = groupMap.get(seed.key)
     if (!group) {
       group = { ...seed, items: [] }
@@ -46,14 +47,19 @@ function createSeededGroups(items) {
   return groups
 }
 
-function createGroupSeed(item = {}, inputIndex) {
+function createGroupSeed(item = {}, inputIndex, options = {}) {
   const sectionId = textOf(item.canonicalSectionId || item.sectionId)
   const sectionRootId = textOf(item.sectionRootId)
   const sectionPath = textOf(item.sectionPath)
-  const areaLabel = normalizeAreaLabel(item.area || item.sectionName || sectionPath || item.sectionKey)
   const yRatio = getYRatio(item)
   const xRatio = getXRatio(item)
   const originalIndex = firstNumber(item.originalIndex, item.order, inputIndex)
+  const areaLabel = normalizeAreaLabel(selectAreaLabel(item, sectionPath), item, yRatio)
+
+  if (options.mergeReadableAreas && shouldMergeByReadableArea(areaLabel, item, yRatio)) {
+    const band = getReadableAreaBand(areaLabel, yRatio)
+    return createSeed(`readable:${normalizeKey(areaLabel)}:${band}`, areaLabel, yRatio, xRatio, originalIndex, inputIndex, false)
+  }
 
   if (sectionId) return createSeed(`section:${normalizeKey(sectionId)}`, areaLabel, yRatio, xRatio, originalIndex, inputIndex, false)
   if (sectionRootId) return createSeed(`root:${normalizeKey(sectionRootId)}`, areaLabel, yRatio, xRatio, originalIndex, inputIndex, false)
@@ -65,7 +71,7 @@ function createGroupSeed(item = {}, inputIndex) {
   }
 
   if (yRatio !== null) return createSeed(`position:${getPositionBand(yRatio)}`, inferAreaFromRatio(yRatio), yRatio, xRatio, originalIndex, inputIndex, false)
-  return createSeed(`fallback:${normalizeKey(areaLabel || 'Page Content')}`, areaLabel || 'Page Content', yRatio, xRatio, originalIndex, inputIndex, true)
+  return createSeed(`fallback:${normalizeKey(areaLabel || '페이지 콘텐츠')}`, areaLabel || '페이지 콘텐츠', yRatio, xRatio, originalIndex, inputIndex, true)
 }
 
 function createSeed(key, label, yRatio, xRatio, originalIndex, inputIndex, areaFallback) {
@@ -103,7 +109,7 @@ function finalizeGroup(group, index) {
   return {
     id: `visual-issue-group-${index}-${normalizeKey(group.key)}`,
     key: group.key,
-    label: group.label || first.area || 'Page Content',
+    label: group.label || first.area || '페이지 콘텐츠',
     items,
     yRatio: minItemNumber(items, 'yRatio', group.yRatio),
     xRatio: minItemNumber(items, 'xRatio', group.xRatio),
@@ -161,25 +167,76 @@ function compareIssues(first, second) {
   return numberOrFallback(first.inputIndex, 0) - numberOrFallback(second.inputIndex, 0)
 }
 
-function normalizeAreaLabel(value) {
+function selectAreaLabel(item = {}, sectionPath = '') {
+  const candidates = [
+    item.readableCanonicalArea,
+    item.canonicalArea,
+    item.canonicalAreaName,
+    item.readableSectionLabel,
+    item.sectionLabel,
+    item.sectionName,
+    item.normalizedArea,
+    item.area,
+    sectionPath,
+    item.sectionKey,
+  ]
+
+  return candidates.map(textOf).find((value) => value && !isTechnicalAreaLabel(value)) || candidates.map(textOf).find(Boolean) || ''
+}
+
+function shouldMergeByReadableArea(areaLabel, item = {}, yRatio = null) {
+  const area = textOf(areaLabel).toLowerCase()
+  if (!area) return false
+  if (/footer|product|price|pricing|card|faq|navigation|nav/.test(area)) return false
+  if (/main visual|main kv|hero|kv|메인|비주얼/.test(area)) return true
+  const evidence = `${item.canonicalSectionId || ''} ${item.sectionId || ''} ${item.sectionRootId || ''} ${item.sectionKey || ''} ${item.category || ''} ${item.categoryLabel || ''} ${item.displayCategory || ''} ${item.title || ''}`.toLowerCase()
+  return yRatio !== null && yRatio < 0.28 && /hero|kv|main|media|cta|text/.test(evidence)
+}
+
+function getReadableAreaBand(areaLabel, yRatio) {
+  const area = textOf(areaLabel).toLowerCase()
+  if (/main visual|main kv|hero|kv|메인|비주얼/.test(area)) {
+    if (yRatio === null || yRatio < 0.32) return 'hero'
+    return getPositionBand(yRatio)
+  }
+  return yRatio === null ? 'unknown' : getPositionBand(yRatio)
+}
+
+function normalizeAreaLabel(value, item = {}, yRatio = null) {
   const text = textOf(value)
-  if (!text) return 'Page Content'
-  if (/hero|kv|main visual|main[_\s-]*visual|메인|비주얼/i.test(text)) return 'Main KV'
+  if (/hero|kv|main visual|main[_\s-]*visual|메인|비주얼/i.test(text)) return 'Main Visual'
   if (/footer|푸터/i.test(text)) return 'Footer'
+  if (/nav|navigation|gnb|header|menu/i.test(text)) return 'Navigation'
   if (/faq|accordion|question/i.test(text)) return 'FAQ'
   if (/product|price|pricing|card|amount|numeric/i.test(text)) return 'Product / Price'
   if (/body|content|section/i.test(text)) return 'Body'
+  if (!text || isTechnicalAreaLabel(text)) return inferAreaFromItem(item, yRatio)
   return text
 }
 
 function isMeaningfulArea(value) {
-  return Boolean(value && value !== 'Page Content')
+  return Boolean(value && value !== '페이지 콘텐츠')
 }
 
 function inferAreaFromRatio(value) {
-  if (value < 0.24) return 'Main KV'
+  if (value < 0.24) return 'Main Visual'
   if (value > 0.82) return 'Footer'
-  return 'Page Content'
+  return '페이지 콘텐츠'
+}
+
+function inferAreaFromItem(item = {}, yRatio = null) {
+  const categoryText = `${item.category || ''} ${item.categoryLabel || ''} ${item.title || ''} ${item.description || ''}`
+  if (/cta|button|action|nav|navigation/i.test(categoryText)) return /nav|navigation/i.test(categoryText) ? 'Navigation' : 'Main Visual'
+  if (/price|numeric|amount|monthly|금액|가격/i.test(categoryText)) return 'Product / Price'
+  if (yRatio !== null) return inferAreaFromRatio(yRatio)
+  return '페이지 콘텐츠'
+}
+
+function isTechnicalAreaLabel(value) {
+  const text = textOf(value)
+  if (text.length > 52) return true
+  const separatorCount = (text.match(/[/\\>]/g) || []).length
+  return separatorCount >= 2 || /node|frame|group|instance|component|selector|#|\.\w+|^html\b|\bbody\b/i.test(text)
 }
 
 function getPositionBand(value) {
@@ -196,6 +253,7 @@ function getSectionRank(value) {
   if (/footer/.test(text)) return SECTION_ORDER.footer
   if (/body|content/.test(text)) return SECTION_ORDER.body
   if (/main/.test(text)) return SECTION_ORDER.main
+  if (/페이지 콘텐츠|page content/.test(text)) return SECTION_ORDER.page
   return SECTION_ORDER.page
 }
 

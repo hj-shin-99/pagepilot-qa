@@ -4295,7 +4295,7 @@
 .tech-click-issue-head,
 .tech-click-issue-row {
   display: grid;
-  grid-template-columns: 92px minmax(130px, 1fr) minmax(120px, 0.9fr) minmax(140px, 1fr) minmax(150px, 1fr) 92px 70px;
+  grid-template-columns: 92px minmax(150px, 1.1fr) minmax(110px, 0.7fr) minmax(220px, 1.5fr) 92px 70px;
   gap: 10px;
   align-items: center;
   padding: 8px 10px;
@@ -4535,6 +4535,13 @@
 .tech-row-details[open] {
   grid-column: 1 / -1;
   padding-top: 8px;
+}
+
+.tech-normal-details p {
+  margin: 0;
+  color: #475467;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .tech-link-more {
@@ -6458,6 +6465,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-height: 36px;
   margin-bottom: 42px;
 }
 
@@ -6481,7 +6489,9 @@
 .brand-mark {
   display: inline-flex;
   align-items: center;
+  box-sizing: border-box;
   gap: 9px;
+  min-height: 36px;
   padding: 8px 11px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 999px;
@@ -6489,8 +6499,16 @@
   background: rgba(255, 255, 255, 0.06);
   font-size: 12px;
   font-weight: 800;
+  line-height: 1;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.sidebar-topbar .sidebar-toggle-button {
+  box-sizing: border-box;
+  min-height: 36px;
+  margin: 0;
+  line-height: 1;
 }
 
 .control-panel h1 {

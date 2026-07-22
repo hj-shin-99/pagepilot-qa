@@ -121,7 +121,7 @@ test('Q all normal result does not use blocking copy and has no priority items',
   assert.equal(view.issueCounts.errorElementCount, 0)
   assert.equal(view.priorityItems.length, 0)
   assert.equal(view.normalCheckItems.length, 2)
-  assert.equal(view.statusMessage, '배포 차단 오류는 확인되지 않았습니다.')
+  assert.equal(view.statusMessage, '오류 0개 · 확인 필요 0개입니다.')
 })
 
 test('sections keep planner SEO frontend backend separation', () => {
@@ -141,10 +141,14 @@ test('compact Tech QA summary cards use four meaningful KPI values', () => {
   const view = createTechQaViewModel(result({ links: [link(), link({ status: 'warn', category: 'same-page-anchor', href: '#' })], images: [{ status: 'ok' }], consoleMessages: [] }))
   const labels = view.summaryCards.map((card) => card.label)
 
-  assert.deepEqual(labels, ['페이지 접속', '오류', '확인 필요', '정상 검사'])
+  assert.deepEqual(labels, ['페이지 접속', '오류', '확인 필요', '검사 완료'])
   assert.equal(view.summaryCards.length, 4)
   assert.deepEqual(view.summaryCards.map((card) => card.status), ['ok', 'ok', 'warn', 'info'])
-  assert.equal(view.summaryCards.find((card) => card.label === '정상 검사').detail, '링크 2개 · 이미지 1개 수집')
+  assert.equal(view.summaryCards.find((card) => card.label === '확인 필요').value, '1개')
+  assert.equal(view.summaryCards.find((card) => card.label === '확인 필요').detail, '1개 검사에서 발견')
+  assert.equal(view.summaryCards.find((card) => card.label === '검사 완료').value, '링크 2개 · 이미지 1개')
+  assert.equal(view.summaryCards.some((card) => `${card.value} ${card.detail || ''}`.includes('고유 요소')), false)
+  assert.equal(view.summaryCards.some((card) => `${card.value} ${card.detail || ''}`.includes('근거')), false)
   assert.equal(labels.includes('콘솔'), false)
   assert.equal(labels.includes('이미지'), false)
 })
@@ -171,17 +175,22 @@ test('compact Tech QA source keeps table UI and closed detail policy', () => {
   assert.equal(source.includes('문제 예시:'), false)
   assert.equal(source.includes('담당 권장:'), false)
   assert.equal(source.includes('검사 목적'), true)
-  assert.equal(source.includes('현재 결과'), true)
-  assert.equal(source.includes('왜 확인이 필요한가'), true)
-  assert.equal(source.includes('담당 팀에서 확인할 내용'), true)
-  assert.equal(source.includes('기술 근거'), true)
+  assert.equal(source.includes('검사 결과'), true)
+  assert.equal(source.includes('문제 및 확인 항목'), false)
+  assert.equal(source.includes('담당 팀에서 확인할 내용'), false)
+  assert.equal(source.includes('기술 정보 보기'), true)
+  assert.equal(source.includes('판정 결과'), true)
+  assert.equal(source.includes('확인 이유'), true)
+  assert.equal(source.includes('고유 요소 오류'), false)
+  assert.equal(source.includes('검사 근거 오류'), false)
   assert.equal(source.includes('쉬운 설명'), false)
   assert.equal(source.includes('error message'), false)
   assert.equal(source.includes('label="영향"'), false)
-  assert.equal(source.includes('문제 요소'), true)
+  assert.equal(source.includes('selector/위치'), false)
+  assert.equal(source.includes('확인할 요소'), true)
   assert.equal(source.includes('확인할 내용'), true)
   assert.equal(source.includes('리소스 및 네트워크'), false)
-  assert.equal(source.includes('우선 확인 팀'), true)
+  assert.equal(source.includes('우선 확인 팀'), false)
   assert.equal(source.includes('UID팀'), false)
   assert.equal(source.includes('개발팀'), false)
 })
@@ -264,7 +273,7 @@ test('Tech QA click action priority keeps only actionable click failures', () =>
   const clickItem = view.priorityItems.find((entry) => entry.id === 'click-actions')
 
   assert.equal(clickItem.status, 'error')
-  assert.equal(clickItem.value, '실제 오류 2 · 확인 필요 1')
+  assert.equal(clickItem.value, '실제 오류 2개 · 확인 필요 1개')
   assert.equal(clickItem.problemItems.length, 3)
   assert.equal(view.clickActionGroups.actualErrors.length, 2)
   assert.equal(view.clickActionGroups.warnings.length, 1)
@@ -317,6 +326,9 @@ test('same CTA in link and click warning is counted once at top level', () => {
   assert.equal(view.priorityItems.some((item) => item.type === 'link'), true)
   assert.equal(view.priorityItems.some((item) => item.id === 'click-actions'), true)
   assert.equal(view.issueCounts.warningElementCount, 1)
+  assert.equal(view.issueCounts.warningEvidenceCount, 2)
+  assert.equal(view.issueCounts.warningUniqueElementCount, 1)
+  assert.equal(view.issueCounts.warningCheckCount, 2)
 })
 
 test('console repeated duplicate contributes one top-level element and preserves repeatCount', () => {
@@ -329,7 +341,96 @@ test('console repeated duplicate contributes one top-level element and preserves
   }))
 
   assert.equal(view.issueCounts.errorElementCount, 1)
+  assert.equal(view.issueCounts.errorEvidenceCount, 1)
+  assert.equal(view.issueCounts.errorUniqueElementCount, 1)
   assert.equal(view.priorityItems[0].problemItems[0].repeatCount, 10)
+})
+
+test('count contract A separates warning evidence and unique counts for distinct elements', () => {
+  const view = createTechQaViewModel(result({
+    checks: [check({ id: 'meta', status: 'warn', items: Array.from({ length: 5 }, (_, index) => ({ id: `meta-${index}`, status: 'warn', label: `Meta ${index}` })) })],
+  }))
+
+  assert.equal(view.issueCounts.warningEvidenceCount, 5)
+  assert.equal(view.issueCounts.warningUniqueElementCount, 5)
+  assert.equal(view.issueCounts.warningCheckCount, 1)
+})
+
+test('count contract B keeps duplicated link and click CTA as two evidence and one unique element', () => {
+  const view = createTechQaViewModel(result({
+    links: [link({ label: 'Apply', status: 'warn', category: 'javascript-pseudo-url', href: 'javascript:void(0)', url: '', selector: '#same-contract-cta' })],
+    checks: [check({ id: 'click-actions', status: 'warn' })],
+    clickActions: [clickAction({ label: 'Apply', status: 'warn', actionClassification: 'actionable-warning', category: 'javascript-pseudo-url', href: 'javascript:void(0)', selector: '#same-contract-cta' })],
+  }))
+
+  assert.equal(view.issueCounts.warningEvidenceCount, 2)
+  assert.equal(view.issueCounts.warningUniqueElementCount, 1)
+  assert.equal(view.issueCounts.warningCheckCount, 2)
+  assert.equal(view.issueCounts.duplicateEvidenceMergedCount, 1)
+})
+
+test('count contract C counts error check with actual error and warning in both check totals', () => {
+  const view = createTechQaViewModel(result({
+    checks: [check({ id: 'click-actions', status: 'error' })],
+    clickActions: [
+      clickAction({ label: 'Blocked', selector: '#blocked', actionClassification: 'actual-error', status: 'error', category: 'covered-or-not-interactable' }),
+      clickAction({ label: 'Ambiguous', selector: '#ambiguous', actionClassification: 'actionable-warning', status: 'warn', category: 'ambiguous-action' }),
+    ],
+  }))
+
+  assert.equal(view.issueCounts.errorCheckCount, 1)
+  assert.equal(view.issueCounts.warningCheckCount, 1)
+  assert.equal(view.issueCounts.errorEvidenceCount, 1)
+  assert.equal(view.issueCounts.warningEvidenceCount, 1)
+  assert.equal(view.issueCounts.errorUniqueElementCount, 1)
+  assert.equal(view.issueCounts.warningUniqueElementCount, 1)
+})
+
+test('count contract D uses console representative count while preserving repeatCount', () => {
+  const view = createTechQaViewModel(result({
+    checks: [check({ id: 'console-errors', status: 'error', items: [{ message: 'ReferenceError: repeated', status: 'error', sourceUrl: 'https://example.com/app.js', repeatCount: 10 }] })],
+  }))
+
+  assert.equal(view.issueCounts.errorEvidenceCount, 1)
+  assert.equal(view.issueCounts.errorUniqueElementCount, 1)
+  assert.equal(view.priorityItems[0].problemItems[0].repeatCount, 10)
+})
+
+test('count contract E sums warning evidence across meta alt external and console checks', () => {
+  const view = createTechQaViewModel(result({
+    images: Array.from({ length: 25 }, (_, index) => ({ src: `https://example.com/image-${index}.png` })),
+    checks: [
+      check({ id: 'meta', status: 'warn', items: Array.from({ length: 4 }, (_, index) => ({ id: `meta-${index}`, status: 'warn', label: `Meta ${index}` })) }),
+      check({ id: 'image-alt', status: 'warn', items: Array.from({ length: 5 }, (_, index) => ({ src: `https://example.com/missing-alt-${index}.png`, status: 'warn' })) }),
+      check({ id: 'external-links', status: 'warn', totalCount: 20, items: Array.from({ length: 12 }, (_, index) => ({ selector: `#external-${index}`, href: `https://external.example/${index}`, status: 'warn' })) }),
+      check({ id: 'console-errors', status: 'warn', meta: { firstPartyRuntimeErrorCount: 0, firstPartyConsoleErrorCount: 0, thirdPartyScriptErrorCount: 1, representativeCount: 1 }, items: [{ message: 'Third-party error', status: 'warn', sourceUrl: 'https://cdn.example.com/script.js', party: 'third-party' }] }),
+    ],
+  }))
+
+  assert.equal(view.issueCounts.warningEvidenceCount, 22)
+  assert.equal(view.issueCounts.warningUniqueElementCount, 22)
+  assert.equal(view.issueCounts.warningCheckCount, 4)
+  assert.equal(view.checkItems.find((item) => item.id === 'image-alt').value, '총 25개 · alt 확인 필요 5개')
+  assert.equal(view.checkItems.find((item) => item.id === 'external-links').value, '총 20개 · rel 확인 필요 12개')
+})
+
+test('count contract F keeps evidence totals while reducing unique count for cross-check overlaps', () => {
+  const view = createTechQaViewModel(result({
+    images: Array.from({ length: 25 }, (_, index) => ({ src: `https://example.com/image-${index}.png` })),
+    checks: [
+      check({ id: 'meta', status: 'warn', items: Array.from({ length: 4 }, (_, index) => ({ id: `meta-overlap-${index}`, status: 'warn', label: `Meta ${index}` })) }),
+      check({ id: 'image-alt', status: 'warn', items: Array.from({ length: 5 }, (_, index) => ({ src: `https://example.com/missing-alt-overlap-${index}.png`, status: 'warn' })) }),
+      check({ id: 'external-links', status: 'warn', totalCount: 20, items: Array.from({ length: 12 }, (_, index) => ({ selector: `#overlap-${index}`, href: `https://external.example/${index}`, status: 'warn' })) }),
+      check({ id: 'console-errors', status: 'warn', meta: { thirdPartyScriptErrorCount: 1, representativeCount: 1 }, items: [{ message: 'Third-party error', status: 'warn', sourceUrl: 'https://cdn.example.com/script.js', party: 'third-party' }] }),
+      check({ id: 'click-actions', status: 'warn' }),
+    ],
+    clickActions: Array.from({ length: 3 }, (_, index) => clickAction({ label: `Overlapping CTA ${index}`, selector: `#overlap-${index}`, status: 'warn', actionClassification: 'actionable-warning' })),
+  }))
+
+  assert.equal(view.issueCounts.warningEvidenceCount, 25)
+  assert.equal(view.issueCounts.warningUniqueElementCount, 22)
+  assert.equal(view.issueCounts.duplicateEvidenceMergedCount, 3)
+  assert.equal(view.issueCounts.warningCheckCount, 5)
 })
 
 test('basic diagnostic table keeps normal rows visible without accordion', () => {
@@ -352,6 +453,110 @@ test('basic diagnostic table keeps normal rows visible without accordion', () =>
 
   assert.deepEqual(view.basicCheckItems.map((item) => item.id), ['access', 'http-status', 'title', 'console-errors', 'images', 'links', 'missing-href', 'mobile', 'headings', 'duplicate-ids', 'network-failures', 'forms'])
   assert.equal(view.basicCheckItems.every((item) => item.status === 'ok'), true)
+  assert.equal(view.basicCheckItems.find((item) => item.id === 'access').value, '접속 가능 · HTTP 200')
+  assert.equal(view.basicCheckItems.find((item) => item.id === 'images').value, '총 25개 · 실패 0개')
+  assert.equal(view.basicCheckItems.find((item) => item.id === 'links').value, '총 10개 · 요청 오류 0개')
+})
+
+test('generic Tech QA display A keeps all basic checks normal with objective counts', () => {
+  const view = createTechQaViewModel(result({
+    links: Array.from({ length: 102 }, (_, index) => link({ label: `Link ${index + 1}`, url: `https://example.com/${index}` })),
+    images: Array.from({ length: 25 }, () => ({ status: 'ok' })),
+    checks: [
+      check({ id: 'access', status: 'ok' }),
+      check({ id: 'http-status', status: 'ok', value: '200' }),
+      check({ id: 'title', status: 'ok', value: 'Example' }),
+      check({ id: 'console-errors', status: 'ok', meta: { firstPartyRuntimeErrorCount: 0, firstPartyConsoleErrorCount: 0, thirdPartyScriptErrorCount: 0, representativeCount: 0 } }),
+      check({ id: 'images', status: 'ok' }),
+      check({ id: 'links', status: 'ok' }),
+      check({ id: 'missing-href', status: 'ok' }),
+      check({ id: 'mobile', status: 'ok' }),
+      check({ id: 'headings', status: 'ok', value: 'h1 1개' }),
+      check({ id: 'duplicate-ids', status: 'ok' }),
+      check({ id: 'network-failures', status: 'ok' }),
+      check({ id: 'forms', status: 'ok', value: '폼 0개' }),
+    ],
+  }))
+
+  assert.equal(view.basicCheckItems.every((item) => item.status === 'ok'), true)
+  assert.equal(view.issueCounts.errorElementCount, 0)
+  assert.equal(view.issueCounts.warningElementCount, 0)
+  assert.equal(view.basicCheckItems.find((item) => item.id === 'images').value, '총 25개 · 실패 0개')
+  assert.equal(view.basicCheckItems.find((item) => item.id === 'links').value, '총 102개 · 요청 오류 0개')
+})
+
+test('generic Tech QA display B reports failed image count and preserves image URLs', () => {
+  const view = createTechQaViewModel(result({
+    images: Array.from({ length: 25 }, (_, index) => ({ src: `https://example.com/image-${index}.png`, status: index < 2 ? 'error' : 'ok' })),
+    checks: [check({ id: 'images', status: 'error', items: [{ src: 'https://example.com/broken-1.png', status: 'error' }, { src: 'https://example.com/broken-2.png', status: 'error' }] })],
+  }))
+  const item = view.basicCheckItems.find((entry) => entry.id === 'images')
+
+  assert.equal(item.status, 'error')
+  assert.equal(item.value, '총 25개 · 실패 2개')
+  assert.deepEqual(item.problemItems.map((entry) => entry.src), ['https://example.com/broken-1.png', 'https://example.com/broken-2.png'])
+})
+
+test('generic Tech QA display C and D classify console party counts objectively', () => {
+  const firstParty = createTechQaViewModel(result({
+    checks: [check({ id: 'console-errors', status: 'error', meta: { firstPartyRuntimeErrorCount: 1, thirdPartyScriptErrorCount: 0, representativeCount: 1 }, items: [{ message: 'ReferenceError', status: 'error', party: 'first-party', sourceUrl: 'https://example.com/app.js', stack: 'stack', repeatCount: 1 }] })],
+  })).basicCheckItems.find((entry) => entry.id === 'console-errors')
+  const thirdParty = createTechQaViewModel(result({
+    checks: [check({ id: 'console-errors', status: 'warn', meta: { firstPartyRuntimeErrorCount: 0, firstPartyConsoleErrorCount: 0, thirdPartyScriptErrorCount: 2, representativeCount: 2 }, items: [{ message: 'Third party', status: 'warn', party: 'third-party' }] })],
+  })).basicCheckItems.find((entry) => entry.id === 'console-errors')
+
+  assert.equal(firstParty.status, 'error')
+  assert.equal(firstParty.value, 'first-party 1개 · third-party 0개')
+  assert.equal(firstParty.owner, 'UID팀')
+  assert.equal(firstParty.problemItems[0].repeatCount, 1)
+  assert.equal(thirdParty.status, 'warn')
+  assert.equal(thirdParty.value, 'first-party 0개 · third-party 2개')
+})
+
+test('generic Tech QA display E and F keeps click error and warning counts aligned', () => {
+  const warningOnly = createTechQaViewModel(result({ checks: [check({ id: 'click-actions', status: 'warn' })], clickActions: [clickAction({ actionClassification: 'actionable-warning', status: 'warn' })] }))
+  const mixed = createTechQaViewModel(result({
+    checks: [check({ id: 'click-actions', status: 'error' })],
+    clickActions: [
+      ...Array.from({ length: 2 }, (_, index) => clickAction({ label: `Error ${index}`, selector: `#error-${index}`, actionClassification: 'actual-error', status: 'error', category: 'covered-or-not-interactable' })),
+      ...Array.from({ length: 3 }, (_, index) => clickAction({ label: `Warn ${index}`, selector: `#warn-${index}`, actionClassification: 'actionable-warning', status: 'warn', category: 'ambiguous-action' })),
+    ],
+  }))
+
+  assert.equal(warningOnly.checkItems.find((item) => item.id === 'click-actions').status, 'warn')
+  assert.equal(warningOnly.checkItems.find((item) => item.id === 'click-actions').value, '실제 오류 0개 · 확인 필요 1개')
+  assert.equal(warningOnly.issueCounts.errorElementCount, 0)
+  assert.equal(warningOnly.issueCounts.warningElementCount, 1)
+  assert.equal(mixed.checkItems.find((item) => item.id === 'click-actions').status, 'error')
+  assert.equal(mixed.checkItems.find((item) => item.id === 'click-actions').value, '실제 오류 2개 · 확인 필요 3개')
+  assert.equal(mixed.issueCounts.errorElementCount, 2)
+  assert.equal(mixed.issueCounts.warningElementCount, 3)
+})
+
+test('generic Tech QA display G keeps UI controls and verified clicks out of issue counts', () => {
+  const view = createTechQaViewModel(result({
+    checks: [check({ id: 'click-actions', status: 'ok' })],
+    clickActions: [
+      ...Array.from({ length: 30 }, (_, index) => clickAction({ label: `Control ${index}`, selector: `#control-${index}`, status: 'ok', actionClassification: 'ui-control-no-url-required', category: 'UI-control-no-url-required' })),
+      ...Array.from({ length: 60 }, (_, index) => clickAction({ label: `Verified ${index}`, selector: `#verified-${index}`, status: 'ok', actionClassification: 'verified-working', category: 'valid-url' })),
+    ],
+  }))
+
+  assert.equal(view.issueCounts.errorElementCount, 0)
+  assert.equal(view.issueCounts.warningElementCount, 0)
+  assert.equal(view.checkItems.find((item) => item.id === 'click-actions').status, 'ok')
+  assert.equal(view.clickActionGroups.uiControls.length, 30)
+  assert.equal(view.clickActionGroups.verified.length, 60)
+})
+
+test('generic Tech QA display H and I keep raw selector out of default copy but in technical evidence', () => {
+  const source = fs.readFileSync('src/components/TechQaPanel.jsx', 'utf8')
+
+  assert.equal(source.includes('<span className="tech-url-cell">{item.selector'), false)
+  assert.equal(source.includes('selector/위치'), false)
+  assert.equal(source.includes('label="selector"'), true)
+  assert.equal(source.includes('label="raw failure"'), true)
+  assert.equal(source.includes('label="영향"'), false)
 })
 
 test('compact Tech QA CSS uses table rows instead of large repeated cards', () => {
@@ -360,6 +565,18 @@ test('compact Tech QA CSS uses table rows instead of large repeated cards', () =
   assert.equal(css.includes('.tech-table-row'), true)
   assert.equal(css.includes('.tech-link-row'), true)
   assert.equal(css.includes('grid-template-columns: repeat(4, minmax(0, 1fr));'), true)
+  assert.equal(css.includes('.tech-normal-details p'), true)
+})
+
+test('sidebar topbar aligns brand badge and collapse button without positional offsets', () => {
+  const css = fs.readFileSync('src/App.css', 'utf8')
+
+  assert.equal(css.includes('.sidebar-topbar'), true)
+  assert.equal(css.includes('align-items: center;'), true)
+  assert.equal(css.includes('.sidebar-topbar .sidebar-toggle-button'), true)
+  assert.equal(css.includes('margin: 0;'), true)
+  assert.equal(css.includes('.sidebar-topbar .sidebar-toggle-button {\n  transform'), false)
+  assert.equal(css.includes('.sidebar-topbar .sidebar-toggle-button {\n  position: relative'), false)
 })
 
 test('frontend owner badges are normalized to UID team or dev team only', () => {

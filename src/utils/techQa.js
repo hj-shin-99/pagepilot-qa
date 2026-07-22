@@ -2,7 +2,7 @@ export const TECH_STATUS_LABELS = {
   ok: '정상',
   warn: '확인 필요',
   error: '오류',
-  info: '완료',
+  info: '참고',
 }
 
 const CLICK_ACTION_GROUPS = [
@@ -29,33 +29,33 @@ const BASIC_CHECK_ORDER = [
 ]
 
 const CHECK_DEFINITIONS = {
-  access: { section: 'planning', owner: '개발팀', label: '페이지 접속 여부', description: '검사 대상 페이지가 브라우저에서 정상으로 열리는지 확인합니다. 접속에 실패하면 사용자가 페이지를 볼 수 없으므로 가장 먼저 확인해야 합니다.' },
-  'http-status': { section: 'backend', owner: '개발팀', label: 'HTTP 상태 코드', description: '서버가 페이지 요청에 어떤 응답 코드를 반환했는지 확인합니다. 4xx/5xx는 사용자 접속 실패나 서버 오류로 이어질 수 있습니다.' },
-  title: { section: 'seo', owner: 'UID팀', label: 'Title', description: '브라우저 탭과 검색 결과에 표시되는 페이지 제목입니다. 비어 있으면 검색 노출과 사용자 이해에 문제가 생길 수 있습니다.' },
-  'console-errors': { section: 'frontend', owner: 'UID팀', label: 'Console error', description: '페이지 실행 중 JavaScript 오류가 발생했는지 확인합니다. 오류가 있으면 버튼, 폼, 화면 동작이 정상 작동하지 않을 수 있습니다.' },
-  images: { section: 'frontend', owner: 'UID팀', label: '이미지 로딩', description: '페이지 안의 이미지가 정상으로 불러와졌는지 확인합니다. 실패하면 깨진 이미지가 노출될 수 있습니다.' },
-  links: { section: 'link', owner: 'UID팀', label: '링크 수집', description: '페이지 안에서 검사 가능한 링크와 클릭 요소를 수집합니다. 수집 수가 비정상적으로 적으면 DOM 구조나 렌더링을 확인해야 합니다.' },
-  'missing-href': { section: 'link', owner: 'UID팀', label: '버튼 URL 검사', description: '이동 목적의 버튼이나 링크에 이동 주소 또는 action 근거가 있는지 확인합니다. 없으면 사용자가 눌러도 정상 페이지로 이동하지 않을 수 있습니다.' },
-  'bad-links': { section: 'link', owner: 'UID팀', label: '페이지 링크 검사', description: '수집된 링크를 실제 요청해 4xx/5xx, timeout, 요청 실패를 확인합니다. 문제 링크는 정상 링크보다 먼저 확인해야 합니다.' },
-  'interaction-count': { section: 'planning', owner: 'UID팀', label: '클릭 요소 수', description: '페이지의 링크와 버튼 개수를 확인합니다. 예상보다 적거나 많으면 메뉴, CTA, 카드 링크 누락 여부를 점검할 수 있습니다.' },
-  mobile: { section: 'planning', owner: 'UID팀', label: '모바일 viewport 검사', description: '모바일 크기에서 페이지가 접속되는지 확인합니다. 모바일 사용자에게 빈 화면이나 오류가 보이는지 판단하는 기본 검사입니다.' },
-  meta: { section: 'seo', owner: 'UID팀', label: 'Meta description / OG', description: '검색과 공유에 필요한 기본 메타 정보가 있는지 확인합니다. 누락되면 검색 결과나 SNS 공유 문구가 의도와 다를 수 있습니다.' },
-  'image-alt': { section: 'planning', owner: 'UID팀', label: '이미지 alt', description: '의미 있는 이미지에 대체 텍스트가 있는지 확인합니다. 누락되면 접근성과 콘텐츠 검수 품질이 떨어질 수 있습니다.' },
-  forms: { section: 'frontend', owner: 'UID팀', label: '폼 라벨', description: '입력 요소에 label 또는 접근성 이름이 연결되어 있는지 확인합니다. 누락되면 사용자가 입력 목적을 이해하기 어렵습니다.' },
-  'external-links': { section: 'planning', owner: 'UID팀', label: '새 창 외부 링크', description: '새 창으로 열리는 외부 링크의 보안 속성을 확인합니다. rel 속성이 부족하면 보안과 사용자 보호에 문제가 생길 수 있습니다.' },
-  'duplicate-ids': { section: 'frontend', owner: 'UID팀', label: '중복 ID 검사', description: '한 페이지 안에서 같은 ID가 여러 번 사용되는지 확인합니다. 중복 ID는 버튼 동작, 스타일 적용, 접근성 기능에 오류를 만들 수 있습니다.' },
-  headings: { section: 'seo', owner: 'UID팀', label: 'Heading hierarchy', description: 'H1과 H2/H3 구조가 자연스러운지 확인합니다. 검색엔진과 보조기기가 페이지 구조를 이해하는 데 영향을 줍니다.' },
-  'resource-size': { section: 'frontend', owner: 'UID팀', label: '큰 리소스', description: '용량이 큰 CSS, JS, 이미지 리소스를 확인합니다. 큰 파일은 로딩 지연과 사용자 이탈로 이어질 수 있습니다.' },
-  'network-failures': { section: 'backend', owner: '개발팀', label: '네트워크 요청', description: '페이지 구성 중 실패한 API, JS, CSS, 폰트 요청을 확인합니다. API 오류는 데이터 누락이나 기능 실패로 이어질 수 있습니다.' },
-  'mobile-overflow': { section: 'frontend', owner: 'UID팀', label: '모바일 가로 스크롤', description: '모바일 화면 너비보다 문서가 넓어지는지 확인합니다. 가로 스크롤은 레이아웃 깨짐으로 보일 수 있습니다.' },
-  'click-actions': { section: 'frontend', owner: 'UID팀', label: '클릭 동작 검사', description: '버튼이나 링크처럼 보이는 요소가 실제로 클릭 가능한지 확인합니다. 동작 근거가 없거나 클릭할 수 없으면 사용자가 기능을 사용할 수 없습니다.' },
-  'unlabeled-clickables': { section: 'planning', owner: 'UID팀', label: '클릭 가능한 요소 이름', description: '버튼이나 링크에 사용자가 이해할 수 있는 이름이 있는지 확인합니다. 이름이 없으면 화면 낭독기 사용자와 검수자가 기능을 이해하기 어렵습니다.' },
+  access: { section: 'planning', owner: '개발팀', label: '페이지 접속', description: '검사 대상 페이지가 브라우저에서 열리는지 확인합니다.' },
+  'http-status': { section: 'backend', owner: '개발팀', label: 'HTTP 상태', description: '서버가 페이지 요청에 반환한 HTTP 상태 코드를 확인합니다.' },
+  title: { section: 'seo', owner: 'UID팀', label: 'Title', description: '문서의 title 요소가 수집되는지 확인합니다.' },
+  'console-errors': { section: 'frontend', owner: 'UID팀', label: 'Console', description: '페이지 실행 중 발생한 first-party와 third-party 콘솔 오류를 분류합니다.' },
+  images: { section: 'frontend', owner: 'UID팀', label: '이미지 로딩', description: '페이지 안의 이미지 요청과 로딩 실패 수를 확인합니다.' },
+  links: { section: 'link', owner: 'UID팀', label: '링크 수집', description: '페이지에서 수집한 링크와 실제 요청 오류 수를 확인합니다.' },
+  'missing-href': { section: 'link', owner: 'UID팀', label: '버튼 URL', description: '이동 목적 요소에 href, URL, action 근거가 있는지 확인합니다.' },
+  'bad-links': { section: 'link', owner: 'UID팀', label: '페이지 링크 검사', description: '수집된 링크를 실제 요청해 4xx, 5xx, timeout, 요청 실패 여부를 확인합니다.' },
+  'interaction-count': { section: 'planning', owner: 'UID팀', label: '클릭 요소 수', description: '페이지에서 수집된 링크와 버튼 개수를 확인합니다.' },
+  mobile: { section: 'planning', owner: 'UID팀', label: '모바일 viewport', description: '모바일 viewport에서 페이지 접속 상태를 확인합니다.' },
+  meta: { section: 'seo', owner: 'UID팀', label: 'Meta description / OG', description: '검색과 공유에 사용하는 기본 meta markup이 있는지 확인합니다.' },
+  'image-alt': { section: 'planning', owner: 'UID팀', label: '이미지 alt', description: '의미 있는 이미지에 alt 값이 있는지 확인합니다.' },
+  forms: { section: 'frontend', owner: 'UID팀', label: 'Form 기본 검사', description: '입력 요소에 label 또는 접근성 이름이 연결되어 있는지 확인합니다.' },
+  'external-links': { section: 'planning', owner: 'UID팀', label: '새 창 외부 링크', description: '새 창 외부 링크의 rel 보안 속성을 확인합니다.' },
+  'duplicate-ids': { section: 'frontend', owner: 'UID팀', label: '중복 ID', description: '한 페이지 안에서 같은 id 값이 여러 번 사용되는지 확인합니다.' },
+  headings: { section: 'seo', owner: 'UID팀', label: 'Heading', description: 'H1과 heading 구조가 수집되는지 확인합니다.' },
+  'resource-size': { section: 'frontend', owner: 'UID팀', label: '큰 리소스', description: '용량이 큰 CSS, JS, 이미지 리소스를 참고 정보로 확인합니다.' },
+  'network-failures': { section: 'backend', owner: '개발팀', label: '네트워크 요청', description: '페이지 구성 중 실패한 document, API, JS, CSS, 폰트 요청을 확인합니다.' },
+  'mobile-overflow': { section: 'frontend', owner: 'UID팀', label: '모바일 가로 스크롤', description: '모바일 화면 너비보다 문서가 넓어지는지 확인합니다.' },
+  'click-actions': { section: 'frontend', owner: 'UID팀', label: '클릭 동작', description: '버튼과 링크가 실제 사용자 클릭에 반응하는지 확인합니다.' },
+  'unlabeled-clickables': { section: 'planning', owner: 'UID팀', label: '클릭 가능한 요소 이름', description: '버튼과 링크에 사용자용 이름이 있는지 확인합니다.' },
 }
 
 const SECTION_TITLES = {
-  planning: '기획 QA',
+  planning: '기본 QA',
   link: '링크 및 버튼 QA',
-  seo: 'SEO QA',
+  seo: 'Markup QA',
   frontend: 'UI QA',
   backend: 'API·네트워크 QA',
 }
@@ -64,19 +64,19 @@ export function createTechQaViewModel(result = {}) {
   const checks = arrayOfObjects(result.checks)
   const clickActionGroups = createClickActionGroups(result)
   const links = createLinkItems(result.links)
-  const checkItems = checks.map((check) => createCheckItem(check, clickActionGroups))
+  const linkSummary = createLinkSummary(links, result.linkAudit)
+  const checkItems = checks.map((check) => createCheckItem(check, clickActionGroups, { result, linkSummary }))
   const allItems = checkItems.concat(links)
   const priorityItems = allItems.filter(isPriorityItem).sort(comparePriorityItems)
   const normalCheckItems = checkItems.filter((item) => item.status === 'ok').sort(comparePriorityItems)
   const counts = countStatuses(allItems)
   const issueCounts = createTechQaCounts(checkItems, priorityItems)
-  const priorityCounts = { error: issueCounts.errorElementCount, warn: issueCounts.warningElementCount, ok: 0 }
-  const linkSummary = createLinkSummary(links, result.linkAudit)
-  const statusMessage = issueCounts.errorElementCount > 0
-    ? `${issueCounts.errorCheckCount}개 검사에서 ${issueCounts.errorElementCount}개 오류 요소가 발견되었습니다.`
-    : issueCounts.warningElementCount > 0
-      ? `${issueCounts.warningCheckCount}개 검사에서 ${issueCounts.warningElementCount}개 확인 필요 요소가 발견되었습니다.`
-      : '배포 차단 오류는 확인되지 않았습니다.'
+  const priorityCounts = { error: issueCounts.errorUniqueElementCount, warn: issueCounts.warningUniqueElementCount, ok: 0 }
+  const statusMessage = issueCounts.errorUniqueElementCount > 0
+    ? `오류 ${issueCounts.errorUniqueElementCount}개 · ${issueCounts.errorCheckCount}개 검사에서 발견되었습니다.`
+    : issueCounts.warningUniqueElementCount > 0
+      ? `확인 필요 ${issueCounts.warningUniqueElementCount}개 · ${issueCounts.warningCheckCount}개 검사에서 발견되었습니다.`
+      : '오류 0개 · 확인 필요 0개입니다.'
 
   return {
     title: result.pageTitle || '페이지 타이틀 없음',
@@ -143,21 +143,36 @@ export function countStatuses(items = []) {
 }
 
 export function createTechQaCounts(checkItems = [], priorityItems = []) {
-  const actionableChecks = checkItems.filter(isPriorityItem)
-  const elementItems = priorityItems.length > 0 ? priorityItems : actionableChecks
+  const countItems = priorityItems.length > 0 ? priorityItems : checkItems.filter(isPriorityItem)
+  const evidenceRecords = countItems.flatMap((item) => createEvidenceRecords(item))
+  const errorEvidenceRecords = evidenceRecords.filter((record) => record.severity === 'error')
+  const warningEvidenceRecords = evidenceRecords.filter((record) => record.severity === 'warn')
+  const errorUniqueElementCount = countUniqueEvidenceRecords(errorEvidenceRecords)
+  const warningUniqueElementCount = countUniqueEvidenceRecords(warningEvidenceRecords)
+  const checkBreakdown = countItems
+    .map((item) => createCountBreakdown(item))
+    .filter((entry) => entry.errorEvidenceCount > 0 || entry.warningEvidenceCount > 0)
+
   return {
-    errorCheckCount: actionableChecks.filter((item) => item.status === 'error').length,
-    errorElementCount: countUniqueProblemElements(elementItems, 'error'),
-    warningCheckCount: actionableChecks.filter((item) => item.status === 'warn').length,
-    warningElementCount: countUniqueProblemElements(elementItems, 'warn'),
+    errorCheckCount: checkBreakdown.filter((item) => item.errorEvidenceCount > 0).length,
+    errorEvidenceCount: errorEvidenceRecords.length,
+    errorUniqueElementCount,
+    errorElementCount: errorUniqueElementCount,
+    warningCheckCount: checkBreakdown.filter((item) => item.warningEvidenceCount > 0).length,
+    warningEvidenceCount: warningEvidenceRecords.length,
+    warningUniqueElementCount,
+    warningElementCount: warningUniqueElementCount,
+    duplicateEvidenceMergedCount: Math.max(0, errorEvidenceRecords.length - errorUniqueElementCount) + Math.max(0, warningEvidenceRecords.length - warningUniqueElementCount),
     normalCheckCount: checkItems.filter((item) => item.status === 'ok').length,
+    checkBreakdown,
   }
 }
 
-function createCheckItem(check = {}, clickActionGroups = createEmptyClickActionGroups()) {
+function createCheckItem(check = {}, clickActionGroups = createEmptyClickActionGroups(), context = {}) {
   const definition = CHECK_DEFINITIONS[check.id] || { section: 'frontend', owner: 'UID팀', label: check.title || check.id || '검사 항목', description: check.detail || '자동 수집한 기술 검사 항목입니다.' }
   const display = check.id === 'click-actions' ? createClickActionDisplay(clickActionGroups, check) : null
   const status = display?.status || normalizeStatus(check.status)
+  const problemItems = getProblemItems(check, display)
   return {
     id: check.id || definition.label,
     type: 'check',
@@ -165,7 +180,7 @@ function createCheckItem(check = {}, clickActionGroups = createEmptyClickActionG
     title: definition.label || check.title,
     status,
     statusLabel: TECH_STATUS_LABELS[status],
-    value: display?.value || check.value || '',
+    value: display?.value || getObjectiveCheckValue(check, context, problemItems) || check.value || '',
     description: definition.description,
     shortDescription: getShortDescription(definition.description),
     technicalTerm: check.title || definition.label,
@@ -174,7 +189,7 @@ function createCheckItem(check = {}, clickActionGroups = createEmptyClickActionG
     owner: getOwnerForCheck(check, definition),
     categoryLabel: getSectionLabel(definition.section),
     priority: getCheckPriority(check),
-    problemItems: getProblemItems(check, display),
+    problemItems,
     raw: check,
   }
 }
@@ -216,20 +231,20 @@ function createVisibleItems(items = []) {
 function createSummaryCards(result, counts, linkSummary) {
   const imageTotal = Array.isArray(result.images) ? result.images.length : 0
   const accessStatus = result.accessible ? '정상' : '오류'
-  const errorDetail = counts.errorCheckCount > 0 ? `${counts.errorCheckCount}개 검사에서 발견` : '오류 검사 없음'
-  const warningDetail = counts.warningCheckCount > 0 ? `${counts.warningCheckCount}개 검사에서 확인` : '확인 필요 검사 없음'
+  const errorDetail = counts.errorCheckCount > 0 ? `${counts.errorCheckCount}개 검사에서 발견` : '0개 검사에서 발견'
+  const warningDetail = counts.warningCheckCount > 0 ? `${counts.warningCheckCount}개 검사에서 발견` : '0개 검사에서 발견'
   return [
     { label: '페이지 접속', value: `${accessStatus} · HTTP ${result.httpStatus || '응답 없음'}`, status: result.accessible ? 'ok' : 'error' },
-    { label: '오류', value: `${counts.errorElementCount}개 요소`, detail: errorDetail, status: counts.errorElementCount > 0 ? 'error' : 'ok' },
-    { label: '확인 필요', value: `${counts.warningElementCount}개 요소`, detail: warningDetail, status: counts.warningElementCount > 0 ? 'warn' : 'ok' },
-    { label: '정상 검사', value: `${counts.normalCheckCount}개 항목`, detail: `링크 ${linkSummary.total}개 · 이미지 ${imageTotal}개 수집`, status: 'info' },
+    { label: '오류', value: `${counts.errorUniqueElementCount}개`, detail: errorDetail, status: counts.errorUniqueElementCount > 0 ? 'error' : 'ok' },
+    { label: '확인 필요', value: `${counts.warningUniqueElementCount}개`, detail: warningDetail, status: counts.warningUniqueElementCount > 0 ? 'warn' : 'ok' },
+    { label: '검사 완료', value: `링크 ${linkSummary.total}개 · 이미지 ${imageTotal}개`, detail: `정상 검사 ${counts.normalCheckCount}개 항목`, status: 'info' },
   ]
 }
 
 function createClickActionDisplay(groups, check = {}) {
   const problemItems = groups.actualErrors.concat(groups.warnings)
   const status = groups.actualErrors.length > 0 ? 'error' : groups.warnings.length > 0 ? 'warn' : 'ok'
-  const value = problemItems.length > 0 ? `실제 오류 ${groups.actualErrors.length} · 확인 필요 ${groups.warnings.length}` : check.value && normalizeStatus(check.status) === 'ok' ? check.value : '정상'
+  const value = problemItems.length > 0 ? `실제 오류 ${groups.actualErrors.length}개 · 확인 필요 ${groups.warnings.length}개` : check.value && normalizeStatus(check.status) === 'ok' ? check.value : `실제 오류 0개 · 확인 필요 0개`
   return { status, value, problemItems }
 }
 
@@ -268,7 +283,7 @@ function getClickActionGroupId(item = {}) {
   if (category === 'skipped-safe-click' || item.safeClickSkippedReason) return 'safeSkipped'
   if (category === 'UI-control-no-url-required') return 'uiControls'
   if (item.status === 'ok' || category === 'valid-url' || category === 'observable-action') return 'verified'
-  if (category === 'covered-or-not-interactable' || category === 'no-observable-action' || category === 'missing-navigation-action') return 'actualErrors'
+  if (category === 'covered-or-not-interactable' || category === 'no-observable-action' || category === 'disabled-action') return 'actualErrors'
   if (/pointer-events|hit-test|가리고|관찰 가능한 변화가 없습니다/i.test(reason)) return 'actualErrors'
   return 'warnings'
 }
@@ -290,55 +305,195 @@ function getProblemItems(check = {}, display = null) {
   return items
 }
 
-function countUniqueProblemElements(items = [], targetStatus = '') {
-  const uniqueKeys = new Set()
-  let anonymousCount = 0
+function getObjectiveCheckValue(check = {}, context = {}, problemItems = []) {
+  const result = context.result || {}
+  const linkSummary = context.linkSummary || {}
+  const items = arrayOfObjects(check.items)
+  const problemCount = problemItems.length
 
-  items.forEach((item) => {
-    const entries = getProblemEntries(item, targetStatus)
-    entries.forEach((entry) => {
-      const key = getProblemIdentityKey(entry, item)
-      if (key) uniqueKeys.add(key)
-      else anonymousCount += 1
+  if (check.id === 'access') return `${result.accessible === false ? '접속 실패' : '접속 가능'} · HTTP ${result.httpStatus || check.statusCode || '응답 없음'}`
+  if (check.id === 'http-status') return `HTTP ${result.httpStatus || check.value || '응답 없음'}`
+  if (check.id === 'title') return check.value ? `수집됨 · ${check.value}` : result.pageTitle ? `수집됨 · ${result.pageTitle}` : '비어 있음'
+  if (check.id === 'console-errors') return formatConsoleCheckValue(check, items)
+  if (check.id === 'images') return `총 ${getImageTotal(check, result, items)}개 · 실패 ${getProblemCount(check, problemItems)}개`
+  if (check.id === 'links') return `총 ${getLinkTotal(check, linkSummary)}개 · 요청 오류 ${Number(linkSummary.error || 0)}개`
+  if (check.id === 'missing-href') return `총 ${getButtonTotal(result, check)}개 · URL 확인 필요 ${problemCount}개`
+  if (check.id === 'mobile') return formatMobileCheckValue(check, result)
+  if (check.id === 'headings') return check.value ? `${check.value} · 확인 필요 ${problemCount}개` : `확인 필요 ${problemCount}개`
+  if (check.id === 'duplicate-ids') return `중복 ID ${problemCount}개`
+  if (check.id === 'network-failures') return `실패 요청 ${problemCount}개`
+  if (check.id === 'forms') return check.value ? `${check.value} · 확인 필요 ${problemCount}개` : `확인 필요 ${problemCount}개`
+  if (check.id === 'meta') return `총 ${getGenericTotal(check, problemCount)}개 항목 확인 필요`
+  if (check.id === 'image-alt') return `총 ${getImageTotal(check, result, items)}개 · alt 확인 필요 ${problemCount}개`
+  if (check.id === 'external-links') return `총 ${getGenericTotal(check, problemCount)}개 · rel 확인 필요 ${problemCount}개`
+  return ''
+}
+
+function formatConsoleCheckValue(check = {}, items = []) {
+  const meta = check.meta || {}
+  const firstParty = Number(meta.firstPartyRuntimeErrorCount || 0) + Number(meta.firstPartyConsoleErrorCount || 0)
+  const thirdParty = Number(meta.thirdPartyScriptErrorCount || 0)
+  if (firstParty || thirdParty || meta.representativeCount !== undefined) return `first-party ${firstParty}개 · third-party ${thirdParty}개`
+
+  const firstPartyItems = items.filter((item) => item.party === 'first-party' || item.classification === 'first-party-runtime-error' || item.classification === 'first-party-console-error').length
+  const thirdPartyItems = items.filter((item) => item.party === 'third-party' || item.classification === 'third-party-script-error').length
+  if (firstPartyItems || thirdPartyItems) return `first-party ${firstPartyItems}개 · third-party ${thirdPartyItems}개`
+  return 'first-party 0개 · third-party 0개'
+}
+
+function getImageTotal(check = {}, result = {}, items = []) {
+  if (Array.isArray(result.images) && result.images.length > 0) return result.images.length
+  if (Number(check.totalCount) > 0) return Number(check.totalCount)
+  if (Number(check.total) > 0) return Number(check.total)
+  const parsed = String(check.value || '').match(/(\d+)\s*개\s*(?:중|총)/)
+  if (parsed) return Number(parsed[1])
+  return items.length
+}
+
+function getButtonTotal(result = {}, check = {}) {
+  if (Number(result.counts?.buttons) > 0) return Number(result.counts.buttons)
+  if (Number(check.totalCount) > 0) return Number(check.totalCount)
+  if (Number(check.total) > 0) return Number(check.total)
+  return arrayOfObjects(check.items).length
+}
+
+function getLinkTotal(check = {}, linkSummary = {}) {
+  if (Number(linkSummary.total) > 0) return Number(linkSummary.total)
+  const parsed = String(check.value || '').match(/(\d+)\s*개/)
+  if (parsed) return Number(parsed[1])
+  return 0
+}
+
+function getGenericTotal(check = {}, fallback = 0) {
+  if (Number(check.totalCount) > 0) return Number(check.totalCount)
+  if (Number(check.total) > 0) return Number(check.total)
+  const parsed = String(check.value || '').match(/(?:총\s*)?(\d+)\s*개/)
+  if (parsed) return Math.max(Number(parsed[1]), Number(fallback || 0))
+  return Number(fallback || 0)
+}
+
+function getProblemCount(check = {}, problemItems = []) {
+  if (Array.isArray(problemItems)) return problemItems.length
+  return arrayOfObjects(check.items).length
+}
+
+function formatMobileCheckValue(check = {}, result = {}) {
+  const viewport = result.mobile?.viewport
+  const viewportText = viewport?.width && viewport?.height ? `viewport ${viewport.width}x${viewport.height}` : 'viewport 확인'
+  const statusCode = result.mobile?.statusCode || check.statusCode || result.httpStatus || ''
+  return statusCode ? `${viewportText} · HTTP ${statusCode}` : viewportText
+}
+
+function createCountBreakdown(item = {}) {
+  const records = createEvidenceRecords(item)
+  const errorRecords = records.filter((record) => record.severity === 'error')
+  const warningRecords = records.filter((record) => record.severity === 'warn')
+  const errorUniqueIdentityCount = countUniqueEvidenceRecords(errorRecords)
+  const warningUniqueIdentityCount = countUniqueEvidenceRecords(warningRecords)
+  return {
+    id: item.id || item.title || item.type || 'unknown',
+    title: item.title || item.id || item.type || 'unknown',
+    type: item.type || 'check',
+    status: item.status || '',
+    errorEvidenceCount: errorRecords.length,
+    warningEvidenceCount: warningRecords.length,
+    uniqueIdentityCount: countUniqueEvidenceRecords(records),
+    errorUniqueIdentityCount,
+    warningUniqueIdentityCount,
+    duplicateMergedCount: Math.max(0, errorRecords.length - errorUniqueIdentityCount) + Math.max(0, warningRecords.length - warningUniqueIdentityCount),
+  }
+}
+
+function createEvidenceRecords(item = {}) {
+  return getEvidenceEntries(item)
+    .map((entry, index) => {
+      const severity = getEntryStatus(entry, item)
+      return {
+        item,
+        entry,
+        index,
+        severity,
+        identityKeys: getEvidenceIdentityKeys(entry, item),
+      }
+    })
+    .filter((record) => record.severity === 'error' || record.severity === 'warn')
+}
+
+function getEvidenceEntries(item = {}) {
+  const problemItems = arrayOfObjects(item.problemItems)
+  if (problemItems.length > 0) return problemItems
+  const rawItems = arrayOfObjects(item.raw?.items)
+  if (rawItems.length > 0) return rawItems
+  const status = normalizeStatus(item.status)
+  return status === 'error' || status === 'warn' ? [item.raw || item] : []
+}
+
+function countUniqueEvidenceRecords(records = []) {
+  if (records.length === 0) return 0
+  const parents = records.map((_, index) => index)
+  const keyOwners = new Map()
+
+  records.forEach((record, index) => {
+    record.identityKeys.forEach((key) => {
+      if (keyOwners.has(key)) unionParents(parents, index, keyOwners.get(key))
+      else keyOwners.set(key, index)
     })
   })
 
-  return uniqueKeys.size + anonymousCount
+  return new Set(records.map((_, index) => findParent(parents, index))).size
 }
 
-function getProblemEntries(item = {}, targetStatus = '') {
-  const problemItems = arrayOfObjects(item.problemItems)
-  if (problemItems.length > 0) return problemItems.filter((entry) => getEntryStatus(entry, item) === targetStatus)
-  const rawItems = arrayOfObjects(item.raw?.items)
-  if (rawItems.length > 0) return rawItems.filter((entry) => getEntryStatus(entry, item) === targetStatus)
-  return item.status === targetStatus ? [item.raw || item] : []
+function unionParents(parents, first, second) {
+  const firstRoot = findParent(parents, first)
+  const secondRoot = findParent(parents, second)
+  if (firstRoot !== secondRoot) parents[secondRoot] = firstRoot
+}
+
+function findParent(parents, index) {
+  if (parents[index] !== index) parents[index] = findParent(parents, parents[index])
+  return parents[index]
 }
 
 function getEntryStatus(entry = {}, parent = {}) {
   if (entry.actionClassification === 'actual-error') return 'error'
   if (entry.actionClassification === 'actionable-warning') return 'warn'
   const status = normalizeStatus(entry.status)
-  if (entry.status !== undefined && status !== 'ok') return status
+  if (entry.status !== undefined) return status
   return normalizeStatus(parent.status)
 }
 
-function getProblemIdentityKey(entry = {}, parent = {}) {
+function getEvidenceIdentityKeys(entry = {}, parent = {}) {
   const raw = entry.raw || entry
-  const selectors = [raw.selector, raw.domPath, raw.sourceId, raw.auditId]
-    .map(normalizeIdentityPart)
+  const stableKeys = [raw.auditId, raw.sourceId, raw.stableId, raw.requestId, raw.elementId, raw.id]
+    .map((value) => normalizeIdentityPart(value))
     .filter(Boolean)
-  if (selectors.length > 0) return `dom:${selectors[0]}`
+    .map((value) => `stable:${value}`)
+  const selector = normalizeIdentityPart(raw.selector)
+  if (selector) return [`dom:${selector}`]
+  if (stableKeys.length > 0) return [...new Set(stableKeys)]
+  const domPath = normalizeIdentityPart(raw.domPath)
+  if (domPath) return [`dom:${domPath}`]
 
-  const actionEvidence = normalizeIdentityPart(raw.actionEvidence || raw.actionType || raw.formAction || raw.dataHref || raw.dataUrl)
-  const href = normalizeIdentityPart(raw.href || raw.url || raw.finalUrl)
-  const label = normalizeIdentityPart(raw.label || raw.text || raw.ariaLabel || parent.title)
-  if (href && label) return `action:${href}|${label}|${actionEvidence}`
-  if (href) return `url:${href}`
+  const requestUrl = normalizeUrlIdentity(raw.requestUrl || raw.url || raw.finalUrl || raw.href)
+  const requestType = normalizeIdentityPart(raw.requestType || raw.resourceType || raw.type || raw.method || raw.category || parent.id)
+  if (requestUrl) return [`request:${requestType}|${requestUrl}`]
 
-  const sourceUrl = normalizeIdentityPart(raw.sourceUrl || raw.source)
+  const sourceUrl = normalizeUrlIdentity(raw.sourceUrl || raw.source)
   const message = normalizeConsoleMessage(raw.message)
-  if (message) return `message:${sourceUrl}|${message}`
-  return ''
+  if (message) return [`console:${sourceUrl}|${message}`]
+
+  const imageSrc = normalizeUrlIdentity(raw.src || raw.currentSrc)
+  if (imageSrc) return [`image:${imageSrc}`]
+
+  const label = normalizeIdentityPart(raw.label || raw.text || raw.ariaLabel || parent.title)
+  const controlIdentity = [raw.formAction, raw.name, raw.controlId, raw.actionEvidence, raw.actionType, raw.role, raw.tagName, label].map(normalizeIdentityPart).filter(Boolean).join('|')
+  if (controlIdentity) return [`control:${controlIdentity}`]
+
+  const location = normalizeIdentityPart(raw.userLocation || raw.area || raw.readableArea || raw.section || raw.sectionPath || parent.section)
+  const fallback = [raw.category || parent.id, label, location].map(normalizeIdentityPart).filter(Boolean).join('|')
+  if (fallback) return [`fallback:${fallback}`]
+
+  return []
 }
 
 function normalizeIdentityPart(value) {
@@ -354,12 +509,24 @@ function normalizeConsoleMessage(value) {
     .toLowerCase()
 }
 
+function normalizeUrlIdentity(value) {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  try {
+    const url = new URL(text, 'https://pagepilot.local')
+    const path = url.pathname.replace(/\/$/, '') || '/'
+    return `${url.origin.toLowerCase()}${path}${url.search}`.replace(/^https:\/\/pagepilot\.local/i, '')
+  } catch {
+    return normalizeIdentityPart(text)
+  }
+}
+
 function getSectionLabel(section) {
-  if (section === 'seo') return 'SEO'
+  if (section === 'seo') return 'Markup'
   if (section === 'frontend') return 'UI'
   if (section === 'backend') return 'API'
   if (section === 'link') return '링크'
-  return '기획'
+  return '기본'
 }
 
 function getShortDescription(value) {

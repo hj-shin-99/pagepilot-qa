@@ -18,9 +18,9 @@ export function getStatusCounts(checks) {
 
 export function createResultSummary(result) {
   const counts = createTechQaViewModel(result).issueCounts
-  const issueText = counts.errorElementCount > 0 ? `오류 요소 ${counts.errorElementCount}개` : '오류 요소 없음'
-  const warningText = counts.warningElementCount > 0 ? `확인 필요 요소 ${counts.warningElementCount}개` : '확인 필요 요소 없음'
-  const actionText = counts.errorElementCount > 0 ? '오류 요소를 우선 확인해 주세요.' : counts.warningElementCount > 0 ? '확인 필요 요소를 검토해 주세요.' : '배포 차단 오류는 확인되지 않았습니다.'
+  const issueText = counts.errorUniqueElementCount > 0 ? `오류 ${counts.errorUniqueElementCount}개` : '오류 없음'
+  const warningText = counts.warningUniqueElementCount > 0 ? `확인 필요 ${counts.warningUniqueElementCount}개` : '확인 필요 없음'
+  const actionText = counts.errorUniqueElementCount > 0 ? '오류 항목을 우선 확인해 주세요.' : counts.warningUniqueElementCount > 0 ? '확인 필요 항목을 검토해 주세요.' : '오류와 확인 필요 항목은 없습니다.'
 
   return `${result.pageTitle || result.targetUrl} 페이지는 총 ${(result.checks || []).length}개 QA 항목 중 정상 검사 ${counts.normalCheckCount}개, ${issueText}, ${warningText}으로 검사되었습니다. ${actionText}`
 }

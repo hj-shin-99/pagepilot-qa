@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react'
 import './App.css'
-import { buildReportText, createResultSummary, getStatusCounts } from './utils/report'
+import { buildReportText, createResultSummary } from './utils/report'
 import { deleteHistoryItem, loadHistoryItems, saveHistoryItem } from './utils/history'
 import { buildAiReviewPayloadFromSession, sanitizeAiReviewResponse } from './utils/aiReview'
 import { isValidHttpUrl } from './utils/scanSession'
 import { countIssueCards, createCompactVisualResult, createVisualIssueCards, createVisualSummary } from './utils/visualQa'
+import { createTechQaViewModel } from './utils/techQa'
 import EmptyState from './components/EmptyState'
 import HistoryPanel from './components/HistoryPanel'
 import InputPanel from './components/InputPanel'
@@ -366,8 +367,9 @@ async function copyText(text, setStatus, successMessage) {
 }
 
 function createTechHistoryItem(result) {
-  const techCounts = getStatusCounts(result.checks || [])
-  const totalIssueCount = techCounts.error + techCounts.warn
+  const techView = createTechQaViewModel(result)
+  const techCounts = techView.issueCounts
+  const totalIssueCount = techCounts.errorElementCount + techCounts.warningElementCount
 
   return {
     type: 'tech',
@@ -378,14 +380,14 @@ function createTechHistoryItem(result) {
     totalIssueCount,
     counts: {
       total: totalIssueCount,
-      high: techCounts.error,
+      high: techCounts.errorElementCount,
       text: 0,
       style: 0,
       layout: 0,
       cta: 0,
       footer: 0,
-      techError: techCounts.error,
-      techWarn: techCounts.warn,
+      techError: techCounts.errorElementCount,
+      techWarn: techCounts.warningElementCount,
     },
     topIssueSummaries: createTechTopIssueSummaries(result),
     result: createCompactTechResult(result),
@@ -400,8 +402,8 @@ function createCombinedHistoryItem(session) {
   const techSummary = techResult ? createResultSummary(techResult) : session.tech.error
   const visualCards = visualResult ? createVisualIssueCards(visualResult) : []
   const visualCounts = countIssueCards(visualCards)
-  const techCounts = techResult ? getStatusCounts(techResult.checks || []) : { error: 0, warn: 0 }
-  const totalIssueCount = visualCounts.critical + visualCounts.warning + techCounts.error + techCounts.warn
+  const techCounts = techResult ? createTechQaViewModel(techResult).issueCounts : { errorElementCount: 0, warningElementCount: 0 }
+  const totalIssueCount = visualCounts.critical + visualCounts.warning + techCounts.errorElementCount + techCounts.warningElementCount
 
   return {
     type: 'combined',
@@ -415,14 +417,14 @@ function createCombinedHistoryItem(session) {
     totalIssueCount,
     counts: {
       total: totalIssueCount,
-      high: visualCounts.critical + techCounts.error,
+      high: visualCounts.critical + techCounts.errorElementCount,
       text: Number(visualResult?.comparison?.differenceCount || 0),
       style: Number(visualResult?.aiHints?.evidenceSummary?.content?.figmaImageCount || 0) + Number(visualResult?.aiHints?.evidenceSummary?.content?.webImageCount || 0),
       layout: Number(visualResult?.aiHints?.evidenceSummary?.sections?.totalCount || 0),
       cta: Number(visualResult?.aiHints?.evidenceSummary?.interactions?.primaryActionCount || 0) + Number(visualResult?.aiHints?.evidenceSummary?.interactions?.secondaryActionCount || 0),
       footer: 0,
-      techError: techCounts.error,
-      techWarn: techCounts.warn,
+      techError: techCounts.errorElementCount,
+      techWarn: techCounts.warningElementCount,
     },
     topIssueSummaries: createCombinedTopIssueSummaries(visualCards, techResult, session),
     aiReview: sanitizeHistoryAiReview(session.aiReview),
@@ -482,9 +484,8 @@ function formatSessionStatus(status) {
 }
 
 function createTechTopIssueSummaries(result) {
-  const summaries = (result.checks || [])
-    .filter((check) => check.status !== 'ok')
-    .map((check) => `Tech QA: ${check.title}`)
+  const summaries = createTechQaViewModel(result).priorityItems
+    .map((item) => `Tech QA: ${item.title}`)
     .slice(0, 3)
 
   return summaries.length > 0 ? summaries : ['Tech QA 주요 항목 정상']
@@ -504,9 +505,12 @@ function createCompactTechResult(result) {
     missingHrefLinks: Array.isArray(result.missingHrefLinks) ? result.missingHrefLinks : [],
     images: Array.isArray(result.images) ? result.images : [],
     consoleMessages: Array.isArray(result.consoleMessages) ? result.consoleMessages : [],
+    consoleAudit: result.consoleAudit || {},
     counts: result.counts || {},
     mobile: result.mobile || { viewport: { width: 0, height: 0 }, statusCode: null, note: '' },
     linkAudit: result.linkAudit || {},
+    clickActions: Array.isArray(result.clickActions) ? result.clickActions : [],
+    clickActionAudit: result.clickActionAudit || {},
     uiControlWithoutUrlCount: result.uiControlWithoutUrlCount || 0,
   }
 }

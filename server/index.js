@@ -17,6 +17,7 @@ import { createTextDifferenceCandidates } from './textDiff.js'
 import { matchTextNodes } from './textMatcher.js'
 import { createCheckedLinkFailure, createTechLinkAudit, mergeTechLinkAuditResults, normalizeCheckedLinkResult } from './techLinkAudit.js'
 import { auditClickableActions, summarizeClickActionAudit } from './techClickAudit.js'
+import { classifyConsoleMessages } from './techConsoleAudit.js'
 import { buildVisualQaPayloadArtifacts } from './visualQaPayload.js'
 import { buildQaRunResponse, createQaRunHandler, isWebScanNavigationFailure } from './qaRunRoute.js'
 import { buildVisualPayloadFromScanResult, createVisualPayloadHandler } from './visualPayloadRoute.js'
@@ -1956,12 +1957,13 @@ async function scanUrl(targetUrl, options = {}) {
   const missingHrefLinks = linkAudit.missingHrefLinks
   const networkIssueSummary = classifyNetworkIssues(failedResourceRequests.concat(badResourceResponses))
   const clickActionSummary = summarizeClickActionAudit(clickActionAuditResult.items, clickActionAuditResult.meta)
+  const consoleAudit = classifyConsoleMessages(consoleMessages, targetUrl)
   const checks = buildChecks({
     mainResponse,
     mainError,
     loadWarning,
     pageTitle: safePageTitle,
-    consoleMessages,
+    consoleAudit,
     images,
     links: snapshot.links,
     missingHrefLinks,
@@ -2002,7 +2004,8 @@ async function scanUrl(targetUrl, options = {}) {
     designElements: snapshot.designElements,
     webCtaHints: snapshot.webCtaHints || [],
     webScreenshot: webScreenshot || createEmptyWebScreenshot(),
-    consoleMessages,
+    consoleMessages: consoleAudit.rawMessages,
+    consoleAudit: consoleAudit.meta,
     counts: snapshot.counts,
     mobile: safeMobileResult,
     ...(visualPayloadData ? { visualPayloadData } : {}),
@@ -2320,23 +2323,27 @@ async function blockPostRequests(context) {
 
 function attachCollectors(page, consoleMessages, failedImageRequests, failedResourceRequests = [], badResourceResponses = []) {
   page.on('console', (message) => {
-    if (message.type() === 'error') {
-      const location = message.location()
-      consoleMessages.push({
-        level: 'error',
-        source: location.url || 'inline-script',
-        lineNumber: location.lineNumber ?? null,
-        columnNumber: location.columnNumber ?? null,
-        message: message.text(),
-      })
-    }
+    const level = message.type()
+    if (!['error', 'warning', 'info'].includes(level)) return
+    const location = message.location()
+    consoleMessages.push({
+      eventType: 'console',
+      level,
+      source: location.url || 'inline-script',
+      sourceUrl: location.url || '',
+      lineNumber: location.lineNumber ?? null,
+      columnNumber: location.columnNumber ?? null,
+      message: message.text(),
+    })
   })
 
   page.on('pageerror', (error) => {
     consoleMessages.push({
+      eventType: 'pageerror',
       level: 'error',
       source: 'pageerror',
       message: error.message,
+      stack: error.stack || '',
     })
   })
 
@@ -2674,7 +2681,7 @@ async function safeDomSnapshot(page, targetUrl) {
       function collectClickableCandidates() {
         const candidates = []
         const seen = new Set()
-        const selector = 'a, button, input[type="button"], input[type="submit"], [role="button"], [tabindex], [onclick], [data-href], [data-url], [aria-controls], [aria-expanded]'
+        const selector = 'a, button, input[type="button"], input[type="submit"], [role="button"], [role="link"], [role="tab"], [tabindex], [onclick], [data-href], [data-url], [data-action], [aria-controls], [aria-expanded]'
         Array.from(document.querySelectorAll(selector)).forEach((element) => pushClickableCandidate(element, 'dom-evidence'))
         Array.from(document.querySelectorAll('body *')).forEach((element) => {
           if (candidates.length >= 80) return
@@ -2686,17 +2693,37 @@ async function safeDomSnapshot(page, targetUrl) {
 
         function pushClickableCandidate(element, source) {
           if (!element || !isVisibleElement(element)) return
+          const styles = window.getComputedStyle(element)
+          if (source === 'visual-evidence' && !shouldKeepVisualEvidenceCandidate(element, styles)) return
+          if (shouldSkipDescendantClickableCandidate(element)) return
+          if (source === 'visual-evidence' && !hasExplicitActionEvidence(element) && hasPrimaryInteractiveDescendant(element)) return
           const key = getElementKey(element)
           if (seen.has(key)) return
           seen.add(key)
           const rect = getPageRect(element)
-          const viewportX = Math.max(0, Math.min(window.innerWidth - 1, (rect.x - window.scrollX) + rect.width / 2))
-          const viewportY = Math.max(0, Math.min(window.innerHeight - 1, (rect.y - window.scrollY) + rect.height / 2))
-          const hitTarget = document.elementFromPoint(viewportX, viewportY)
+          const centerX = (rect.x - window.scrollX) + rect.width / 2
+          const centerY = (rect.y - window.scrollY) + rect.height / 2
+          const canRunHitTest = centerX >= 0 && centerX < window.innerWidth && centerY >= 0 && centerY < window.innerHeight
+          const hitTarget = canRunHitTest ? document.elementFromPoint(centerX, centerY) : null
+          const sameElement = Boolean(hitTarget && hitTarget === element)
+          const descendantMatch = Boolean(hitTarget && element.contains(hitTarget))
+          const hitInteractiveAncestor = hitTarget?.closest?.(getInteractiveSelector()) || null
+          const candidateInteractiveAncestor = element.closest?.(getInteractiveSelector()) || null
+          const ancestorMatch = Boolean(hitInteractiveAncestor && hitInteractiveAncestor === element)
+          const actionIdentityMatch = Boolean(hitInteractiveAncestor && candidateInteractiveAncestor && hitInteractiveAncestor === candidateInteractiveAncestor)
+          const hitTargetSame = Boolean(sameElement || descendantMatch || ancestorMatch || actionIdentityMatch)
+          const unrelatedOverlay = Boolean(hitTarget && !hitTargetSame)
           const href = element.getAttribute('href')?.trim() || ''
           const url = resolveInspectableUrl(href, baseUrl)
-          const styles = window.getComputedStyle(element)
           const tagName = element.tagName.toLowerCase()
+          const visibleText = normalizeText(element.value || element.innerText || element.textContent || '')
+          const accessibleName = getAccessibleLabel(element)
+          const actionEvidence = createActionEvidence(element)
+          const uiControlSemantic = getUiControlSemantic(element)
+          const hasCandidateActionEvidence = isPrimaryInteractiveElement(element) || hasExplicitActionEvidence(element) || hasInteractiveRole(element) || Boolean(uiControlSemantic)
+          if (!hasCandidateActionEvidence && isPlainTextContainer(element)) return
+          const generatedLabel = !accessibleName && !visibleText
+          if (source === 'visual-evidence' && generatedLabel && !actionEvidence && !uiControlSemantic) return
           candidates.push({
             auditId: `${candidates.length + 1}-${key}`,
             source,
@@ -2704,14 +2731,17 @@ async function safeDomSnapshot(page, targetUrl) {
             kind: tagName,
             role: element.getAttribute('role') || '',
             type: element.getAttribute('type') || '',
-            label: getAccessibleLabel(element) || getElementLabel(element, `Clickable ${candidates.length + 1}`),
-            text: normalizeText(element.value || element.innerText || element.textContent || ''),
+            label: accessibleName || getElementLabel(element, `Clickable ${candidates.length + 1}`),
+            generatedLabel,
+            text: visibleText,
             ariaLabel: element.getAttribute('aria-label') || '',
             ariaControls: element.getAttribute('aria-controls') || '',
             ariaExpanded: element.getAttribute('aria-expanded') || '',
             ariaDisabled: element.getAttribute('aria-disabled') || '',
             dataTarget: element.getAttribute('data-target') || element.getAttribute('data-bs-target') || '',
             dataToggle: element.getAttribute('data-toggle') || element.getAttribute('data-bs-toggle') || '',
+            dataDismiss: element.getAttribute('data-dismiss') || element.getAttribute('data-bs-dismiss') || '',
+            dataSlide: element.getAttribute('data-slide') || element.getAttribute('data-bs-slide') || '',
             dataHref: element.getAttribute('data-href') || '',
             dataUrl: element.getAttribute('data-url') || '',
             href,
@@ -2732,10 +2762,82 @@ async function safeDomSnapshot(page, targetUrl) {
             opacity: styles.opacity,
             boundingBox: rect,
             hitTargetSelector: hitTarget ? getCssSelector(hitTarget) : '',
-            hitTargetSame: Boolean(hitTarget && (hitTarget === element || element.contains(hitTarget) || hitTarget.contains(element))),
-            actionEvidence: createActionEvidence(element),
+            hitTargetTag: hitTarget?.tagName?.toLowerCase() || '',
+            sameElement,
+            descendantMatch,
+            ancestorMatch,
+            actionIdentityMatch,
+            unrelatedOverlay,
+            overlaySelector: unrelatedOverlay ? getCssSelector(hitTarget) : '',
+            viewportState: getViewportState(rect),
+            hitTargetSame,
+            hitTestStatus: canRunHitTest ? hitTarget ? unrelatedOverlay ? 'hitTestFailed' : 'hitTestPassed' : 'hitTestUnavailable' : 'hitTestNotRun',
+            actionEvidence,
+            uiControlSemantic,
           })
         }
+      }
+
+      function shouldKeepVisualEvidenceCandidate(element, styles) {
+        if (!hasVisibleRect(getPageRect(element))) return false
+        if (styles.cursor !== 'pointer') return false
+        if (element.parentElement?.closest?.(getInteractiveSelector())) return false
+        if (isPlainTextContainer(element) && !hasExplicitActionEvidence(element) && !hasInteractiveRole(element)) return false
+        if (hasPrimaryInteractiveDescendant(element) && !hasExplicitActionEvidence(element)) return false
+        return hasExplicitActionEvidence(element) || hasInteractiveRole(element) || Boolean(getUiControlSemantic(element))
+      }
+
+      function shouldSkipDescendantClickableCandidate(element) {
+        const ancestor = element.parentElement?.closest?.(getInteractiveSelector())
+        if (!ancestor) return false
+        if (isPrimaryInteractiveElement(element)) return false
+        if (hasExplicitActionEvidence(element)) return false
+        return true
+      }
+
+      function isPrimaryInteractiveElement(element) {
+        const tagName = element.tagName?.toLowerCase() || ''
+        if (tagName === 'a' || tagName === 'button') return true
+        if (tagName === 'input' && /^(button|submit)$/i.test(element.getAttribute('type') || '')) return true
+        return ['button', 'link', 'tab'].includes(element.getAttribute('role') || '')
+      }
+
+      function hasInteractiveRole(element) {
+        return ['button', 'link', 'tab'].includes(element.getAttribute('role') || '')
+      }
+
+      function isPlainTextContainer(element) {
+        return /^(h[1-6]|p|span|strong|em|div)$/i.test(element.tagName || '')
+      }
+
+      function hasExplicitActionEvidence(element) {
+        return element.hasAttribute('href')
+          || element.hasAttribute('onclick')
+          || element.hasAttribute('data-href')
+          || element.hasAttribute('data-url')
+          || element.hasAttribute('data-action')
+          || element.hasAttribute('aria-controls')
+          || element.hasAttribute('aria-expanded')
+          || element.hasAttribute('formaction')
+      }
+
+      function hasPrimaryInteractiveDescendant(element) {
+        return Boolean(element.querySelector?.('a, button, input[type="button"], input[type="submit"], [role="button"], [role="link"], [role="tab"]'))
+      }
+
+      function getInteractiveSelector() {
+        return 'a, button, input[type="button"], input[type="submit"], [role="button"], [role="link"], [role="tab"], [onclick], [data-href], [data-url], [data-action], [aria-controls], [aria-expanded]'
+      }
+
+      function getViewportState(rect) {
+        if (!rect) return 'unknown'
+        const left = rect.x - window.scrollX
+        const top = rect.y - window.scrollY
+        const right = left + rect.width
+        const bottom = top + rect.height
+        if (right <= 0 || bottom <= 0 || left >= window.innerWidth || top >= window.innerHeight) return 'outsideViewport'
+        if (left < 0 || top < 0 || right > window.innerWidth || bottom > window.innerHeight) return 'partiallyVisible'
+        return 'inViewport'
       }
 
       function classNameSample(element) {
@@ -2749,10 +2851,34 @@ async function safeDomSnapshot(page, targetUrl) {
         if (element.hasAttribute('onclick')) evidence.push('onclick')
         if (element.hasAttribute('data-href')) evidence.push('data-href')
         if (element.hasAttribute('data-url')) evidence.push('data-url')
+        if (element.hasAttribute('data-action')) evidence.push('data-action')
         if (element.hasAttribute('aria-controls')) evidence.push('aria-controls')
         if (element.hasAttribute('aria-expanded')) evidence.push('aria-expanded')
+        if (element.hasAttribute('data-dismiss') || element.hasAttribute('data-bs-dismiss')) evidence.push('data-dismiss')
+        if (element.hasAttribute('data-slide') || element.hasAttribute('data-bs-slide')) evidence.push('data-slide')
         if (element.form) evidence.push('form-associated')
         return evidence.join(', ')
+      }
+
+      function getUiControlSemantic(element) {
+        const text = [
+          getAccessibleLabel(element),
+          element.getAttribute('aria-label') || '',
+          element.getAttribute('title') || '',
+          element.getAttribute('role') || '',
+          typeof element.className === 'string' ? element.className : '',
+          element.getAttribute('data-dismiss') || '',
+          element.getAttribute('data-bs-dismiss') || '',
+          element.getAttribute('data-toggle') || '',
+          element.getAttribute('data-bs-toggle') || '',
+          element.getAttribute('data-slide') || '',
+          element.getAttribute('data-bs-slide') || '',
+        ].join(' ').toLowerCase()
+        if (element.hasAttribute('aria-controls') || element.hasAttribute('aria-expanded')) return 'controlled-ui'
+        if (/\b(close|dismiss|cancel|prev|previous|next|carousel|slide|slider|menu|search|sitemap|site-map|accordion|tab|dropdown|modal|dialog|play|pause|cookie)\b/i.test(text)) return 'semantic-ui-control'
+        if (/(닫기|취소|이전|다음|캐러셀|슬라이드|메뉴|검색|사이트\s*맵|아코디언|탭|드롭다운|모달|팝업|재생|정지|쿠키)/i.test(text)) return 'semantic-ui-control'
+        if (element.closest?.('dialog, [role="dialog"], [aria-modal="true"]') && /\b(close|dismiss|cancel|btn-close)\b/i.test(text)) return 'dialog-close-control'
+        return ''
       }
 
       function getAncestorClassText(element) {
@@ -3309,7 +3435,7 @@ function buildChecks({
   mainResponse,
   mainError,
   pageTitle,
-  consoleMessages,
+  consoleAudit = { status: 'ok', value: 'first-party 0 · third-party 0', detail: '콘솔 오류가 감지되지 않았습니다.', items: [], referenceItems: [], rawMessages: [], meta: {} },
   images,
   links,
   missingHrefLinks,
@@ -3343,7 +3469,7 @@ function buildChecks({
       id: 'access',
       title: '페이지 접속 가능 여부',
       status: mainResponse?.ok() ? 'ok' : 'error',
-      value: mainResponse?.ok() ? '접속 가능' : '접속 실패',
+      value: mainResponse?.ok() ? `접속 가능 · HTTP ${httpStatus || '응답 없음'}` : '접속 실패',
       detail: mainError ? sanitizePlaywrightMessage(mainError) : 'Playwright가 입력 URL에 정상 접속했습니다.',
     },
     {
@@ -3363,16 +3489,18 @@ function buildChecks({
     {
       id: 'console-errors',
       title: '콘솔 에러 수집',
-      status: consoleMessages.length > 0 ? 'error' : 'ok',
-      value: `${consoleMessages.length}건`,
-      detail: consoleMessages.length > 0 ? 'console.error 또는 pageerror가 감지되었습니다.' : '콘솔 에러가 감지되지 않았습니다.',
-      items: consoleMessages,
+      status: consoleAudit.status,
+      value: consoleAudit.value,
+      detail: consoleAudit.detail,
+      items: consoleAudit.items,
+      referenceItems: consoleAudit.referenceItems,
+      meta: consoleAudit.meta,
     },
     {
       id: 'images',
       title: '이미지 로드 실패 여부',
       status: brokenImages.length > 0 ? 'error' : 'ok',
-      value: `${brokenImages.length}건 실패`,
+      value: `${images.length}개 중 실패 ${brokenImages.length}`,
       detail: `${images.length}개 이미지 중 로드 실패 항목을 확인했습니다.`,
       items: brokenImages,
     },

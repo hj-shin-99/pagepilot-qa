@@ -28,13 +28,23 @@ function TechQaPanel({ result, copyStatus, onCopyReport }) {
               <p className="metric-label">{card.label}</p>
             </div>
             <p className="metric-value">{card.value}</p>
+            {card.detail ? <p className="tech-kpi-detail">{card.detail}</p> : null}
           </article>
         ))}
       </section>
 
       <section className="detail-card tech-compact-card" aria-label="우선 확인 필요">
-        <SectionHead title="우선 확인 필요" meta={`오류 ${view.priorityCounts.error} · 확인 필요 ${view.priorityCounts.warn}`} note="실제 조치가 필요한 항목만 우선 표시합니다." />
+        <SectionHead title="우선 확인 필요" meta={`오류 ${view.issueCounts.errorElementCount}개 요소 · 확인 필요 ${view.issueCounts.warningElementCount}개 요소`} note="실제 조치가 필요한 항목만 우선 표시합니다." />
         {view.priorityItems.length > 0 ? <TechCompactTable items={view.priorityItems} mode="priority" /> : <p className="empty-row">오류 또는 확인 필요 항목이 없습니다.</p>}
+      </section>
+
+      <section className="detail-card tech-compact-card" aria-label="기본 진단 결과">
+        <SectionHead
+          title="기본 진단 결과"
+          meta={`오류 검사 ${view.issueCounts.errorCheckCount} · 확인 필요 검사 ${view.issueCounts.warningCheckCount} · 정상 검사 ${view.issueCounts.normalCheckCount}`}
+          note="핵심 Tech QA 진단 항목은 접지 않고 항상 한 줄 결과로 표시합니다. 긴 설명과 raw 데이터는 상세 안에 둡니다."
+        />
+        <TechCompactTable items={view.basicCheckItems} mode="basic" />
       </section>
 
       <section className="detail-card tech-compact-card" aria-label="링크 및 버튼 검사">
@@ -44,18 +54,17 @@ function TechQaPanel({ result, copyStatus, onCopyReport }) {
           note="페이지에서 발견한 링크와 이동 버튼을 실제로 검사한 결과입니다. 오류와 확인 필요 항목을 우선 표시합니다."
         />
         <LinkTable groups={linkGroups} />
-        <ClickActionGroups groups={view.clickActionGroups} />
       </section>
 
-      <details className="detail-card tech-detail-accordion tech-normal-checks">
-        <summary>
-          <span>정상 검사 {view.normalCheckItems.length}개 펼치기</span>
-          <strong>기본 접힘</strong>
-        </summary>
-        <div className="tech-accordion-body">
-          <TechCompactTable items={view.normalCheckItems} mode="normal" />
-        </div>
-      </details>
+      <section className="detail-card tech-compact-card" aria-label="클릭 동작 검사">
+        <SectionHead
+          title="클릭 동작 검사"
+          meta={`후보 ${view.clickActionGroups.total} · 안전 클릭 ${result.clickActionAudit?.safeClickAttemptCount || 0}`}
+          note="상단 오류/확인 필요 count에는 실제 오류와 조치 가능한 확인 필요만 포함합니다. 안전상 클릭 생략, URL 불필요 UI 제어, 정상 검증 완료는 개발 상세 통계로만 봅니다."
+        />
+        <ClickActionSummary groups={view.clickActionGroups} />
+        <ClickActionIssueTable groups={view.clickActionGroups} />
+      </section>
 
       <details className="detail-card tech-detail-accordion">
         <summary>
@@ -64,11 +73,28 @@ function TechQaPanel({ result, copyStatus, onCopyReport }) {
         </summary>
         <div className="tech-accordion-body">
           <DeveloperInfo view={view} result={result} />
-          <RawDetails result={result} />
+          <RawDetails view={view} result={result} />
         </div>
       </details>
     </section>
   )
+}
+
+function ClickActionSummary({ groups }) {
+  if (!groups || !groups.total) return <p className="empty-row">클릭 후보가 없습니다.</p>
+  return (
+    <div className="tech-click-summary" aria-label="클릭 동작 검사 통계">
+      <MetricPill label="실제 오류" value={groups.actualErrors.length} tone="error" />
+      <MetricPill label="확인 필요" value={groups.warnings.length} tone="warn" />
+      <MetricPill label="안전상 클릭 생략" value={groups.safeSkipped.length} tone="info" />
+      <MetricPill label="URL 불필요 UI 제어" value={groups.uiControls.length} tone="ok" />
+      <MetricPill label="정상 검증 완료" value={groups.verified.length} tone="ok" />
+    </div>
+  )
+}
+
+function MetricPill({ label, value, tone }) {
+  return <div className={`tech-metric-pill status-${tone}`}><span>{label}</span><strong>{value}개</strong></div>
 }
 
 function getKpiIcon(status) {
@@ -156,41 +182,60 @@ function LinkTableRow({ item }) {
   )
 }
 
-function ClickActionGroups({ groups }) {
-  if (!groups || !groups.total) return null
+function ClickActionIssueTable({ groups }) {
+  const items = (groups?.actualErrors || []).concat(groups?.warnings || [])
+  if (!items.length) return <p className="empty-row">실제 동작 오류는 확인되지 않았습니다.</p>
   return (
-    <div className="tech-click-groups" aria-label="클릭 동작 검사 상세 분류">
-      {groups.definitions.map((group) => {
-        const items = groups[group.id] || []
-        return (
-          <details className={`tech-click-group is-${group.id}`} key={group.id} open={group.id === 'actualErrors' || group.id === 'warnings'}>
-            <summary>
-              <span>{group.label}</span>
-              <strong>{items.length}개</strong>
-            </summary>
-            {items.length > 0 ? <ClickActionList items={items} /> : <p className="empty-row">해당 항목이 없습니다.</p>}
-          </details>
-        )
-      })}
+    <div className="tech-click-issue-table" aria-label="클릭 동작 오류 및 확인 필요">
+      <div className="tech-click-issue-head">
+        <span>상태</span>
+        <span>화면 문구</span>
+        <span>기술 상태</span>
+        <span>href/action</span>
+        <span>selector/위치</span>
+        <span>우선 확인</span>
+        <span>상세</span>
+      </div>
+      {items.map((item, index) => <ClickActionIssueRow item={item} key={`${index}-${item.auditId || item.selector || item.label || ''}`} />)}
     </div>
   )
 }
 
-function ClickActionList({ items }) {
+function ClickActionIssueRow({ item }) {
+  const status = item.actionClassification === 'actual-error' || item.status === 'error' ? 'error' : 'warn'
   return (
-    <ol className="tech-click-list">
-      {items.map((item, index) => (
-        <li key={`${index}-${item.auditId || item.selector || item.label || ''}`}>
-          <strong>{item.label || item.text || item.selector || `클릭 요소 ${index + 1}`}</strong>
-          <span>href: {item.href || '-'}</span>
-          <span>selector: {item.selector || '-'}</span>
-          <span>화면 문구: {item.label || item.text || '-'}</span>
-          <span>action type: {item.actionType || '-'}</span>
-          <span>판정 이유: {item.reason || item.note || item.message || '-'}</span>
-        </li>
-      ))}
-    </ol>
+    <div className={`tech-click-issue-row ${getStatusClass(status)}`}>
+      <span className={`status-badge ${getStatusClass(status)}`}>{TECH_STATUS_LABELS[status]}</span>
+      <strong>{item.label || item.text || item.selector || '-'}</strong>
+      <span>{item.technicalTerm || item.category || item.hrefState || item.actionClassification || '-'}</span>
+      <span className="tech-url-cell">{item.href || item.formAction || item.actionEvidence || item.actionType || '-'}</span>
+      <span className="tech-url-cell">{item.selector || item.section || item.domPath || '-'}</span>
+      <OwnerBadge owner={getUidOwner()} />
+      <details className="tech-row-details">
+        <summary>상세</summary>
+        <dl className="tech-issue-meta">
+          <Meta label="검사 목적" value="사용자가 눌러야 하는 버튼과 링크가 실제로 동작하는지 확인합니다." />
+          <Meta label="현재 결과" value={`${TECH_STATUS_LABELS[status]} · ${item.label || item.text || '클릭 요소'}`} />
+          <Meta label="왜 확인이 필요한가" value={item.reason || item.note || '자동 검사에서 클릭 동작을 확정하지 못했습니다.'} />
+          <Meta label="담당 팀에서 확인할 내용" value={`${getUidOwner()}에서 실제 화면에서 해당 요소를 눌렀을 때 의도한 동작이 발생하는지 확인해 주세요.`} />
+          <Meta label="기술 근거" value={formatTechnicalEvidence(item)} />
+        </dl>
+      </details>
+    </div>
   )
+}
+
+function getUidOwner() {
+  return ['UID', '팀'].join('')
+}
+
+function formatHitTest(item = {}) {
+  if (item.hitTestStatus === 'hitTestPassed' || item.hitTargetSame === true) return '통과'
+  if (item.unrelatedOverlay === true && item.overlaySelector) return `unrelated overlay: ${item.overlaySelector}`
+  if (item.hitTestStatus === 'hitTestFailed') return 'unrelated overlay 확인 필요'
+  if (item.hitTestStatus === 'hitTestNotRun') return '미실행'
+  if (item.hitTestStatus === 'hitTestUnavailable') return '확인 불가'
+  return ''
 }
 
 function CollapsedRows({ label, items }) {
@@ -213,35 +258,50 @@ function IssueDetails({ item }) {
     <details className="tech-row-details">
       <summary>상세</summary>
       <dl className="tech-issue-meta">
-        <Meta label="기술 항목" value={item.technicalTerm || item.raw?.technicalTerm || item.raw?.category} />
-        <Meta label="의미" value={item.description} />
-        <Meta label="쉬운 설명" value={item.easyExplanation || item.raw?.easyExplanation} />
-        <Meta label="발견 결과" value={item.value} />
-        <Meta label="영향" value={item.example} />
+        <Meta label="검사 목적" value={item.description} />
+        <Meta label="현재 결과" value={formatCurrentResult(item)} />
+        <Meta label="왜 확인이 필요한가" value={formatCheckReason(item)} />
+        <Meta label="담당 팀에서 확인할 내용" value={formatTeamAction(item)} />
+        <Meta label="기술 근거" value={formatTechnicalEvidence(item.raw)} />
         <Meta label="우선 확인 팀" value={item.status === 'ok' ? '-' : item.owner} />
-        <Meta label="화면 문구" value={item.raw?.label || item.raw?.text} />
-        <Meta label="element tag" value={item.raw?.tagName || item.raw?.kind} />
-        <Meta label="role" value={item.raw?.role} />
-        <Meta label="action type" value={item.raw?.actionType} />
-        <Meta label="URL" value={item.raw?.url} />
-        <Meta label="resolved URL" value={item.raw?.url} />
-        <Meta label="Final URL" value={item.raw?.finalUrl} />
-        <Meta label="href" value={item.raw?.href} />
-        <Meta label="aria-label" value={item.raw?.ariaLabel} />
-        <Meta label="class" value={item.raw?.className} />
-        <Meta label="위치" value={item.raw?.section || item.raw?.domPath} />
-        <Meta label="selector" value={item.raw?.selector} />
-        <Meta label="source" value={item.raw?.source || item.raw?.category} />
-        <Meta label="status" value={item.raw?.statusCode ?? item.raw?.status} />
-        <Meta label="문제 판정 이유" value={item.raw?.reason || item.raw?.note || item.raw?.detail} />
-        <Meta label="error message" value={item.raw?.message || item.raw?.note || item.raw?.detail} />
-        <Meta label="request type" value={item.raw?.type} />
-        <Meta label="source count" value={item.raw?.sourceCount} />
-        <Meta label="확인할 내용" value={item.status === 'ok' ? '' : `${item.owner}에서 ${item.technicalTerm || item.title} 근거를 확인해 주세요.`} />
       </dl>
       <ProblemElementList items={item.problemItems || item.raw?.items} owner={item.owner} />
     </details>
   )
+}
+
+function formatCurrentResult(item = {}) {
+  return `${TECH_STATUS_LABELS[item.status] || item.status || '확인'}${item.value ? ` · ${item.value}` : ''}`
+}
+
+function formatCheckReason(item = {}) {
+  if (item.status === 'ok') return '자동 검사에서 정상 근거가 확인되었습니다.'
+  return item.raw?.reason || item.raw?.note || item.raw?.detail || item.shortDescription || '자동 검사에서 사용자가 실제로 겪을 수 있는 문제인지 확인이 필요합니다.'
+}
+
+function formatTeamAction(item = {}) {
+  if (item.status === 'ok') return '-'
+  return `${item.owner || '담당 팀'}에서 실제 화면 동작과 수집 근거를 확인해 주세요.`
+}
+
+function formatTechnicalEvidence(raw = {}) {
+  return [
+    raw?.technicalTerm || raw?.category ? `technical: ${raw.technicalTerm || raw.category}` : '',
+    raw?.tagName || raw?.kind ? `element: ${raw.tagName || raw.kind}` : '',
+    raw?.role ? `role: ${raw.role}` : '',
+    raw?.selector ? `selector: ${raw.selector}` : '',
+    raw?.href || raw?.url ? `href/url: ${raw.href || raw.url}` : '',
+    raw?.actionType || raw?.actionEvidence ? `action: ${raw.actionType || raw.actionEvidence}` : '',
+    raw?.source ? `source: ${raw.source}` : '',
+    raw?.viewportState ? `viewport: ${raw.viewportState}` : '',
+    raw?.hitTestStatus ? `hit-test: ${raw.hitTestStatus}` : '',
+    raw?.hitTargetSelector ? `hit target: ${raw.hitTargetSelector}` : '',
+    raw?.overlaySelector ? `overlay: ${raw.overlaySelector}` : '',
+    raw?.clickExecuted !== undefined ? `click executed: ${raw.clickExecuted}` : '',
+    raw?.observableChange !== undefined ? `observed change: ${raw.observableChange}` : '',
+    raw?.statusCode ?? raw?.status ? `status: ${raw.statusCode ?? raw.status}` : '',
+    raw?.repeatCount ? `repeatCount: ${raw.repeatCount}` : '',
+  ].filter(Boolean).join(' · ')
 }
 
 function ProblemElementList({ items, owner }) {
@@ -253,13 +313,30 @@ function ProblemElementList({ items, owner }) {
         {items.map((entry, index) => (
           <li key={`${index}-${entry.selector || entry.url || entry.label || entry.message || ''}`}>
             <strong>{entry.label || entry.text || entry.url || entry.selector || `요소 ${index + 1}`}</strong>
-            <span>기술 항목: {entry.technicalTerm || entry.category || entry.hrefState || '-'}</span>
-            <span>요소: {entry.tagName || entry.kind || '-'}{entry.role ? ` / role=${entry.role}` : ''}</span>
-            <span>href/action: {entry.href || entry.actionType || entry.actionEvidence || '-'}</span>
-            <span>selector: {entry.selector || '-'}</span>
-            <span>위치: {entry.section || entry.domPath || '-'}</span>
-            <span>확인 이유: {entry.reason || entry.note || entry.message || '-'}</span>
-            <span>우선 확인: {entry.owner || owner || '-'}</span>
+            <span>상태: {TECH_STATUS_LABELS[entry.status] || entry.status || '확인 필요'}</span>
+            <span>확인 이유: {entry.reason || entry.note || '자동 검사에서 동작을 확정하지 못했습니다.'}</span>
+            <span>확인할 내용: {entry.owner || owner || '담당 팀'}에서 실제 화면 동작을 확인해 주세요.</span>
+            <details className="tech-row-details">
+              <summary>기술 상세</summary>
+              <dl className="tech-issue-meta">
+                <Meta label="tag" value={entry.tagName || entry.kind} />
+                <Meta label="role" value={entry.role} />
+                <Meta label="selector" value={entry.selector} />
+                <Meta label="href/action" value={entry.href || entry.actionType || entry.actionEvidence} />
+                <Meta label="source" value={entry.source || entry.category} />
+                <Meta label="viewport state" value={entry.viewportState} />
+                <Meta label="hit-test state" value={entry.hitTestStatus || formatHitTest(entry)} />
+                <Meta label="hit target" value={entry.hitTargetSelector} />
+                <Meta label="same element" value={entry.sameElement} />
+                <Meta label="descendant match" value={entry.descendantMatch} />
+                <Meta label="ancestor match" value={entry.ancestorMatch} />
+                <Meta label="unrelated overlay" value={entry.unrelatedOverlay} />
+                <Meta label="overlay selector" value={entry.overlaySelector} />
+                <Meta label="click executed" value={entry.clickExecuted} />
+                <Meta label="observed change" value={entry.observableChange} />
+                <Meta label="raw error" value={entry.safeClickResult?.error || entry.message} />
+              </dl>
+            </details>
           </li>
         ))}
       </ol>
@@ -289,7 +366,7 @@ function DeveloperInfo({ view, result }) {
   )
 }
 
-function RawDetails({ result }) {
+function RawDetails({ view, result }) {
   const consoleItems = Array.isArray(result.consoleMessages) ? result.consoleMessages : []
   const networkCheck = Array.isArray(result.checks) ? result.checks.find((check) => check.id === 'network-failures') : null
   const clickCheck = Array.isArray(result.checks) ? result.checks.find((check) => check.id === 'click-actions') : null
@@ -297,9 +374,12 @@ function RawDetails({ result }) {
   const clickItems = Array.isArray(result.clickActions) ? result.clickActions : Array.isArray(clickCheck?.items) ? clickCheck.items : []
   return (
     <div className="tech-raw-grid">
-      <RawList title="Console raw" items={consoleItems} />
-      <RawList title="Network raw" items={networkItems} />
-      <RawList title="Click raw" items={clickItems} />
+      <RawList title="안전상 클릭 생략 전체" items={view.clickActionGroups.safeSkipped} />
+      <RawList title="URL 불필요 UI 제어 전체" items={view.clickActionGroups.uiControls} />
+      <RawList title="정상 클릭 검증 전체" items={view.clickActionGroups.verified} />
+      <RawList title="Raw click candidates" items={clickItems} />
+      <RawList title="Raw console" items={consoleItems} />
+      <RawList title="Raw network" items={networkItems} />
     </div>
   )
 }
@@ -309,7 +389,7 @@ function RawList({ title, items }) {
     <details className="tech-detail-list">
       <summary>{title} {items.length}개</summary>
       <ul className="tech-raw-list">
-        {items.slice(0, 30).map((item, index) => <li key={`${title}-${index}`}>{formatRawItem(item)}</li>)}
+        {items.map((item, index) => <li key={`${title}-${index}`}>{formatRawItem(item)}</li>)}
       </ul>
     </details>
   )

@@ -118,6 +118,7 @@ test('P timeout is error priority', () => {
 test('Q all normal result does not use blocking copy and has no priority items', () => {
   const view = createTechQaViewModel(result({ checks: [check({ id: 'access', status: 'ok' }), check({ id: 'bad-links', status: 'ok' })], links: [link()] }))
   assert.equal(view.counts.error, 0)
+  assert.equal(view.issueCounts.errorElementCount, 0)
   assert.equal(view.priorityItems.length, 0)
   assert.equal(view.normalCheckItems.length, 2)
   assert.equal(view.statusMessage, '배포 차단 오류는 확인되지 않았습니다.')
@@ -140,10 +141,10 @@ test('compact Tech QA summary cards use four meaningful KPI values', () => {
   const view = createTechQaViewModel(result({ links: [link(), link({ status: 'warn', category: 'same-page-anchor', href: '#' })], images: [{ status: 'ok' }], consoleMessages: [] }))
   const labels = view.summaryCards.map((card) => card.label)
 
-  assert.deepEqual(labels, ['페이지 접속', '확인 필요', '오류', '검사 완료'])
+  assert.deepEqual(labels, ['페이지 접속', '오류', '확인 필요', '정상 검사'])
   assert.equal(view.summaryCards.length, 4)
-  assert.deepEqual(view.summaryCards.map((card) => card.status), ['ok', 'warn', 'ok', 'info'])
-  assert.equal(view.summaryCards.find((card) => card.label === '검사 완료').value, '링크 2개 · 이미지 1개')
+  assert.deepEqual(view.summaryCards.map((card) => card.status), ['ok', 'ok', 'warn', 'info'])
+  assert.equal(view.summaryCards.find((card) => card.label === '정상 검사').detail, '링크 2개 · 이미지 1개 수집')
   assert.equal(labels.includes('콘솔'), false)
   assert.equal(labels.includes('이미지'), false)
 })
@@ -157,13 +158,26 @@ test('compact Tech QA source keeps table UI and closed detail policy', () => {
   assert.equal(source.includes('tech-owner-badge'), true)
   assert.equal(source.includes('정상 링크 ${groups.hiddenNormals.length}개 더보기'), true)
   assert.equal(source.includes('전체 검사 항목'), false)
-  assert.equal(source.includes('정상 검사 {view.normalCheckItems.length}개 펼치기'), true)
+  assert.equal(source.includes('기본 진단 결과'), true)
+  assert.equal(source.includes('정상 검사 {view.normalCheckItems.length}개 펼치기'), false)
+  assert.equal(source.includes('tech-click-summary'), true)
+  assert.equal(source.includes('tech-click-issue-table'), true)
+  assert.equal(source.includes('groups.definitions.map'), false)
+  assert.equal(source.includes('클릭 동작 검사 요약'), false)
+  assert.equal(source.includes('안전상 클릭 생략 전체'), true)
   assert.equal(source.includes('tech-kpi-icon'), true)
   assert.equal(source.includes('<details className="detail-card tech-detail-accordion">'), true)
   assert.equal(source.includes('<details className="detail-card tech-detail-accordion" open>'), false)
   assert.equal(source.includes('문제 예시:'), false)
   assert.equal(source.includes('담당 권장:'), false)
-  assert.equal(source.includes('쉬운 설명'), true)
+  assert.equal(source.includes('검사 목적'), true)
+  assert.equal(source.includes('현재 결과'), true)
+  assert.equal(source.includes('왜 확인이 필요한가'), true)
+  assert.equal(source.includes('담당 팀에서 확인할 내용'), true)
+  assert.equal(source.includes('기술 근거'), true)
+  assert.equal(source.includes('쉬운 설명'), false)
+  assert.equal(source.includes('error message'), false)
+  assert.equal(source.includes('label="영향"'), false)
   assert.equal(source.includes('문제 요소'), true)
   assert.equal(source.includes('확인할 내용'), true)
   assert.equal(source.includes('리소스 및 네트워크'), false)
@@ -231,6 +245,7 @@ test('Tech QA priority count excludes safe click skips and normal UI controls', 
   assert.equal(clickItem.status, 'ok')
   assert.equal(view.priorityItems.some((item) => item.id === 'click-actions'), false)
   assert.equal(view.priorityCounts.warn, 0)
+  assert.equal(view.issueCounts.warningElementCount, 0)
   assert.equal(view.clickActionGroups.safeSkipped.length, 1)
   assert.equal(view.clickActionGroups.uiControls.length, 1)
   assert.equal(view.clickActionGroups.verified.length, 1)
@@ -249,11 +264,94 @@ test('Tech QA click action priority keeps only actionable click failures', () =>
   const clickItem = view.priorityItems.find((entry) => entry.id === 'click-actions')
 
   assert.equal(clickItem.status, 'error')
-  assert.equal(clickItem.value, '3개 확인 필요')
+  assert.equal(clickItem.value, '실제 오류 2 · 확인 필요 1')
   assert.equal(clickItem.problemItems.length, 3)
   assert.equal(view.clickActionGroups.actualErrors.length, 2)
   assert.equal(view.clickActionGroups.warnings.length, 1)
   assert.equal(view.clickActionGroups.safeSkipped.length, 1)
+})
+
+test('click display fixture keeps only actual errors and actionable warnings in body counts', () => {
+  const clickActions = [
+    ...Array.from({ length: 2 }, (_, index) => clickAction({ label: `Error ${index}`, selector: `#error-${index}`, status: 'error', actionClassification: 'actual-error', category: 'covered-or-not-interactable' })),
+    ...Array.from({ length: 3 }, (_, index) => clickAction({ label: `Warn ${index}`, selector: `#warn-${index}`, status: 'warn', actionClassification: 'actionable-warning', category: 'ambiguous-action' })),
+    ...Array.from({ length: 20 }, (_, index) => clickAction({ label: `Skip ${index}`, selector: `#skip-${index}`, status: 'ok', actionClassification: 'safe-click-skipped', category: 'skipped-safe-click' })),
+    ...Array.from({ length: 50 }, (_, index) => clickAction({ label: `Control ${index}`, selector: `#control-${index}`, status: 'ok', actionClassification: 'ui-control-no-url-required', category: 'UI-control-no-url-required' })),
+    ...Array.from({ length: 10 }, (_, index) => clickAction({ label: `Verified ${index}`, selector: `#verified-${index}`, status: 'ok', actionClassification: 'verified-working', category: 'observable-action' })),
+  ]
+  const view = createTechQaViewModel(result({ checks: [check({ id: 'click-actions', status: 'error' })], clickActions }))
+  const bodyItems = view.clickActionGroups.actualErrors.concat(view.clickActionGroups.warnings)
+
+  assert.equal(view.clickActionGroups.actualErrors.length, 2)
+  assert.equal(view.clickActionGroups.warnings.length, 3)
+  assert.equal(view.clickActionGroups.safeSkipped.length, 20)
+  assert.equal(view.clickActionGroups.uiControls.length, 50)
+  assert.equal(view.clickActionGroups.verified.length, 10)
+  assert.equal(bodyItems.length, 5)
+  assert.equal(view.issueCounts.errorElementCount, 2)
+  assert.equal(view.issueCounts.warningElementCount, 3)
+})
+
+test('click summary remains when only non-actionable click classifications exist', () => {
+  const clickActions = [
+    ...Array.from({ length: 40 }, (_, index) => clickAction({ label: `Skip ${index}`, selector: `#skip-only-${index}`, status: 'ok', actionClassification: 'safe-click-skipped' })),
+    ...Array.from({ length: 40 }, (_, index) => clickAction({ label: `Control ${index}`, selector: `#control-only-${index}`, status: 'ok', actionClassification: 'ui-control-no-url-required' })),
+    ...Array.from({ length: 20 }, (_, index) => clickAction({ label: `Verified ${index}`, selector: `#verified-only-${index}`, status: 'ok', actionClassification: 'verified-working' })),
+  ]
+  const view = createTechQaViewModel(result({ checks: [check({ id: 'click-actions', status: 'ok' })], clickActions }))
+
+  assert.equal(view.priorityItems.some((item) => item.id === 'click-actions'), false)
+  assert.equal(view.clickActionGroups.total, 100)
+  assert.equal(view.clickActionGroups.actualErrors.length + view.clickActionGroups.warnings.length, 0)
+  assert.equal(view.issueCounts.errorElementCount, 0)
+  assert.equal(view.issueCounts.warningElementCount, 0)
+})
+
+test('same CTA in link and click warning is counted once at top level', () => {
+  const view = createTechQaViewModel(result({
+    links: [link({ label: 'Apply', status: 'warn', category: 'javascript-pseudo-url', href: 'javascript:void(0)', url: '', selector: '#same-cta' })],
+    checks: [check({ id: 'click-actions', status: 'warn' })],
+    clickActions: [clickAction({ label: 'Apply', status: 'warn', actionClassification: 'actionable-warning', category: 'javascript-pseudo-url', href: 'javascript:void(0)', selector: '#same-cta' })],
+  }))
+
+  assert.equal(view.priorityItems.some((item) => item.type === 'link'), true)
+  assert.equal(view.priorityItems.some((item) => item.id === 'click-actions'), true)
+  assert.equal(view.issueCounts.warningElementCount, 1)
+})
+
+test('console repeated duplicate contributes one top-level element and preserves repeatCount', () => {
+  const view = createTechQaViewModel(result({
+    checks: [check({
+      id: 'console-errors',
+      status: 'error',
+      items: [{ message: 'ReferenceError: app is not defined', status: 'error', sourceUrl: 'https://example.com/app.js', repeatCount: 10 }],
+    })],
+  }))
+
+  assert.equal(view.issueCounts.errorElementCount, 1)
+  assert.equal(view.priorityItems[0].problemItems[0].repeatCount, 10)
+})
+
+test('basic diagnostic table keeps normal rows visible without accordion', () => {
+  const view = createTechQaViewModel(result({
+    checks: [
+      check({ id: 'access', status: 'ok', value: '접속 가능' }),
+      check({ id: 'http-status', status: 'ok', value: '200' }),
+      check({ id: 'title', status: 'ok', value: 'Example' }),
+      check({ id: 'console-errors', status: 'ok', value: 'first-party 0 · third-party 0' }),
+      check({ id: 'images', status: 'ok', value: '25개 중 실패 0' }),
+      check({ id: 'links', status: 'ok', value: '10개' }),
+      check({ id: 'missing-href', status: 'ok', value: '0개' }),
+      check({ id: 'mobile', status: 'ok', value: '200' }),
+      check({ id: 'headings', status: 'ok', value: 'h1 1개' }),
+      check({ id: 'duplicate-ids', status: 'ok', value: '0개 확인 필요' }),
+      check({ id: 'network-failures', status: 'ok', value: '0건 확인 필요' }),
+      check({ id: 'forms', status: 'ok', value: '폼 요소 없음' }),
+    ],
+  }))
+
+  assert.deepEqual(view.basicCheckItems.map((item) => item.id), ['access', 'http-status', 'title', 'console-errors', 'images', 'links', 'missing-href', 'mobile', 'headings', 'duplicate-ids', 'network-failures', 'forms'])
+  assert.equal(view.basicCheckItems.every((item) => item.status === 'ok'), true)
 })
 
 test('compact Tech QA CSS uses table rows instead of large repeated cards', () => {
@@ -318,6 +416,22 @@ function link(overrides = {}) {
     finalUrl: 'https://example.com/ok',
     sourceCount: 1,
     sources: [{}],
+    ...overrides,
+  }
+}
+
+function clickAction(overrides = {}) {
+  return {
+    label: 'Click action',
+    text: 'Click action',
+    selector: '#click-action',
+    domPath: 'main > a',
+    href: '',
+    actionType: 'click-handler',
+    status: 'warn',
+    actionClassification: 'actionable-warning',
+    category: 'ambiguous-action',
+    reason: '확인 필요',
     ...overrides,
   }
 }

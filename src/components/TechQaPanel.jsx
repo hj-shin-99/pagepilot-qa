@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { createTechQaViewModel, getVisibleLinkGroups, TECH_STATUS_LABELS } from '../utils/techQa'
+import { createTechPanelDisplayModel } from '../utils/techQaPanelView'
 import { formatScanTime } from '../utils/report'
 
 const MARKUP_ACCESSIBILITY_PRIMARY_IDS = ['meta', 'image-alt', 'external-links']
@@ -7,6 +8,7 @@ const MARKUP_ACCESSIBILITY_DETAIL_IDS = ['meta', 'image-alt', 'external-links', 
 
 function TechQaPanel({ result, copyStatus, onCopyReport }) {
   const view = createTechQaViewModel(result)
+  const display = createTechPanelDisplayModel(result, view)
   const linkGroups = getVisibleLinkGroups(view.links)
   const markupItems = createMarkupAccessibilityItems(view.checkItems)
 
@@ -21,30 +23,19 @@ function TechQaPanel({ result, copyStatus, onCopyReport }) {
           </div>
           <button className="secondary-button" type="button" onClick={onCopyReport}>결과 복사</button>
         </div>
-        <div className="summary-box">{formatTechStatusMessage(view)}</div>
+        <div className="summary-box">{formatTechStatusMessage(display)}</div>
         {copyStatus ? <p className="copy-status">{copyStatus}</p> : null}
       </header>
 
-      <section className="tech-kpi-grid" aria-label="Tech QA 핵심 요약">
-        {view.summaryCards.map((card) => (
-          <article className={`metric-card tech-kpi-card ${getStatusClass(card.status)}`} key={card.label}>
-            <div className="tech-kpi-title">
-              <span className="tech-kpi-icon" aria-hidden="true">{getKpiIcon(card.status)}</span>
-              <p className="metric-label">{card.label}</p>
-            </div>
-            <p className="metric-value">{card.value}</p>
-            {card.detail ? <p className="tech-kpi-detail">{card.detail}</p> : null}
-          </article>
-        ))}
-      </section>
+      <TechCompletionCard completion={display.completion} />
 
       <section className="detail-card tech-compact-card" aria-label="우선 확인 필요">
         <SectionHead
-          title="우선 확인 필요"
-          meta={`오류 ${view.issueCounts.errorUniqueElementCount}개 항목 · 확인 필요 ${view.issueCounts.warningUniqueElementCount}개 항목`}
-          note={`총 ${view.priorityItems.length}개 검사에서 발견되었습니다. 각 행은 아래 전용 상세 영역으로 연결됩니다.`}
+          title={`우선 확인 결과 ${display.priorityRows.length}개`}
+          meta={`오류 ${display.priorityCounts.error}개 · 확인 필요 ${display.priorityCounts.warn}개`}
+          note="각 행은 실제 화면에 표시되는 우선 확인 검사 1개이며, 아래 전용 상세 영역으로 연결됩니다."
         />
-        {view.priorityItems.length > 0 ? <TechCompactTable items={view.priorityItems} mode="priority" /> : <p className="empty-row">오류 또는 확인 필요 항목이 없습니다.</p>}
+        {display.priorityRows.length > 0 ? <TechCompactTable items={display.priorityRows} mode="priority" /> : <p className="empty-row">오류 또는 확인 필요 항목이 없습니다.</p>}
       </section>
 
       <section className="detail-card tech-compact-card" id="tech-basic-section" aria-label="기본 진단 결과">
@@ -90,11 +81,25 @@ function TechQaPanel({ result, copyStatus, onCopyReport }) {
   )
 }
 
-function getKpiIcon(status) {
-  if (status === 'error') return 'x'
-  if (status === 'warn') return '!'
-  if (status === 'info') return 'i'
-  return '✓'
+function TechCompletionCard({ completion }) {
+  return (
+    <article className="detail-card tech-completion-card" aria-label="Tech QA 검사 완료">
+      <div className="tech-completion-main">
+        <div>
+          <h3>{completion.title}</h3>
+          <p className="panel-note relaxed-note">{completion.description}</p>
+        </div>
+        <ol className="tech-completion-steps" aria-label="Tech QA 검사 완료 단계">
+          {completion.steps.map((step) => <li key={step}>{step}</li>)}
+        </ol>
+      </div>
+      {completion.meta.length > 0 ? (
+        <dl className="tech-completion-meta">
+          {completion.meta.map((item) => <Meta label={item.label} value={item.value} key={item.label} />)}
+        </dl>
+      ) : null}
+    </article>
+  )
 }
 
 function SectionHead({ title, meta, note }) {
@@ -128,7 +133,7 @@ function TechCompactTable({ items, mode }) {
 function PriorityTableRow({ item }) {
   const targetId = getPriorityDetailTargetId(item)
   return (
-    <div className={`tech-table-row tech-priority-row ${getStatusClass(item.status)}`}>
+    <a className={`tech-table-row tech-priority-row ${getStatusClass(item.status)}`} href={`#${targetId}`} aria-label={`${item.title} 아래 상세 보기`}>
       <div className="tech-table-title">
         <span className="tech-category-chip">{item.categoryLabel || 'Tech'}</span>
         <strong>{item.title}</strong>
@@ -136,10 +141,10 @@ function PriorityTableRow({ item }) {
       <span className={`status-badge ${getStatusClass(item.status)}`}>{TECH_STATUS_LABELS[item.status]}</span>
       <span className="tech-table-value">{item.value || '-'}</span>
       <OwnerBadge owner={item.status === 'ok' ? '-' : item.owner} />
-      <a className="tech-detail-jump" href={`#${targetId}`} aria-label={`${item.title} 아래 상세 보기`}>
+      <span className="tech-detail-jump">
         <span aria-hidden="true">⌄</span>
-      </a>
-    </div>
+      </span>
+    </a>
   )
 }
 
@@ -258,22 +263,25 @@ function LinkTableRow({ item }) {
 }
 
 function ClickActionIssueTable({ groups }) {
-  const issueItems = (groups?.actualErrors || []).concat(groups?.warnings || [])
+  const actualErrors = groups?.actualErrors || []
+  const warnings = groups?.warnings || []
   const safeSkipped = groups?.safeSkipped || []
   const normalItems = (groups?.uiControls || []).concat(groups?.verified || [])
   if (!groups || !groups.total) return <p className="empty-row">클릭 후보가 없습니다.</p>
   return (
     <>
-      {issueItems.length > 0 ? <ClickActionTable items={issueItems} ariaLabel="클릭 동작 오류 및 확인 필요" /> : <p className="empty-row">실제 오류 또는 확인 필요 클릭 항목이 없습니다.</p>}
+      {actualErrors.length > 0 ? <ClickActionTable id="tech-click-actual-errors" items={actualErrors} ariaLabel="클릭 동작 실제 오류" /> : null}
+      {warnings.length > 0 ? <ClickActionTable id="tech-click-warnings" items={warnings} ariaLabel="클릭 동작 확인 필요" /> : null}
+      {actualErrors.length === 0 && warnings.length === 0 ? <p className="empty-row">실제 오류 또는 확인 필요 클릭 항목이 없습니다.</p> : null}
       {safeSkipped.length > 0 ? <CollapsedClickRows label={`안전상 클릭 생략 ${safeSkipped.length}개 보기`} items={safeSkipped} /> : null}
       {normalItems.length > 0 ? <CollapsedClickRows label={`정상 동작 ${normalItems.length}개 더보기 · UI 제어 ${groups.uiControls.length} · 정상 검증 ${groups.verified.length}`} items={normalItems} /> : null}
     </>
   )
 }
 
-function ClickActionTable({ items, ariaLabel }) {
+function ClickActionTable({ id, items, ariaLabel }) {
   return (
-    <div className="tech-click-issue-table" aria-label={ariaLabel}>
+    <div className="tech-click-issue-table" id={id} aria-label={ariaLabel}>
       <div className="tech-click-issue-head">
         <span>상태</span>
         <span>화면 문구</span>
@@ -349,8 +357,9 @@ function createMarkupAccessibilityItems(checkItems = []) {
 }
 
 function getPriorityDetailTargetId(item = {}) {
+  if (item.detailTargetId) return item.detailTargetId
   if (item.type === 'link') return 'tech-links-section'
-  if (item.id === 'click-actions') return 'tech-click-section'
+  if (String(item.id || '').startsWith('click-actions')) return 'tech-click-section'
   if (MARKUP_ACCESSIBILITY_DETAIL_IDS.includes(item.id)) return getMarkupDetailId(item)
   return 'tech-basic-section'
 }
@@ -359,13 +368,12 @@ function getMarkupDetailId(item = {}) {
   return `tech-markup-${String(item.id || item.title || 'check').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-|-$/g, '').toLowerCase()}`
 }
 
-function formatTechStatusMessage(view = {}) {
-  const errors = Number(view.issueCounts?.errorUniqueElementCount || 0)
-  const warnings = Number(view.issueCounts?.warningUniqueElementCount || 0)
-  const relatedChecks = Number(view.priorityItems?.length || 0)
-  if (errors > 0) return `오류 ${errors}개 항목 · 확인 필요 ${warnings}개 항목입니다. 총 ${relatedChecks}개 검사에서 발견되었습니다.`
-  if (warnings > 0) return `확인 필요 ${warnings}개 항목입니다. 총 ${relatedChecks}개 검사에서 발견되었습니다.`
-  return '오류 0개 항목 · 확인 필요 0개 항목입니다.'
+function formatTechStatusMessage(display = {}) {
+  const errors = Number(display.priorityCounts?.error || 0)
+  const warnings = Number(display.priorityCounts?.warn || 0)
+  const total = Number(display.priorityRows?.length || 0)
+  if (total > 0) return `우선 확인 결과 ${total}개입니다. 오류 ${errors}개 · 확인 필요 ${warnings}개.`
+  return '우선 확인 결과 0개입니다.'
 }
 
 function formatMarkupCheckResult(item = {}, problemItems = []) {

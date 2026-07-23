@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { createLinkItems, createTechQaViewModel, getVisibleLinkGroups } from './techQa.js'
+import { createTechPanelDisplayModel } from './techQaPanelView.js'
 
 test('A normal internal links show first five and preserve all twelve', () => {
   const view = createTechQaViewModel(result({ links: Array.from({ length: 12 }, (_, index) => link({ label: `Link ${index + 1}`, url: `https://example.com/${index + 1}` })) }))
@@ -153,10 +154,44 @@ test('compact Tech QA summary cards use four meaningful KPI values', () => {
   assert.equal(labels.includes('이미지'), false)
 })
 
+test('Tech QA panel display replaces top KPI cards with completion meta from existing data', () => {
+  const base = result({
+    linkAudit: { playwrightRunCount: 1, uniqueRequestUrlCount: 98 },
+    images: Array.from({ length: 25 }, () => ({ status: 'ok' })),
+  })
+  const view = createTechQaViewModel(base)
+  const display = createTechPanelDisplayModel(base, view)
+  const meta = Object.fromEntries(display.completion.meta.map((item) => [item.label, item.value]))
+
+  assert.equal(display.completion.title, 'Tech QA 검사 완료')
+  assert.equal(meta['검사 엔진'], 'Playwright')
+  assert.equal(meta['검사 환경'], 'Desktop + Mobile')
+  assert.equal(meta['링크 검사'], '98개')
+  assert.equal(meta['이미지 검사'], '25개')
+  assert.equal('처리 시간' in meta, false)
+})
+
+test('Tech QA panel display hides unavailable completion meta for history fallback', () => {
+  const restored = { targetUrl: 'https://example.com', checks: [], links: [], images: [] }
+  const view = createTechQaViewModel(restored)
+  const display = createTechPanelDisplayModel(restored, view)
+  const labels = display.completion.meta.map((item) => item.label)
+  const values = display.completion.meta.map((item) => item.value).join(' ')
+
+  assert.equal(labels.includes('검사 엔진'), false)
+  assert.equal(labels.includes('처리 시간'), false)
+  assert.equal(values.includes('undefined'), false)
+  assert.equal(values.includes('NaN'), false)
+})
+
 test('compact Tech QA source keeps table UI and closed detail policy', () => {
   const source = fs.readFileSync('src/components/TechQaPanel.jsx', 'utf8')
 
-  assert.equal(source.includes('tech-kpi-grid'), true)
+  assert.equal(source.includes('view.summaryCards.map'), false)
+  assert.equal(source.includes('tech-kpi-grid'), false)
+  assert.equal(source.includes('TechCompletionCard'), true)
+  assert.equal(source.includes('tech-completion-card'), true)
+  assert.equal(source.includes('우선 확인 결과 ${display.priorityRows.length}개'), true)
   assert.equal(source.includes('tech-compact-table'), true)
   assert.equal(source.includes('tech-link-table'), true)
   assert.equal(source.includes('tech-owner-badge'), true)
@@ -171,7 +206,7 @@ test('compact Tech QA source keeps table UI and closed detail policy', () => {
   assert.equal(source.includes('groups.definitions.map'), false)
   assert.equal(source.includes('클릭 동작 검사 요약'), false)
   assert.equal(source.includes('안전상 클릭 생략 전체'), true)
-  assert.equal(source.includes('tech-kpi-icon'), true)
+  assert.equal(source.includes('tech-kpi-icon'), false)
   assert.equal(source.includes('<details className="detail-card tech-detail-accordion">'), true)
   assert.equal(source.includes('<details className="detail-card tech-detail-accordion" open>'), false)
   assert.equal(source.includes('문제 예시:'), false)
@@ -235,6 +270,83 @@ test('Tech QA click action detail preserves technical evidence items', () => {
   assert.equal(item.technicalTerm, '클릭 동작 검사')
   assert.equal(item.raw.items[0].technicalTerm, 'javascript:void(0)')
   assert.equal(item.raw.items[0].selector, '#apply')
+})
+
+test('Tech QA panel priority A splits click states and matches rendered row counts', () => {
+  const view = createTechQaViewModel(result({
+    images: Array.from({ length: 25 }, (_, index) => ({ src: `https://example.com/image-${index}.png` })),
+    links: [link({ label: 'Pseudo CTA', status: 'warn', category: 'javascript-pseudo-url', href: 'javascript:void(0)', url: '', selector: '#pseudo' })],
+    checks: [
+      check({ id: 'click-actions', status: 'error' }),
+      check({ id: 'meta', status: 'warn', items: [{ label: 'Meta description', status: 'warn' }] }),
+      check({ id: 'image-alt', status: 'warn', items: [{ src: 'https://example.com/missing-alt.png', status: 'warn' }] }),
+      check({ id: 'external-links', status: 'warn', totalCount: 12, items: [{ href: 'https://external.example', status: 'warn' }] }),
+    ],
+    clickActions: [
+      clickAction({ label: 'Blocked', selector: '#blocked', actionClassification: 'actual-error', status: 'error' }),
+      clickAction({ label: 'Ambiguous', selector: '#ambiguous', actionClassification: 'actionable-warning', status: 'warn' }),
+    ],
+  }))
+  const display = createTechPanelDisplayModel({}, view)
+
+  assert.equal(display.priorityRows.length, 6)
+  assert.equal(display.priorityCounts.error, 1)
+  assert.equal(display.priorityCounts.warn, 5)
+  assert.deepEqual(display.priorityRows.slice(0, 2).map((item) => item.title), ['클릭 동작 오류', '클릭 동작 확인 필요'])
+  assert.equal(display.priorityRows.find((item) => item.id === 'click-actions-actual-errors').value, '실제 오류 1개')
+  assert.equal(display.priorityRows.find((item) => item.id === 'click-actions-warnings').value, '확인 필요 1개')
+})
+
+test('Tech QA panel priority B only creates click warning row when click error is zero', () => {
+  const view = createTechQaViewModel(result({
+    checks: [check({ id: 'click-actions', status: 'warn' })],
+    clickActions: [clickAction({ actionClassification: 'actionable-warning', status: 'warn' })],
+  }))
+  const display = createTechPanelDisplayModel({}, view)
+
+  assert.equal(display.priorityRows.filter((item) => String(item.id).startsWith('click-actions')).length, 1)
+  assert.equal(display.priorityRows[0].id, 'click-actions-warnings')
+  assert.equal(display.priorityCounts.error, 0)
+  assert.equal(display.priorityCounts.warn, 1)
+})
+
+test('Tech QA panel priority C creates one click error row for multiple actual errors', () => {
+  const view = createTechQaViewModel(result({
+    checks: [check({ id: 'click-actions', status: 'error' })],
+    clickActions: [
+      clickAction({ label: 'Error 1', actionClassification: 'actual-error', status: 'error' }),
+      clickAction({ label: 'Error 2', actionClassification: 'actual-error', status: 'error' }),
+    ],
+  }))
+  const display = createTechPanelDisplayModel({}, view)
+
+  assert.equal(display.priorityRows.length, 1)
+  assert.equal(display.priorityRows[0].id, 'click-actions-actual-errors')
+  assert.equal(display.priorityRows[0].value, '실제 오류 2개')
+  assert.equal(display.priorityCounts.error, 1)
+})
+
+test('Tech QA panel priority D counts image alt as one row while preserving problem count in value', () => {
+  const view = createTechQaViewModel(result({
+    images: Array.from({ length: 25 }, (_, index) => ({ src: `https://example.com/image-${index}.png` })),
+    checks: [check({ id: 'image-alt', status: 'warn', items: Array.from({ length: 5 }, (_, index) => ({ src: `https://example.com/missing-alt-${index}.png`, status: 'warn' })) })],
+  }))
+  const display = createTechPanelDisplayModel({}, view)
+
+  assert.equal(display.priorityRows.length, 1)
+  assert.equal(display.priorityRows[0].id, 'image-alt')
+  assert.equal(display.priorityRows[0].value, '총 25개 · alt 확인 필요 5개')
+  assert.equal(display.priorityCounts.warn, 1)
+})
+
+test('Tech QA panel priority E keeps completion card and empty priority state when no issues exist', () => {
+  const view = createTechQaViewModel(result({ checks: [check({ id: 'access', status: 'ok' })] }))
+  const display = createTechPanelDisplayModel(result(), view)
+
+  assert.equal(display.priorityRows.length, 0)
+  assert.equal(display.priorityCounts.error, 0)
+  assert.equal(display.priorityCounts.warn, 0)
+  assert.equal(display.completion.title, 'Tech QA 검사 완료')
 })
 
 test('Tech QA priority count excludes safe click skips and normal UI controls', () => {
@@ -332,6 +444,20 @@ test('same CTA in link and click warning is counted once and shown once in prior
   assert.equal(view.issueCounts.warningEvidenceCount, 2)
   assert.equal(view.issueCounts.warningUniqueElementCount, 1)
   assert.equal(view.issueCounts.warningCheckCount, 2)
+})
+
+test('Tech QA panel priority rows do not use deduped evidence counts as row counts', () => {
+  const scanResult = result({
+    links: [link({ label: 'Apply', status: 'warn', category: 'javascript-pseudo-url', href: 'javascript:void(0)', url: '', selector: '#same-cta' })],
+    checks: [check({ id: 'click-actions', status: 'warn' })],
+    clickActions: [clickAction({ label: 'Apply', status: 'warn', actionClassification: 'actionable-warning', category: 'javascript-pseudo-url', href: 'javascript:void(0)', selector: '#same-cta' })],
+  })
+  const view = createTechQaViewModel(scanResult)
+  const display = createTechPanelDisplayModel(scanResult, view)
+
+  assert.equal(view.issueCounts.warningUniqueElementCount, 1)
+  assert.equal(display.priorityRows.filter((item) => item.type === 'link' || String(item.id).startsWith('click-actions')).length, 2)
+  assert.equal(display.priorityCounts.warn, 2)
 })
 
 test('console repeated duplicate contributes one top-level element and preserves repeatCount', () => {
@@ -567,7 +693,9 @@ test('compact Tech QA CSS uses table rows instead of large repeated cards', () =
 
   assert.equal(css.includes('.tech-table-row'), true)
   assert.equal(css.includes('.tech-link-row'), true)
-  assert.equal(css.includes('grid-template-columns: repeat(4, minmax(0, 1fr));'), true)
+  assert.equal(css.includes('.tech-kpi-grid'), false)
+  assert.equal(css.includes('.tech-completion-card'), true)
+  assert.equal(css.includes('.tech-completion-meta'), true)
   assert.equal(css.includes('.tech-normal-details p'), true)
 })
 

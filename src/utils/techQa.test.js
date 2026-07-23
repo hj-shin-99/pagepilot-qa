@@ -316,15 +316,16 @@ test('click summary remains when only non-actionable click classifications exist
   assert.equal(view.issueCounts.warningElementCount, 0)
 })
 
-test('same CTA in link and click warning is counted once at top level', () => {
+test('same CTA in link and click warning is counted once and shown once in priority display', () => {
   const view = createTechQaViewModel(result({
     links: [link({ label: 'Apply', status: 'warn', category: 'javascript-pseudo-url', href: 'javascript:void(0)', url: '', selector: '#same-cta' })],
     checks: [check({ id: 'click-actions', status: 'warn' })],
     clickActions: [clickAction({ label: 'Apply', status: 'warn', actionClassification: 'actionable-warning', category: 'javascript-pseudo-url', href: 'javascript:void(0)', selector: '#same-cta' })],
   }))
 
-  assert.equal(view.priorityItems.some((item) => item.type === 'link'), true)
-  assert.equal(view.priorityItems.some((item) => item.id === 'click-actions'), true)
+  assert.equal(view.priorityItems.filter((item) => item.type === 'link' || item.id === 'click-actions').length, 1)
+  assert.equal(view.links.length, 1)
+  assert.equal(view.clickActionGroups.warnings.length, 1)
   assert.equal(view.issueCounts.warningElementCount, 1)
   assert.equal(view.issueCounts.warningEvidenceCount, 2)
   assert.equal(view.issueCounts.warningUniqueElementCount, 1)

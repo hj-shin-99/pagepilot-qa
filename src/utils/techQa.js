@@ -67,10 +67,11 @@ export function createTechQaViewModel(result = {}) {
   const linkSummary = createLinkSummary(links, result.linkAudit)
   const checkItems = checks.map((check) => createCheckItem(check, clickActionGroups, { result, linkSummary }))
   const allItems = checkItems.concat(links)
-  const priorityItems = allItems.filter(isPriorityItem).sort(comparePriorityItems)
+  const rawPriorityItems = allItems.filter(isPriorityItem).sort(comparePriorityItems)
+  const priorityItems = createVisiblePriorityItems(rawPriorityItems)
   const normalCheckItems = checkItems.filter((item) => item.status === 'ok').sort(comparePriorityItems)
   const counts = countStatuses(allItems)
-  const issueCounts = createTechQaCounts(checkItems, priorityItems)
+  const issueCounts = createTechQaCounts(checkItems, rawPriorityItems)
   const priorityCounts = { error: issueCounts.errorUniqueElementCount, warn: issueCounts.warningUniqueElementCount, ok: 0 }
   const statusMessage = issueCounts.errorUniqueElementCount > 0
     ? `오류 ${issueCounts.errorUniqueElementCount}개 · ${issueCounts.errorCheckCount}개 검사에서 발견되었습니다.`
@@ -226,6 +227,34 @@ function createVisibleItems(items = []) {
     normals: normals.slice(0, 5),
     hiddenNormals: normals.slice(5),
   }
+}
+
+function createVisiblePriorityItems(items = []) {
+  const seenKeysBySeverity = { error: new Set(), warn: new Set() }
+  const visible = []
+
+  items.forEach((item) => {
+    const records = createEvidenceRecords(item)
+    const shouldShow = records.length === 0 || records.some((record) => !hasSeenEvidence(record, seenKeysBySeverity))
+    if (shouldShow) visible.push(item)
+    records.forEach((record) => markSeenEvidence(record, seenKeysBySeverity))
+  })
+
+  return visible
+}
+
+function hasSeenEvidence(record = {}, seenKeysBySeverity = {}) {
+  const keys = Array.isArray(record.identityKeys) ? record.identityKeys : []
+  if (keys.length === 0) return false
+  const seen = seenKeysBySeverity[record.severity]
+  return Boolean(seen && keys.some((key) => seen.has(key)))
+}
+
+function markSeenEvidence(record = {}, seenKeysBySeverity = {}) {
+  const seen = seenKeysBySeverity[record.severity]
+  if (!seen) return
+  const keys = Array.isArray(record.identityKeys) ? record.identityKeys : []
+  keys.forEach((key) => seen.add(key))
 }
 
 function createSummaryCards(result, counts, linkSummary) {

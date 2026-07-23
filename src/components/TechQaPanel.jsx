@@ -68,10 +68,9 @@ function TechQaPanel({ result, copyStatus, onCopyReport }) {
       <section className="detail-card tech-compact-card" id="tech-click-section" aria-label="클릭 동작 검사">
         <SectionHead
           title="클릭 동작 검사"
-          meta={`후보 ${view.clickActionGroups.total} · 안전 클릭 ${result.clickActionAudit?.safeClickAttemptCount || 0}`}
-          note="버튼과 링크가 실제 사용자 클릭에 반응하는지 확인합니다. 안전상 클릭 생략, URL 불필요 UI 제어, 정상 검증 완료는 숫자만 표시하고 원본은 개발 상세 정보에서 확인합니다."
+          meta={`오류 ${view.clickActionGroups.actualErrors.length} · 확인 필요 ${view.clickActionGroups.warnings.length} · 정상 ${getNormalClickCount(view.clickActionGroups)}`}
+          note={`버튼과 링크가 실제로 반응하는지 확인합니다. 검증 생략 ${view.clickActionGroups.safeSkipped.length} · UI 제어 ${view.clickActionGroups.uiControls.length}`}
         />
-        <ClickActionSummary groups={view.clickActionGroups} />
         <ClickActionIssueTable groups={view.clickActionGroups} />
       </section>
 
@@ -89,23 +88,6 @@ function TechQaPanel({ result, copyStatus, onCopyReport }) {
       </details>
     </section>
   )
-}
-
-function ClickActionSummary({ groups }) {
-  if (!groups || !groups.total) return <p className="empty-row">클릭 후보가 없습니다.</p>
-  return (
-    <div className="tech-click-summary" aria-label="클릭 동작 검사 통계">
-      <MetricPill label="실제 오류" value={groups.actualErrors.length} tone="error" />
-      <MetricPill label="확인 필요" value={groups.warnings.length} tone="warn" />
-      <MetricPill label="안전상 클릭 생략" value={groups.safeSkipped.length} tone="info" />
-      <MetricPill label="URL 불필요 UI 제어" value={groups.uiControls.length} tone="ok" />
-      <MetricPill label="정상 검증 완료" value={groups.verified.length} tone="ok" />
-    </div>
-  )
-}
-
-function MetricPill({ label, value, tone }) {
-  return <div className={`tech-metric-pill status-${tone}`}><span>{label}</span><strong>{value}개</strong></div>
 }
 
 function getKpiIcon(status) {
@@ -276,10 +258,22 @@ function LinkTableRow({ item }) {
 }
 
 function ClickActionIssueTable({ groups }) {
-  const items = (groups?.actualErrors || []).concat(groups?.warnings || [])
-  if (!items.length) return <p className="empty-row">실제 동작 오류는 확인되지 않았습니다.</p>
+  const issueItems = (groups?.actualErrors || []).concat(groups?.warnings || [])
+  const safeSkipped = groups?.safeSkipped || []
+  const normalItems = (groups?.uiControls || []).concat(groups?.verified || [])
+  if (!groups || !groups.total) return <p className="empty-row">클릭 후보가 없습니다.</p>
   return (
-    <div className="tech-click-issue-table" aria-label="클릭 동작 오류 및 확인 필요">
+    <>
+      {issueItems.length > 0 ? <ClickActionTable items={issueItems} ariaLabel="클릭 동작 오류 및 확인 필요" /> : <p className="empty-row">실제 오류 또는 확인 필요 클릭 항목이 없습니다.</p>}
+      {safeSkipped.length > 0 ? <CollapsedClickRows label={`안전상 클릭 생략 ${safeSkipped.length}개 보기`} items={safeSkipped} /> : null}
+      {normalItems.length > 0 ? <CollapsedClickRows label={`정상 동작 ${normalItems.length}개 더보기 · UI 제어 ${groups.uiControls.length} · 정상 검증 ${groups.verified.length}`} items={normalItems} /> : null}
+    </>
+  )
+}
+
+function ClickActionTable({ items, ariaLabel }) {
+  return (
+    <div className="tech-click-issue-table" aria-label={ariaLabel}>
       <div className="tech-click-issue-head">
         <span>상태</span>
         <span>화면 문구</span>
@@ -288,13 +282,22 @@ function ClickActionIssueTable({ groups }) {
         <span>우선 확인</span>
         <span>상세</span>
       </div>
-      {items.map((item, index) => <ClickActionIssueRow item={item} key={`${index}-${item.auditId || item.selector || item.label || ''}`} />)}
+      {items.map((item, index) => <ClickActionRow item={item} key={`${index}-${item.auditId || item.selector || item.label || ''}`} />)}
     </div>
   )
 }
 
-function ClickActionIssueRow({ item }) {
-  const status = item.actionClassification === 'actual-error' || item.status === 'error' ? 'error' : 'warn'
+function CollapsedClickRows({ label, items }) {
+  return (
+    <details className="tech-detail-list tech-click-more">
+      <summary>{label}</summary>
+      <ClickActionTable items={items} ariaLabel={label} />
+    </details>
+  )
+}
+
+function ClickActionRow({ item }) {
+  const status = getClickDisplayStatus(item)
   return (
     <DetailRow
       className={`tech-click-issue-row tech-row-details tech-row-with-details ${getStatusClass(status)}`}
@@ -372,6 +375,17 @@ function formatMarkupCheckResult(item = {}, problemItems = []) {
   return `${item.value || `확인 필요 ${problemItems.length}개`}`
 }
 
+function getNormalClickCount(groups = {}) {
+  return (groups.uiControls || []).length + (groups.verified || []).length
+}
+
+function getClickDisplayStatus(item = {}) {
+  if (item.actionClassification === 'actual-error' || item.status === 'error') return 'error'
+  if (item.actionClassification === 'actionable-warning' || item.status === 'warn') return 'warn'
+  if (item.actionClassification === 'safe-click-skipped') return 'info'
+  return 'ok'
+}
+
 function getUidOwner() {
   return ['UID', '팀'].join('')
 }
@@ -404,6 +418,7 @@ function formatElementIssue(item = {}) {
 function getEntryStatus(item = {}) {
   if (item.actionClassification === 'actual-error') return 'error'
   if (item.actionClassification === 'actionable-warning') return 'warn'
+  if (item.actionClassification === 'safe-click-skipped') return 'info'
   if (item.status === 'error' || item.status === 'warn' || item.status === 'ok' || item.status === 'info') return item.status
   return 'warn'
 }

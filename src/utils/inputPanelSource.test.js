@@ -144,6 +144,26 @@ test('tech qa priority summary links every issue category to lower detail sectio
   assert.equal(css.includes('.tech-detail-jump'), true)
 })
 
+test('tech qa click action section uses compact tables and collapsed non-issue groups', () => {
+  const source = fs.readFileSync('src/components/TechQaPanel.jsx', 'utf8')
+  const css = fs.readFileSync('src/App.css', 'utf8')
+
+  assert.equal(source.includes('function ClickActionSummary'), false)
+  assert.equal(source.includes('tech-click-summary'), false)
+  assert.equal(source.includes('MetricPill'), false)
+  assert.equal(source.includes('ClickActionTable'), true)
+  assert.equal(source.includes('CollapsedClickRows'), true)
+  assert.equal(source.includes('안전상 클릭 생략 ${safeSkipped.length}개 보기'), true)
+  assert.equal(source.includes('정상 동작 ${normalItems.length}개 더보기'), true)
+  assert.equal(source.includes('UI 제어 ${groups.uiControls.length}'), true)
+  assert.equal(source.includes('정상 검증 ${groups.verified.length}'), true)
+  assert.equal(source.includes('getClickDisplayStatus'), true)
+  assert.equal(source.includes("item.actionClassification === 'safe-click-skipped'"), true)
+  assert.equal(css.includes('.tech-click-summary'), false)
+  assert.equal(css.includes('.tech-metric-pill'), false)
+  assert.equal(css.includes('.tech-click-more'), true)
+})
+
 test('empty state uses different scanning stages for tech-only and integrated runs', () => {
   const source = fs.readFileSync('src/components/EmptyState.jsx', 'utf8')
   const css = fs.readFileSync('src/App.css', 'utf8')

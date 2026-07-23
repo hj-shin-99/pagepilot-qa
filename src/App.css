@@ -4485,61 +4485,6 @@
   margin-top: 0;
 }
 
-.tech-click-groups {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.tech-click-summary {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.tech-metric-pill {
-  display: grid;
-  gap: 4px;
-  min-height: 58px;
-  align-content: center;
-  border: 1px solid #e5edf6;
-  border-radius: 14px;
-  padding: 10px;
-  background: #ffffff;
-}
-
-.tech-metric-pill span {
-  color: #667085;
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.tech-metric-pill strong {
-  color: var(--ink);
-  font-size: 18px;
-  line-height: 1.15;
-}
-
-.tech-metric-pill.status-error {
-  border-color: #fecdca;
-  background: #fef3f2;
-}
-
-.tech-metric-pill.status-warn {
-  border-color: #fedf89;
-  background: #fffaeb;
-}
-
-.tech-metric-pill.status-info {
-  border-color: #b2ddff;
-  background: #eff8ff;
-}
-
-.tech-metric-pill.status-ok {
-  border-color: #abefc6;
-  background: #ecfdf3;
-}
-
 .tech-click-group {
   overflow: hidden;
   border: 1px solid #e5edf6;
@@ -4707,6 +4652,14 @@
 
 .tech-link-more {
   margin-top: 10px;
+}
+
+.tech-click-more {
+  margin-top: 10px;
+}
+
+.tech-click-more .tech-click-issue-table {
+  margin-top: 8px;
 }
 
 .tech-raw-grid {
@@ -4920,13 +4873,6 @@
     grid-template-columns: 1fr;
   }
 
-  .tech-click-groups {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .tech-click-summary {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 760px) {
@@ -4943,13 +4889,6 @@
     grid-template-columns: 1fr;
   }
 
-  .tech-click-groups {
-    grid-template-columns: 1fr;
-  }
-
-  .tech-click-summary {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 760px) {

@@ -31,8 +31,8 @@ function TechQaPanel({ result, copyStatus, onCopyReport }) {
 
       <section className="detail-card tech-compact-card" aria-label="우선 확인 필요">
         <SectionHead
-          title={`우선 확인 결과 ${display.priorityRows.length}개`}
-          meta={`오류 ${display.priorityCounts.error}개 · 확인 필요 ${display.priorityCounts.warn}개`}
+          title={`우선 확인 결과 ${display.priorityRows.length}건`}
+          meta={`오류 ${display.priorityCounts.error}건 · 확인 필요 ${display.priorityCounts.warn}건`}
           note="각 행은 실제 화면에 표시되는 우선 확인 검사 1개이며, 아래 전용 상세 영역으로 연결됩니다."
         />
         {display.priorityRows.length > 0 ? <TechCompactTable items={display.priorityRows} mode="priority" /> : <p className="empty-row">오류 또는 확인 필요 항목이 없습니다.</p>}
@@ -178,7 +178,18 @@ function MarkupAccessibilitySection({ items }) {
         meta={`오류 검사 ${errorCount} · 확인 필요 검사 ${warningCount} · 정상 검사 ${normalItems.length}`}
         note="Meta, 이미지 alt, 외부 링크 rel 등 마크업과 접근성 근거가 필요한 항목을 확인합니다."
       />
-      {problemItems.length > 0 ? <div className="tech-markup-check-list">{problemItems.map((item) => <MarkupCheckRow item={item} key={item.id} />)}</div> : <p className="empty-row">마크업 및 접근성 확인 필요 항목이 없습니다.</p>}
+      {problemItems.length > 0 ? (
+        <div className="tech-markup-check-list">
+          <div className="tech-markup-head">
+            <span>검사 항목</span>
+            <span>상태</span>
+            <span>결과</span>
+            <span>우선 확인</span>
+            <span>상세</span>
+          </div>
+          {problemItems.map((item) => <MarkupCheckRow item={item} key={item.id} />)}
+        </div>
+      ) : <p className="empty-row">마크업 및 접근성 확인 필요 항목이 없습니다.</p>}
       {normalItems.length > 0 ? <NormalMarkupSummary items={normalItems} /> : null}
     </section>
   )
@@ -188,7 +199,7 @@ function MarkupCheckRow({ item }) {
   return (
     <DetailRow
       id={getMarkupDetailId(item)}
-      className={`tech-table-row tech-row-details tech-row-with-details tech-markup-check-row ${getStatusClass(item.status)}`}
+      className={`tech-table-row tech-row-details tech-row-with-details tech-markup-row tech-markup-check-row ${getStatusClass(item.status)}`}
       detail={<MarkupCheckDetails item={item} />}
     >
       <div className="tech-table-title">
@@ -230,14 +241,7 @@ function LinkTable({ groups }) {
   return (
     <>
       <div className="tech-link-table">
-        <div className="tech-link-head">
-          <span>상태</span>
-          <span>버튼/링크명</span>
-          <span>URL</span>
-          <span>HTTP</span>
-          <span>우선 확인</span>
-          <span>상세</span>
-        </div>
+        <LinkTableHead />
         {visible.length > 0 ? visible.map((item) => <LinkTableRow item={item} key={item.id} />) : <p className="empty-row">검사된 링크가 없습니다.</p>}
       </div>
       {groups.hiddenWarnings.length > 0 ? <CollapsedRows label={`확인 필요 링크 ${groups.hiddenWarnings.length}개 더보기`} items={groups.hiddenWarnings} /> : null}
@@ -246,11 +250,25 @@ function LinkTable({ groups }) {
   )
 }
 
+function LinkTableHead() {
+  return (
+    <div className="tech-link-head">
+      <span>상태</span>
+      <span>버튼/링크명</span>
+      <span>URL</span>
+      <span>HTTP</span>
+      <span>우선 확인</span>
+      <span>상세</span>
+    </div>
+  )
+}
+
 function LinkTableRow({ item }) {
   const raw = item.raw || {}
   return (
     <DetailRow
       className={`tech-link-row tech-row-details tech-row-with-details ${getStatusClass(item.status)}`}
+      summaryClassName="tech-link-row-summary"
       detail={<IssueDetails item={item} />}
     >
         <span className={`status-badge ${getStatusClass(item.status)}`}>{TECH_STATUS_LABELS[item.status]}</span>
@@ -279,27 +297,35 @@ function ClickActionIssueTable({ groups }) {
   )
 }
 
-function ClickActionTable({ id, items, ariaLabel }) {
+function ClickActionTable({ id, items, ariaLabel, className = '' }) {
   return (
-    <div className="tech-click-issue-table" id={id} aria-label={ariaLabel}>
-      <div className="tech-click-issue-head">
-        <span>상태</span>
-        <span>화면 문구</span>
-        <span>위치</span>
-        <span>결과</span>
-        <span>우선 확인</span>
-        <span>상세</span>
+    <div className={`tech-click-issue-table${className ? ` ${className}` : ''}`} id={id} aria-label={ariaLabel}>
+      <ClickActionTableHead />
+      <div className="tech-click-table-body">
+        {items.map((item, index) => <ClickActionRow item={item} key={`${index}-${item.auditId || item.selector || item.label || ''}`} />)}
       </div>
-      {items.map((item, index) => <ClickActionRow item={item} key={`${index}-${item.auditId || item.selector || item.label || ''}`} />)}
+    </div>
+  )
+}
+
+function ClickActionTableHead() {
+  return (
+    <div className="tech-click-issue-head">
+      <span>상태</span>
+      <span>화면 문구</span>
+      <span>위치</span>
+      <span>결과</span>
+      <span>우선 확인</span>
+      <span>상세</span>
     </div>
   )
 }
 
 function CollapsedClickRows({ label, items }) {
   return (
-    <details className="tech-detail-list tech-click-more">
-      <summary>{label}</summary>
-      <ClickActionTable items={items} ariaLabel={label} />
+    <details className="tech-more-details tech-click-more-details tech-click-more">
+      <summary className="tech-more-summary">{label}</summary>
+      <ClickActionTable items={items} ariaLabel={label} className="tech-click-more-table" />
     </details>
   )
 }
@@ -308,7 +334,8 @@ function ClickActionRow({ item }) {
   const status = getClickDisplayStatus(item)
   return (
     <DetailRow
-      className={`tech-click-issue-row tech-row-details tech-row-with-details ${getStatusClass(status)}`}
+      className={`tech-click-issue-row tech-click-row tech-row-details tech-row-with-details ${getStatusClass(status)}`}
+      summaryClassName="tech-click-row-summary"
       detail={(
         <div className="tech-problem-elements is-single">
           <ol>
@@ -326,11 +353,11 @@ function ClickActionRow({ item }) {
   )
 }
 
-function DetailRow({ id, className, children, detail }) {
+function DetailRow({ id, className, summaryClassName = '', children, detail }) {
   const [isOpen, setIsOpen] = useState(false)
   return (
     <details id={id} className={className} open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
-      <summary className="tech-row-summary" aria-label={isOpen ? '상세 닫기' : '상세 열기'} aria-expanded={isOpen}>
+      <summary className={`tech-row-summary${summaryClassName ? ` ${summaryClassName}` : ''}`} aria-label={isOpen ? '상세 닫기' : '상세 열기'} aria-expanded={isOpen}>
         {children}
         <DetailChevron />
       </summary>
@@ -372,8 +399,8 @@ function formatTechStatusMessage(display = {}) {
   const errors = Number(display.priorityCounts?.error || 0)
   const warnings = Number(display.priorityCounts?.warn || 0)
   const total = Number(display.priorityRows?.length || 0)
-  if (total > 0) return `우선 확인 결과 ${total}개입니다. 오류 ${errors}개 · 확인 필요 ${warnings}개.`
-  return '우선 확인 결과 0개입니다.'
+  if (total > 0) return `우선 확인 결과 ${total}건 · 오류 ${errors}건 · 확인 필요 ${warnings}건`
+  return '우선 확인 결과가 없습니다.'
 }
 
 function formatMarkupCheckResult(item = {}, problemItems = []) {
@@ -452,10 +479,13 @@ function sanitizeUserFacingText(value) {
 
 function CollapsedRows({ label, items }) {
   return (
-    <details className="tech-detail-list tech-link-more">
-      <summary>{label}</summary>
-      <div className="tech-link-table is-collapsed">
-        {items.map((item) => <LinkTableRow item={item} key={item.id} />)}
+    <details className="tech-more-details tech-normal-links-more tech-link-more">
+      <summary className="tech-more-summary">{label}</summary>
+      <div className="tech-link-table tech-link-more-table">
+        <LinkTableHead />
+        <div className="tech-link-table-body">
+          {items.map((item) => <LinkTableRow item={item} key={item.id} />)}
+        </div>
       </div>
     </details>
   )

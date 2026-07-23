@@ -4266,94 +4266,129 @@
 .tech-compact-table,
 .tech-link-table {
   display: grid;
+  min-width: 0;
   overflow: hidden;
   border: 1px solid #e5edf6;
   border-radius: 14px;
   background: #ffffff;
 }
 
-.tech-table-head,
+.tech-compact-table {
+  --tech-table-columns: minmax(180px, 1.3fr) 92px minmax(110px, 0.8fr) minmax(110px, 0.7fr) 70px;
+}
+
+.tech-table-head {
+  display: grid;
+  grid-template-columns: var(--tech-table-columns);
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+}
+
 .tech-table-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1.3fr) 92px minmax(110px, 0.8fr) minmax(110px, 0.7fr) 70px;
+  grid-template-columns: var(--tech-table-columns);
   gap: 10px;
   align-items: center;
   padding: 8px 10px;
 }
 
-.tech-table-row.tech-row-with-details {
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0;
-  align-items: stretch;
-  padding: 0;
-}
-
-.tech-table-row > .tech-row-summary {
+.tech-compact-table .tech-table-row > .tech-row-summary {
   display: grid;
-  grid-template-columns: minmax(180px, 1.3fr) 92px minmax(110px, 0.8fr) minmax(110px, 0.7fr) 70px;
+  grid-template-columns: var(--tech-table-columns);
   gap: 10px;
   align-items: center;
   min-height: 44px;
   padding: 8px 10px;
 }
 
-.tech-link-head,
+.tech-link-table {
+  --tech-link-columns: 88px minmax(160px, 0.8fr) minmax(0, 2fr) 72px 100px 40px;
+}
+
+.tech-link-head {
+  display: grid;
+  grid-template-columns: var(--tech-link-columns);
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+}
+
 .tech-link-row {
   display: grid;
-  grid-template-columns: 92px minmax(130px, 0.9fr) minmax(220px, 1.8fr) 70px minmax(120px, 0.8fr) 70px;
+  grid-template-columns: var(--tech-link-columns);
   gap: 10px;
   align-items: center;
   padding: 8px 10px;
 }
 
-.tech-link-row.tech-row-with-details {
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0;
-  align-items: stretch;
-  padding: 0;
-}
-
-.tech-link-row > .tech-row-summary {
+.tech-link-row > .tech-link-row-summary {
   display: grid;
-  grid-template-columns: 92px minmax(130px, 0.9fr) minmax(220px, 1.8fr) 70px minmax(120px, 0.8fr) 70px;
+  grid-template-columns: var(--tech-link-columns);
   gap: 10px;
   align-items: center;
   min-height: 44px;
   padding: 8px 10px;
 }
 
-.tech-click-issue-head,
-.tech-click-issue-row {
+.tech-click-issue-table {
+  --tech-click-columns: 88px minmax(150px, 0.9fr) minmax(104px, 0.6fr) minmax(0, 1.7fr) 100px 40px;
+}
+
+.tech-click-issue-head {
   display: grid;
-  grid-template-columns: 92px minmax(150px, 1.1fr) minmax(110px, 0.7fr) minmax(220px, 1.5fr) 92px 70px;
+  grid-template-columns: var(--tech-click-columns);
   gap: 10px;
   align-items: center;
   padding: 8px 10px;
 }
 
-.tech-click-issue-row.tech-row-with-details {
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0;
-  align-items: stretch;
-  padding: 0;
-}
-
-.tech-click-issue-row > .tech-row-summary {
+.tech-click-issue-row {
   display: grid;
-  grid-template-columns: 92px minmax(150px, 1.1fr) minmax(110px, 0.7fr) minmax(220px, 1.5fr) 92px 70px;
+  grid-template-columns: var(--tech-click-columns);
   gap: 10px;
   align-items: center;
+  padding: 8px 10px;
+}
+
+.tech-click-row > .tech-click-row-summary {
+  display: grid;
+  grid-template-columns: var(--tech-click-columns);
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
   min-height: 44px;
   padding: 8px 10px;
 }
 
 .tech-table-head,
 .tech-link-head,
-.tech-click-issue-head {
+.tech-click-issue-head,
+.tech-markup-head {
   color: #667085;
   background: #f8fafc;
   font-size: 12px;
   font-weight: 900;
+}
+
+.tech-table-head > *,
+.tech-link-head > *,
+.tech-click-issue-head > *,
+.tech-markup-head > *,
+.tech-row-summary > * {
+  min-width: 0;
+}
+
+.tech-compact-table .tech-table-row.tech-row-with-details,
+.tech-link-row.tech-row-with-details,
+.tech-click-issue-row.tech-row-with-details,
+.tech-click-row.tech-row-with-details,
+.tech-markup-row.tech-row-with-details {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
 }
 
 .tech-table-row,
@@ -4403,6 +4438,7 @@
 
 .tech-click-issue-table {
   display: grid;
+  min-width: 0;
   overflow: hidden;
   border: 1px solid #e5edf6;
   border-radius: 14px;
@@ -4450,10 +4486,22 @@
 
 .tech-markup-check-list {
   display: grid;
+  --tech-markup-columns: minmax(180px, 1.3fr) 92px minmax(110px, 0.8fr) minmax(110px, 0.7fr) 40px;
+  min-width: 0;
   overflow: hidden;
   border: 1px solid #e5edf6;
   border-radius: 14px;
   background: #ffffff;
+}
+
+.tech-markup-head,
+.tech-markup-row > .tech-row-summary {
+  display: grid;
+  grid-template-columns: var(--tech-markup-columns);
+  gap: 10px;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 10px;
 }
 
 .tech-markup-detail {
@@ -4474,7 +4522,7 @@
 }
 
 .tech-click-issue-row > strong,
-.tech-click-issue-row > .tech-row-summary > strong {
+.tech-click-row > .tech-click-row-summary > strong {
   min-width: 0;
   overflow: hidden;
   color: var(--ink);
@@ -4573,15 +4621,15 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .tech-url-cell {
-  word-break: break-all;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .tech-row-details:not(.tech-row-with-details) > summary,
-.tech-link-more > summary {
+.tech-more-details > .tech-more-summary {
   color: #1d4ed8;
   font-size: 12px;
   font-weight: 900;
@@ -4636,8 +4684,28 @@
 
 .tech-row-detail-body {
   grid-column: 1 / -1;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   padding: 0 10px 10px;
   border-top: 1px solid #eef2f6;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.tech-row-detail-body .tech-row-details:not(.tech-row-with-details),
+.tech-row-detail-body .tech-issue-meta,
+.tech-row-detail-body .tech-problem-elements,
+.tech-row-detail-body .tech-problem-elements li {
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.tech-row-detail-body .tech-row-details:not(.tech-row-with-details) {
+  overflow-x: auto;
 }
 
 .tech-row-details:not(.tech-row-with-details)[open] {
@@ -4656,8 +4724,55 @@
   margin-top: 10px;
 }
 
+.tech-more-details {
+  width: 100%;
+  min-width: 0;
+}
+
+.tech-more-details > .tech-more-summary {
+  width: fit-content;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.03);
+}
+
+.tech-link-more-table {
+  width: 100%;
+  min-width: 0;
+  margin-top: 8px;
+}
+
+.tech-link-table-body {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+}
+
+.tech-link-more-table .tech-link-row,
+.tech-link-more-table .tech-link-row-summary {
+  width: 100%;
+  min-width: 0;
+}
+
 .tech-click-more {
   margin-top: 10px;
+}
+
+.tech-click-more-details,
+.tech-click-more-table,
+.tech-click-more .tech-click-issue-table,
+.tech-click-table-body,
+.tech-click-more .tech-click-row,
+.tech-click-more .tech-click-row-summary {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.tech-click-table-body {
+  display: grid;
 }
 
 .tech-click-more .tech-click-issue-table {
@@ -4829,7 +4944,8 @@
 
   .tech-table-head,
   .tech-link-head,
-  .tech-click-issue-head {
+  .tech-click-issue-head,
+  .tech-markup-head {
     display: none;
   }
 
@@ -4854,22 +4970,25 @@
     justify-self: end;
   }
 
-  .tech-table-row > .tech-row-summary,
-  .tech-link-row > .tech-row-summary,
-  .tech-click-issue-row > .tech-row-summary {
+  .tech-compact-table .tech-table-row > .tech-row-summary,
+  .tech-link-row > .tech-link-row-summary,
+  .tech-click-row > .tech-click-row-summary,
+  .tech-markup-row > .tech-row-summary {
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: start;
   }
 
-  .tech-table-row > .tech-row-summary > :not(.tech-detail-toggle),
-  .tech-link-row > .tech-row-summary > :not(.tech-detail-toggle),
-  .tech-click-issue-row > .tech-row-summary > :not(.tech-detail-toggle) {
+  .tech-compact-table .tech-table-row > .tech-row-summary > :not(.tech-detail-toggle),
+  .tech-link-row > .tech-link-row-summary > :not(.tech-detail-toggle),
+  .tech-click-row > .tech-click-row-summary > :not(.tech-detail-toggle),
+  .tech-markup-row > .tech-row-summary > :not(.tech-detail-toggle) {
     grid-column: 1;
   }
 
-  .tech-table-row > .tech-row-summary > .tech-detail-toggle,
-  .tech-link-row > .tech-row-summary > .tech-detail-toggle,
-  .tech-click-issue-row > .tech-row-summary > .tech-detail-toggle {
+  .tech-compact-table .tech-table-row > .tech-row-summary > .tech-detail-toggle,
+  .tech-link-row > .tech-link-row-summary > .tech-detail-toggle,
+  .tech-click-row > .tech-click-row-summary > .tech-detail-toggle,
+  .tech-markup-row > .tech-row-summary > .tech-detail-toggle {
     grid-column: 2;
     grid-row: 1;
     justify-self: end;

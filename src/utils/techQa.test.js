@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { createLinkItems, createTechQaViewModel, getVisibleLinkGroups } from './techQa.js'
-import { createTechPanelDisplayModel } from './techQaPanelView.js'
+import { createTechPanelDisplayModel, resolveTechQaEngine } from './techQaPanelView.js'
 
 test('A normal internal links show first five and preserve all twelve', () => {
   const view = createTechQaViewModel(result({ links: Array.from({ length: 12 }, (_, index) => link({ label: `Link ${index + 1}`, url: `https://example.com/${index + 1}` })) }))
@@ -171,6 +171,37 @@ test('Tech QA panel display replaces top KPI cards with completion meta from exi
   assert.equal('처리 시간' in meta, false)
 })
 
+test('Tech QA panel display resolves Playwright engine from Tech QA evidence without run count', () => {
+  const base = result({
+    linkAudit: { uniqueRequestUrlCount: 12 },
+    checks: [check({ id: 'access', status: 'ok' }), check({ id: 'links', status: 'ok' })],
+    links: [link()],
+  })
+  const view = createTechQaViewModel(base)
+  const display = createTechPanelDisplayModel(base, view)
+  const meta = Object.fromEntries(display.completion.meta.map((item) => [item.label, item.value]))
+
+  assert.equal(resolveTechQaEngine(base, view), 'Playwright')
+  assert.equal(meta['검사 엔진'], 'Playwright')
+})
+
+test('Tech QA panel display resolves Playwright for history compact results with partial meta', () => {
+  const restored = {
+    targetUrl: 'https://example.com',
+    checks: [check({ id: 'access', status: 'ok' })],
+    links: [link()],
+    images: [],
+    mobile: { accessible: true, statusCode: 200, viewport: { width: 390, height: 844 } },
+    linkAudit: {},
+  }
+  const view = createTechQaViewModel(restored)
+  const display = createTechPanelDisplayModel(restored, view)
+  const meta = Object.fromEntries(display.completion.meta.map((item) => [item.label, item.value]))
+
+  assert.equal(meta['검사 엔진'], 'Playwright')
+  assert.equal(display.completion.meta.some((item) => !item.label || item.value === undefined || item.value === ''), false)
+})
+
 test('Tech QA panel display hides unavailable completion meta for history fallback', () => {
   const restored = { targetUrl: 'https://example.com', checks: [], links: [], images: [] }
   const view = createTechQaViewModel(restored)
@@ -191,7 +222,9 @@ test('compact Tech QA source keeps table UI and closed detail policy', () => {
   assert.equal(source.includes('tech-kpi-grid'), false)
   assert.equal(source.includes('TechCompletionCard'), true)
   assert.equal(source.includes('tech-completion-card'), true)
-  assert.equal(source.includes('우선 확인 결과 ${display.priorityRows.length}개'), true)
+  assert.equal(source.includes('우선 확인 결과 ${display.priorityRows.length}개'), false)
+  assert.equal(source.includes('우선 확인 결과 ${display.priorityRows.length}건'), true)
+  assert.equal(source.includes('우선 확인 결과가 없습니다.'), true)
   assert.equal(source.includes('tech-compact-table'), true)
   assert.equal(source.includes('tech-link-table'), true)
   assert.equal(source.includes('tech-owner-badge'), true)

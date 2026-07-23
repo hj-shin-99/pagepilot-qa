@@ -1,9 +1,14 @@
+import { useState } from 'react'
 import { createTechQaViewModel, getVisibleLinkGroups, TECH_STATUS_LABELS } from '../utils/techQa'
 import { formatScanTime } from '../utils/report'
+
+const MARKUP_ACCESSIBILITY_PRIMARY_IDS = ['meta', 'image-alt', 'external-links']
+const MARKUP_ACCESSIBILITY_DETAIL_IDS = ['meta', 'image-alt', 'external-links', 'headings', 'duplicate-ids', 'forms', 'unlabeled-clickables']
 
 function TechQaPanel({ result, copyStatus, onCopyReport }) {
   const view = createTechQaViewModel(result)
   const linkGroups = getVisibleLinkGroups(view.links)
+  const markupItems = createMarkupAccessibilityItems(view.checkItems)
 
   return (
     <section className="section-stack tech-qa-panel tech-qa-compact">
@@ -16,7 +21,7 @@ function TechQaPanel({ result, copyStatus, onCopyReport }) {
           </div>
           <button className="secondary-button" type="button" onClick={onCopyReport}>결과 복사</button>
         </div>
-        <div className="summary-box">{view.statusMessage}</div>
+        <div className="summary-box">{formatTechStatusMessage(view)}</div>
         {copyStatus ? <p className="copy-status">{copyStatus}</p> : null}
       </header>
 
@@ -36,13 +41,13 @@ function TechQaPanel({ result, copyStatus, onCopyReport }) {
       <section className="detail-card tech-compact-card" aria-label="우선 확인 필요">
         <SectionHead
           title="우선 확인 필요"
-          meta={`오류 ${view.issueCounts.errorUniqueElementCount}개 · 확인 필요 ${view.issueCounts.warningUniqueElementCount}개`}
-          note="실제 조치가 필요한 항목만 우선 표시합니다."
+          meta={`오류 ${view.issueCounts.errorUniqueElementCount}개 항목 · 확인 필요 ${view.issueCounts.warningUniqueElementCount}개 항목`}
+          note={`총 ${view.priorityItems.length}개 검사에서 발견되었습니다. 각 행은 아래 전용 상세 영역으로 연결됩니다.`}
         />
         {view.priorityItems.length > 0 ? <TechCompactTable items={view.priorityItems} mode="priority" /> : <p className="empty-row">오류 또는 확인 필요 항목이 없습니다.</p>}
       </section>
 
-      <section className="detail-card tech-compact-card" aria-label="기본 진단 결과">
+      <section className="detail-card tech-compact-card" id="tech-basic-section" aria-label="기본 진단 결과">
         <SectionHead
           title="기본 진단 결과"
           meta={`오류 검사 ${view.issueCounts.errorCheckCount} · 확인 필요 검사 ${view.issueCounts.warningCheckCount} · 정상 검사 ${view.issueCounts.normalCheckCount}`}
@@ -51,7 +56,7 @@ function TechQaPanel({ result, copyStatus, onCopyReport }) {
         <TechCompactTable items={view.basicCheckItems} mode="basic" />
       </section>
 
-      <section className="detail-card tech-compact-card" aria-label="링크 및 버튼 검사">
+      <section className="detail-card tech-compact-card" id="tech-links-section" aria-label="링크 및 버튼 검사">
         <SectionHead
           title="링크 및 버튼 검사"
           meta={`전체 ${view.linkSummary.total} · 오류 ${view.linkSummary.error} · 확인 필요 ${view.linkSummary.warn} · 정상 ${view.linkSummary.ok}`}
@@ -60,7 +65,7 @@ function TechQaPanel({ result, copyStatus, onCopyReport }) {
         <LinkTable groups={linkGroups} />
       </section>
 
-      <section className="detail-card tech-compact-card" aria-label="클릭 동작 검사">
+      <section className="detail-card tech-compact-card" id="tech-click-section" aria-label="클릭 동작 검사">
         <SectionHead
           title="클릭 동작 검사"
           meta={`후보 ${view.clickActionGroups.total} · 안전 클릭 ${result.clickActionAudit?.safeClickAttemptCount || 0}`}
@@ -69,6 +74,8 @@ function TechQaPanel({ result, copyStatus, onCopyReport }) {
         <ClickActionSummary groups={view.clickActionGroups} />
         <ClickActionIssueTable groups={view.clickActionGroups} />
       </section>
+
+      <MarkupAccessibilitySection items={markupItems} />
 
       <details className="detail-card tech-detail-accordion">
         <summary>
@@ -131,14 +138,15 @@ function TechCompactTable({ items, mode }) {
         <span>우선 확인</span>
         <span>상세</span>
       </div>
-      {items.map((item) => <TechTableRow item={item} key={item.id} />)}
+      {items.map((item) => mode === 'priority' ? <PriorityTableRow item={item} key={item.id} /> : <TechTableRow item={item} key={item.id} />)}
     </div>
   )
 }
 
-function TechTableRow({ item }) {
+function PriorityTableRow({ item }) {
+  const targetId = getPriorityDetailTargetId(item)
   return (
-    <div className={`tech-table-row ${getStatusClass(item.status)}`}>
+    <div className={`tech-table-row tech-priority-row ${getStatusClass(item.status)}`}>
       <div className="tech-table-title">
         <span className="tech-category-chip">{item.categoryLabel || 'Tech'}</span>
         <strong>{item.title}</strong>
@@ -146,8 +154,87 @@ function TechTableRow({ item }) {
       <span className={`status-badge ${getStatusClass(item.status)}`}>{TECH_STATUS_LABELS[item.status]}</span>
       <span className="tech-table-value">{item.value || '-'}</span>
       <OwnerBadge owner={item.status === 'ok' ? '-' : item.owner} />
-      <IssueDetails item={item} />
+      <a className="tech-detail-jump" href={`#${targetId}`} aria-label={`${item.title} 아래 상세 보기`}>
+        <span aria-hidden="true">⌄</span>
+      </a>
     </div>
+  )
+}
+
+function TechTableRow({ item }) {
+  return (
+    <DetailRow
+      className={`tech-table-row tech-row-details tech-row-with-details ${getStatusClass(item.status)}`}
+      detail={<IssueDetails item={item} />}
+    >
+        <div className="tech-table-title">
+          <span className="tech-category-chip">{item.categoryLabel || 'Tech'}</span>
+          <strong>{item.title}</strong>
+        </div>
+        <span className={`status-badge ${getStatusClass(item.status)}`}>{TECH_STATUS_LABELS[item.status]}</span>
+        <span className="tech-table-value">{item.value || '-'}</span>
+        <OwnerBadge owner={item.status === 'ok' ? '-' : item.owner} />
+    </DetailRow>
+  )
+}
+
+function MarkupAccessibilitySection({ items }) {
+  const problemItems = items.filter((item) => item.status !== 'ok')
+  const normalItems = items.filter((item) => item.status === 'ok')
+  const errorCount = problemItems.filter((item) => item.status === 'error').length
+  const warningCount = problemItems.filter((item) => item.status === 'warn').length
+
+  return (
+    <section className="detail-card tech-compact-card" id="tech-markup-accessibility-section" aria-label="마크업 및 접근성 검사">
+      <SectionHead
+        title="마크업 및 접근성 검사"
+        meta={`오류 검사 ${errorCount} · 확인 필요 검사 ${warningCount} · 정상 검사 ${normalItems.length}`}
+        note="Meta, 이미지 alt, 외부 링크 rel 등 마크업과 접근성 근거가 필요한 항목을 확인합니다."
+      />
+      {problemItems.length > 0 ? <div className="tech-markup-check-list">{problemItems.map((item) => <MarkupCheckRow item={item} key={item.id} />)}</div> : <p className="empty-row">마크업 및 접근성 확인 필요 항목이 없습니다.</p>}
+      {normalItems.length > 0 ? <NormalMarkupSummary items={normalItems} /> : null}
+    </section>
+  )
+}
+
+function MarkupCheckRow({ item }) {
+  return (
+    <DetailRow
+      id={getMarkupDetailId(item)}
+      className={`tech-table-row tech-row-details tech-row-with-details tech-markup-check-row ${getStatusClass(item.status)}`}
+      detail={<MarkupCheckDetails item={item} />}
+    >
+      <div className="tech-table-title">
+        <span className="tech-category-chip">{item.categoryLabel || 'Markup'}</span>
+        <strong>{item.title}</strong>
+      </div>
+      <span className={`status-badge ${getStatusClass(item.status)}`}>{TECH_STATUS_LABELS[item.status]}</span>
+      <span className="tech-table-value">{item.value || '-'}</span>
+      <OwnerBadge owner={item.status === 'ok' ? '-' : item.owner} />
+    </DetailRow>
+  )
+}
+
+function MarkupCheckDetails({ item }) {
+  const problemItems = Array.isArray(item.problemItems) && item.problemItems.length > 0 ? item.problemItems : item.raw?.items || []
+  return (
+    <div className="tech-markup-detail">
+      <dl className="tech-issue-meta">
+        <Meta label="검사 결과" value={formatMarkupCheckResult(item, problemItems)} />
+      </dl>
+      {problemItems.length > 0 ? <ProblemElementList items={problemItems} owner={item.owner} /> : <p className="tech-normal-note">확인 필요 요소가 없습니다.</p>}
+    </div>
+  )
+}
+
+function NormalMarkupSummary({ items }) {
+  return (
+    <details className="tech-detail-list tech-normal-markup-list">
+      <summary>정상 마크업 및 접근성 검사 {items.length}개</summary>
+      <ul className="tech-raw-list">
+        {items.map((item) => <li key={item.id}>{item.title} · {item.value || '정상'}</li>)}
+      </ul>
+    </details>
   )
 }
 
@@ -175,14 +262,16 @@ function LinkTable({ groups }) {
 function LinkTableRow({ item }) {
   const raw = item.raw || {}
   return (
-    <div className={`tech-link-row ${getStatusClass(item.status)}`}>
-      <span className={`status-badge ${getStatusClass(item.status)}`}>{TECH_STATUS_LABELS[item.status]}</span>
-      <strong>{item.title}</strong>
-      <span className="tech-url-cell">{raw.url || raw.href || '-'}</span>
-      <span>{raw.statusCode || '-'}</span>
-      <OwnerBadge owner={item.status === 'ok' ? '-' : item.owner} />
-      <IssueDetails item={item} />
-    </div>
+    <DetailRow
+      className={`tech-link-row tech-row-details tech-row-with-details ${getStatusClass(item.status)}`}
+      detail={<IssueDetails item={item} />}
+    >
+        <span className={`status-badge ${getStatusClass(item.status)}`}>{TECH_STATUS_LABELS[item.status]}</span>
+        <strong>{item.title}</strong>
+        <span className="tech-url-cell">{raw.url || raw.href || '-'}</span>
+        <span>{raw.statusCode || '-'}</span>
+        <OwnerBadge owner={item.status === 'ok' ? '-' : item.owner} />
+    </DetailRow>
   )
 }
 
@@ -207,22 +296,80 @@ function ClickActionIssueTable({ groups }) {
 function ClickActionIssueRow({ item }) {
   const status = item.actionClassification === 'actual-error' || item.status === 'error' ? 'error' : 'warn'
   return (
-    <div className={`tech-click-issue-row ${getStatusClass(status)}`}>
-      <span className={`status-badge ${getStatusClass(status)}`}>{TECH_STATUS_LABELS[status]}</span>
-      <strong>{getElementName(item)}</strong>
-      <span>{getUserLocation(item)}</span>
-      <span>{formatElementResult(item)}</span>
-      <OwnerBadge owner={getUidOwner()} />
-      <details className="tech-row-details">
-        <summary>상세</summary>
+    <DetailRow
+      className={`tech-click-issue-row tech-row-details tech-row-with-details ${getStatusClass(status)}`}
+      detail={(
         <div className="tech-problem-elements is-single">
           <ol>
             <ProblemElementCard entry={item} owner={getUidOwner()} />
           </ol>
         </div>
-      </details>
-    </div>
+      )}
+    >
+        <span className={`status-badge ${getStatusClass(status)}`}>{TECH_STATUS_LABELS[status]}</span>
+        <strong>{getElementName(item)}</strong>
+        <span>{getUserLocation(item)}</span>
+        <span>{formatElementResult(item)}</span>
+        <OwnerBadge owner={getUidOwner()} />
+    </DetailRow>
   )
+}
+
+function DetailRow({ id, className, children, detail }) {
+  const [isOpen, setIsOpen] = useState(false)
+  return (
+    <details id={id} className={className} open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
+      <summary className="tech-row-summary" aria-label={isOpen ? '상세 닫기' : '상세 열기'} aria-expanded={isOpen}>
+        {children}
+        <DetailChevron />
+      </summary>
+      <div className="tech-row-detail-body">
+        {detail}
+      </div>
+    </details>
+  )
+}
+
+function DetailChevron() {
+  return (
+    <span className="tech-detail-toggle" aria-hidden="true">
+      <span className="tech-detail-chevron">▸</span>
+    </span>
+  )
+}
+
+function createMarkupAccessibilityItems(checkItems = []) {
+  return checkItems.filter((item) => {
+    if (MARKUP_ACCESSIBILITY_PRIMARY_IDS.includes(item.id)) return true
+    return MARKUP_ACCESSIBILITY_DETAIL_IDS.includes(item.id) && item.status !== 'ok'
+  })
+}
+
+function getPriorityDetailTargetId(item = {}) {
+  if (item.type === 'link') return 'tech-links-section'
+  if (item.id === 'click-actions') return 'tech-click-section'
+  if (MARKUP_ACCESSIBILITY_DETAIL_IDS.includes(item.id)) return getMarkupDetailId(item)
+  return 'tech-basic-section'
+}
+
+function getMarkupDetailId(item = {}) {
+  return `tech-markup-${String(item.id || item.title || 'check').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-|-$/g, '').toLowerCase()}`
+}
+
+function formatTechStatusMessage(view = {}) {
+  const errors = Number(view.issueCounts?.errorUniqueElementCount || 0)
+  const warnings = Number(view.issueCounts?.warningUniqueElementCount || 0)
+  const relatedChecks = Number(view.priorityItems?.length || 0)
+  if (errors > 0) return `오류 ${errors}개 항목 · 확인 필요 ${warnings}개 항목입니다. 총 ${relatedChecks}개 검사에서 발견되었습니다.`
+  if (warnings > 0) return `확인 필요 ${warnings}개 항목입니다. 총 ${relatedChecks}개 검사에서 발견되었습니다.`
+  return '오류 0개 항목 · 확인 필요 0개 항목입니다.'
+}
+
+function formatMarkupCheckResult(item = {}, problemItems = []) {
+  if (item.id === 'image-alt') return `${item.value || `alt 확인 필요 ${problemItems.length}개`}`
+  if (item.id === 'external-links') return `${item.value || `rel 확인 필요 ${problemItems.length}개`}`
+  if (item.id === 'meta') return `${item.value || `Meta/OG ${problemItems.length}개 항목 확인 필요`}`
+  return `${item.value || `확인 필요 ${problemItems.length}개`}`
 }
 
 function getUidOwner() {
@@ -301,37 +448,32 @@ function IssueDetails({ item }) {
   const problemItems = item.problemItems || item.raw?.items
   const hasProblemItems = Array.isArray(problemItems) && problemItems.length > 0
   return (
-    <details className="tech-row-details">
-      <summary>상세</summary>
+    <>
       <dl className="tech-issue-meta">
         <Meta label="검사 목적" value={item.description} />
         <Meta label="검사 결과" value={formatCurrentResult(item)} />
         {hasProblemItems ? null : <Meta label="확인할 내용" value={formatTeamAction(item)} />}
       </dl>
       {hasProblemItems ? <ProblemElementList items={problemItems} owner={item.owner} /> : <TechnicalInfo raw={item.raw} />}
-    </details>
+    </>
   )
 }
 
 function SingleProblemDetails({ item }) {
   return (
-    <details className="tech-row-details">
-      <summary>상세</summary>
-      <div className="tech-problem-elements is-single">
-        <ol>
-          <ProblemElementCard entry={{ ...item.raw, title: item.title, owner: item.owner }} owner={item.owner} />
-        </ol>
-      </div>
-    </details>
+    <div className="tech-problem-elements is-single">
+      <ol>
+        <ProblemElementCard entry={{ ...item.raw, title: item.title, owner: item.owner }} owner={item.owner} />
+      </ol>
+    </div>
   )
 }
 
 function NormalIssueDetails({ item }) {
   return (
-    <details className="tech-row-details tech-normal-details">
-      <summary>상세</summary>
+    <div className="tech-normal-details">
       <p>{formatNormalDetail(item)}</p>
-    </details>
+    </div>
   )
 }
 
@@ -418,6 +560,9 @@ function ProblemElementCard({ entry, owner, index = null }) {
           <Meta label="tag" value={entry.tagName || entry.kind} />
           <Meta label="role" value={entry.role} />
           <Meta label="text / aria-label" value={entry.text || entry.ariaLabel || entry.label} />
+          <Meta label="alt" value={entry.alt} />
+          <Meta label="rel" value={entry.rel} />
+          <Meta label="meta property/name" value={entry.property || entry.name || (entry.label && /^og:|meta|canonical/i.test(entry.label) ? entry.label : '')} />
           <Meta label="href/action" value={entry.href || entry.formAction || entry.actionType || entry.actionEvidence} />
           <Meta label="selector" value={entry.selector} />
           <Meta label="section" value={entry.section || entry.sectionPath} />
@@ -438,6 +583,7 @@ function ProblemElementCard({ entry, owner, index = null }) {
           <Meta label="overlay selector" value={entry.overlaySelector} />
           <Meta label="click executed" value={entry.clickExecuted} />
           <Meta label="observed change" value={entry.observableChange} />
+          <Meta label="raw evidence" value={entry.category || entry.altReason || entry.altCategory || entry.status} />
           <Meta label="raw failure" value={entry.safeClickResult?.error || entry.message || entry.stack} />
         </dl>
       </details>

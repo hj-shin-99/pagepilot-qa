@@ -230,7 +230,7 @@ test('compact Tech QA source keeps table UI and closed detail policy', () => {
   assert.equal(source.includes('tech-owner-badge'), true)
   assert.equal(source.includes('정상 링크 ${groups.hiddenNormals.length}개 더보기'), true)
   assert.equal(source.includes('전체 검사 항목'), false)
-  assert.equal(source.includes('기본 진단 결과'), true)
+  assert.equal(source.includes('주요 검사 결과'), true)
   assert.equal(source.includes('정상 검사 {view.normalCheckItems.length}개 펼치기'), false)
   assert.equal(source.includes('tech-click-summary'), false)
   assert.equal(source.includes('tech-click-issue-table'), true)

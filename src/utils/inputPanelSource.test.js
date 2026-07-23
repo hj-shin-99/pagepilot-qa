@@ -140,7 +140,32 @@ test('tech qa detail triggers stay in row summaries across table types and histo
   assert.equal(css.includes('.tech-row-with-details > summary::marker'), true)
   assert.equal(appSource.includes('setTechResult(item.tech?.compactResult || null)'), true)
   assert.equal(appSource.includes('setTechResult(item.result)'), true)
-  assert.equal(appSource.includes('<TechQaPanel copyStatus={techCopyStatus} result={techResult}'), true)
+  assert.equal(appSource.includes('<TechQaPanel result={techResult} />'), true)
+})
+
+test('result headers share report labels and omit copy buttons', () => {
+  const appSource = fs.readFileSync('src/App.jsx', 'utf8')
+  const visualSource = fs.readFileSync('src/components/VisualQaPanel.jsx', 'utf8')
+  const techSource = fs.readFileSync('src/components/TechQaPanel.jsx', 'utf8')
+  const auditSource = fs.readFileSync('src/components/AuditHeader.jsx', 'utf8')
+  const css = fs.readFileSync('src/App.css', 'utf8')
+  const productionJsx = [appSource, visualSource, techSource, auditSource].join('\n')
+
+  assert.equal(visualSource.includes('Visual QA Report · {formatDate(meta.createdAt)}'), true)
+  assert.equal(visualSource.includes('createVisualQaTitle({ pageTitle, result })'), true)
+  assert.equal(techSource.includes('Tech QA Report · {formatScanTime(result.scannedAt)}'), true)
+  assert.equal(techSource.includes('createTechQaTitle(view.title)'), true)
+  assert.equal(appSource.includes('setVisualResult(item.visual?.compactResult || null)'), true)
+  assert.equal(appSource.includes('setTechResult(item.tech?.compactResult || null)'), true)
+  assert.equal(appSource.includes('<VisualQaPanel'), true)
+  assert.equal(appSource.includes('<TechQaPanel result={techResult} />'), true)
+  assert.equal(appSource.includes('copyStatus='), false)
+  assert.equal(appSource.includes('onCopyResult'), false)
+  assert.equal(appSource.includes('onCopyReport'), false)
+  assert.equal(appSource.includes('visualCopyStatus'), false)
+  assert.equal(appSource.includes('techCopyStatus'), false)
+  assert.equal(productionJsx.includes('결과 복사'), false)
+  assert.equal(css.includes('.audit-header-top > div {\n  flex: 1;\n  min-width: 0;'), true)
 })
 
 test('tech qa priority summary links every issue category to lower detail sections', () => {

@@ -55,3 +55,23 @@ export function buildReportText(result, summary) {
     linkLines,
   ].join('\n')
 }
+
+export function buildVisualReportText(result, summary) {
+  const meta = result.meta || {}
+  const comparison = result.comparison || {}
+  const hero = result.aiHints?.evidenceSummary?.hero || {}
+
+  return [
+    '[PagePilot Visual QA]',
+    `Web URL: ${meta.webUrl || ''}`,
+    `Figma Node: ${meta.figmaNodeId || ''}`,
+    `Created At: ${meta.createdAt || ''}`,
+    `Summary: ${summary}`,
+    '',
+    `Difference: ${comparison.differenceCount || 0}`,
+    `Figma only: ${comparison.figmaOnlyCount || 0}`,
+    `Web only: ${comparison.webOnlyCount || 0}`,
+    `Hero CTA: Figma ${hero.figmaCtaCount || 0} / Web ${hero.webCtaCount || 0}`,
+    `Hero Media: Figma ${(hero.figmaMediaTypes || []).join(', ') || '-'} / Web ${(hero.webMediaTypes || []).join(', ') || '-'}`,
+  ].join('\n')
+}

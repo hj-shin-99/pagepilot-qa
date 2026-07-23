@@ -15,7 +15,7 @@ import { createCoreVisualIssues } from '../utils/visualDisplayHierarchy.js'
 import { createVisualIssueGroups } from '../utils/visualIssueGroups.js'
 import { createVisualQaTitle } from '../utils/visualTitle'
 
-function VisualQaPanel({ result, copyStatus, onCopyResult, aiReview, aiReviewState = 'idle', pageTitle }) {
+function VisualQaPanel({ result, aiReview, aiReviewState = 'idle', pageTitle }) {
   const cards = createVisualIssueCards(result)
   const meta = result.meta || {}
   const aiHints = result.aiHints || {}
@@ -45,16 +45,12 @@ function VisualQaPanel({ result, copyStatus, onCopyResult, aiReview, aiReviewSta
       <header className="audit-header visual-audit-header">
         <div className="audit-header-top">
           <div>
-            <p className="eyebrow">Visual QA · {formatDate(meta.createdAt)}</p>
+            <p className="eyebrow">Visual QA Report · {formatDate(meta.createdAt)}</p>
             <h2>{visualTitle}</h2>
             <p className="target-url">{meta.webUrl}</p>
           </div>
-          <button className="secondary-button" type="button" onClick={onCopyResult}>
-            결과 복사
-          </button>
         </div>
         <div className="summary-box">{formatIssueCountSummary(coreGroupMeta.groupedIssueCount ?? coreIssues.length)}</div>
-        {copyStatus ? <p className="copy-status">{copyStatus}</p> : null}
       </header>
 
       <AiMultimodalComplete aiReview={aiReview} />

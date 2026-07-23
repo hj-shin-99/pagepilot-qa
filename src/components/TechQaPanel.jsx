@@ -2,15 +2,17 @@ import { useState } from 'react'
 import { createTechQaViewModel, getVisibleLinkGroups, TECH_STATUS_LABELS } from '../utils/techQa'
 import { createTechPanelDisplayModel } from '../utils/techQaPanelView'
 import { formatScanTime } from '../utils/report'
+import { createTechQaTitle } from '../utils/techTitle'
 
 const MARKUP_ACCESSIBILITY_PRIMARY_IDS = ['meta', 'image-alt', 'external-links']
 const MARKUP_ACCESSIBILITY_DETAIL_IDS = ['meta', 'image-alt', 'external-links', 'headings', 'duplicate-ids', 'forms', 'unlabeled-clickables']
 
-function TechQaPanel({ result, copyStatus, onCopyReport }) {
+function TechQaPanel({ result }) {
   const view = createTechQaViewModel(result)
   const display = createTechPanelDisplayModel(result, view)
   const linkGroups = getVisibleLinkGroups(view.links)
   const markupItems = createMarkupAccessibilityItems(view.checkItems)
+  const techTitle = createTechQaTitle(view.title)
 
   return (
     <section className="section-stack tech-qa-panel tech-qa-compact">
@@ -18,13 +20,11 @@ function TechQaPanel({ result, copyStatus, onCopyReport }) {
         <div className="audit-header-top">
           <div>
             <p className="eyebrow">Tech QA Report · {formatScanTime(result.scannedAt)}</p>
-            <h2>{view.title}</h2>
+            <h2>{techTitle}</h2>
             <p className="target-url">{view.targetUrl}</p>
           </div>
-          <button className="secondary-button" type="button" onClick={onCopyReport}>결과 복사</button>
         </div>
         <div className="summary-box">{formatTechStatusMessage(display)}</div>
-        {copyStatus ? <p className="copy-status">{copyStatus}</p> : null}
       </header>
 
       <TechCompletionCard completion={display.completion} />
@@ -33,25 +33,25 @@ function TechQaPanel({ result, copyStatus, onCopyReport }) {
         <SectionHead
           title={`우선 확인 결과 ${display.priorityRows.length}건`}
           meta={`오류 ${display.priorityCounts.error}건 · 확인 필요 ${display.priorityCounts.warn}건`}
-          note="각 행은 실제 화면에 표시되는 우선 확인 검사 1개이며, 아래 전용 상세 영역으로 연결됩니다."
+          note="우선 확인이 필요한 항목만 표시합니다. 상세를 선택하면 관련 검사 영역으로 이동합니다."
         />
         {display.priorityRows.length > 0 ? <TechCompactTable items={display.priorityRows} mode="priority" /> : <p className="empty-row">오류 또는 확인 필요 항목이 없습니다.</p>}
       </section>
 
-      <section className="detail-card tech-compact-card" id="tech-basic-section" aria-label="기본 진단 결과">
+      <section className="detail-card tech-compact-card" id="tech-basic-section" aria-label="주요 검사 결과">
         <SectionHead
-          title="기본 진단 결과"
+          title="주요 검사 결과"
           meta={`오류 검사 ${view.issueCounts.errorCheckCount} · 확인 필요 검사 ${view.issueCounts.warningCheckCount} · 정상 검사 ${view.issueCounts.normalCheckCount}`}
-          note="핵심 Tech QA 진단 항목은 접지 않고 한 줄 결과로 표시합니다. raw 데이터는 상세 안에 둡니다."
+          note="페이지의 주요 Tech QA 검사 결과를 한눈에 확인할 수 있습니다."
         />
         <TechCompactTable items={view.basicCheckItems} mode="basic" />
       </section>
 
-      <section className="detail-card tech-compact-card" id="tech-links-section" aria-label="링크 및 버튼 검사">
+      <section className="detail-card tech-compact-card" id="tech-links-section" aria-label="URL 검사">
         <SectionHead
-          title="링크 및 버튼 검사"
+          title="URL 검사"
           meta={`전체 ${view.linkSummary.total} · 오류 ${view.linkSummary.error} · 확인 필요 ${view.linkSummary.warn} · 정상 ${view.linkSummary.ok}`}
-          note="페이지에서 발견한 링크와 이동 버튼을 실제 요청 결과 기준으로 표시합니다. 오류와 확인 필요 항목을 우선 표시합니다."
+          note="링크와 이동 버튼에 URL이 올바르게 연결되어 있는지 확인하고, 연결된 URL의 응답 상태를 검사합니다."
         />
         <LinkTable groups={linkGroups} />
       </section>
@@ -60,7 +60,7 @@ function TechQaPanel({ result, copyStatus, onCopyReport }) {
         <SectionHead
           title="클릭 동작 검사"
           meta={`오류 ${view.clickActionGroups.actualErrors.length} · 확인 필요 ${view.clickActionGroups.warnings.length} · 정상 ${getNormalClickCount(view.clickActionGroups)}`}
-          note={`버튼과 링크가 실제로 반응하는지 확인합니다. 검증 생략 ${view.clickActionGroups.safeSkipped.length} · UI 제어 ${view.clickActionGroups.uiControls.length}`}
+          note={`버튼과 UI 요소가 클릭에 정상적으로 반응하고 의도한 동작을 수행하는지 확인합니다. 검증 생략 ${view.clickActionGroups.safeSkipped.length} · UI 제어 ${view.clickActionGroups.uiControls.length}`}
         />
         <ClickActionIssueTable groups={view.clickActionGroups} />
       </section>
@@ -176,7 +176,7 @@ function MarkupAccessibilitySection({ items }) {
       <SectionHead
         title="마크업 및 접근성 검사"
         meta={`오류 검사 ${errorCount} · 확인 필요 검사 ${warningCount} · 정상 검사 ${normalItems.length}`}
-        note="Meta, 이미지 alt, 외부 링크 rel 등 마크업과 접근성 근거가 필요한 항목을 확인합니다."
+        note="Meta, 이미지 alt, 외부 링크 rel 등 검색엔진과 접근성에 필요한 마크업을 확인합니다."
       />
       {problemItems.length > 0 ? (
         <div className="tech-markup-check-list">
@@ -399,7 +399,7 @@ function formatTechStatusMessage(display = {}) {
   const errors = Number(display.priorityCounts?.error || 0)
   const warnings = Number(display.priorityCounts?.warn || 0)
   const total = Number(display.priorityRows?.length || 0)
-  if (total > 0) return `우선 확인 결과 ${total}건 · 오류 ${errors}건 · 확인 필요 ${warnings}건`
+  if (total > 0) return `우선 확인이 필요한 결과는 총 ${total}건입니다. (오류 ${errors}건 · 확인 필요 ${warnings}건)`
   return '우선 확인 결과가 없습니다.'
 }
 

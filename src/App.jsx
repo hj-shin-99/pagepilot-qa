@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import './App.css'
-import { buildReportText, createResultSummary } from './utils/report'
+import { createResultSummary } from './utils/report'
 import { deleteHistoryItem, loadHistoryItems, saveHistoryItem } from './utils/history'
 import { buildAiReviewPayloadFromSession, sanitizeAiReviewResponse } from './utils/aiReview'
 import { isValidHttpUrl } from './utils/scanSession'
@@ -23,8 +23,6 @@ function App() {
   const [activeTab, setActiveTab] = useState('overview')
   const [inputError, setInputError] = useState('')
   const [figmaError, setFigmaError] = useState('')
-  const [visualCopyStatus, setVisualCopyStatus] = useState('')
-  const [techCopyStatus, setTechCopyStatus] = useState('')
   const [visualScanError, setVisualScanError] = useState('')
   const [techScanError, setTechScanError] = useState('')
   const [aiReview, setAiReview] = useState(null)
@@ -34,8 +32,6 @@ function App() {
   const [selectedHistoryId, setSelectedHistoryId] = useState('')
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
 
-  const visualSummary = useMemo(() => (visualResult ? createVisualSummary(visualResult) : ''), [visualResult])
-  const techSummary = useMemo(() => (techResult ? createResultSummary(techResult) : ''), [techResult])
   const isScanning = visualScanState === 'loading' || techScanState === 'loading' || aiReviewState === 'loading'
   const isVisualTabEnabled = Boolean(visualResult) || visualScanState === 'loading' || visualScanState === 'success' || visualScanState === 'error'
   const isTechTabEnabled = Boolean(techResult) || techScanState === 'loading' || techScanState === 'success' || techScanState === 'error'
@@ -50,8 +46,6 @@ function App() {
     const webUrl = url.trim()
     const frameUrl = figmaUrl.trim()
 
-    setVisualCopyStatus('')
-    setTechCopyStatus('')
     setVisualScanError('')
     setTechScanError('')
     setInputError('')
@@ -133,8 +127,6 @@ function App() {
     setFigmaError('')
     setVisualScanError('')
     setTechScanError('')
-    setVisualCopyStatus('')
-    setTechCopyStatus('')
     setAiReview(null)
     setAiReviewState('idle')
     setScanStage('idle')
@@ -186,8 +178,6 @@ function App() {
     setTechScanState('idle')
     setVisualScanError('')
     setTechScanError('')
-    setVisualCopyStatus('')
-    setTechCopyStatus('')
     setAiReview(null)
     setAiReviewState('idle')
     setScanStage('idle')
@@ -208,16 +198,6 @@ function App() {
       setSelectedHistoryId('')
       setActiveTab('history')
     }
-  }
-
-  const handleCopyVisualResult = async () => {
-    if (!visualResult) return
-    await copyText(buildVisualReportText(visualResult, visualSummary), setVisualCopyStatus, 'Visual QA 요약이 클립보드에 복사되었습니다.')
-  }
-
-  const handleCopyTechResult = async () => {
-    if (!techResult) return
-    await copyText(buildReportText(techResult, techSummary), setTechCopyStatus, 'Tech QA 리포트가 클립보드에 복사되었습니다.')
   }
 
   return (
@@ -258,17 +238,14 @@ function App() {
           />
         ) : activeTab === 'tech' ? (
           techResult ? (
-            <TechQaPanel copyStatus={techCopyStatus} result={techResult} summary={techSummary} onCopyReport={handleCopyTechResult} />
+            <TechQaPanel result={techResult} />
           ) : <EmptyState scanState={techScanState} scanError={techScanError} mode="tech" combined={visualScanState === 'loading'} scanStage={scanStage} />
         ) : activeTab === 'visual' && visualResult ? (
           <VisualQaPanel
-            copyStatus={visualCopyStatus}
             result={visualResult}
             aiReview={aiReview}
             aiReviewState={aiReviewState}
             pageTitle={techResult?.pageTitle}
-            summary={visualSummary}
-            onCopyResult={handleCopyVisualResult}
           />
         ) : activeTab === 'visual' ? (
           <EmptyState scanState={visualScanState} scanError={visualScanError} mode="visual" combined={techScanState === 'loading'} scanStage={scanStage} />
@@ -343,27 +320,6 @@ function applyVisualSessionState(visual, setResult, setState, setError) {
   setResult(visual.result)
   setState(visual.status)
   setError(visual.error || '')
-}
-
-async function copyText(text, setStatus, successMessage) {
-  try {
-    if (navigator.clipboard) {
-      await navigator.clipboard.writeText(text)
-    } else {
-      const textarea = document.createElement('textarea')
-      textarea.value = text
-      textarea.setAttribute('readonly', '')
-      textarea.style.position = 'fixed'
-      textarea.style.opacity = '0'
-      document.body.appendChild(textarea)
-      textarea.select()
-      document.execCommand('copy')
-      document.body.removeChild(textarea)
-    }
-    setStatus(successMessage)
-  } catch {
-    setStatus('복사에 실패했습니다. 브라우저 권한을 확인해 주세요.')
-  }
 }
 
 function createTechHistoryItem(result) {
@@ -513,26 +469,6 @@ function createCompactTechResult(result) {
     clickActionAudit: result.clickActionAudit || {},
     uiControlWithoutUrlCount: result.uiControlWithoutUrlCount || 0,
   }
-}
-
-function buildVisualReportText(result, summary) {
-  const meta = result.meta || {}
-  const comparison = result.comparison || {}
-  const hero = result.aiHints?.evidenceSummary?.hero || {}
-
-  return [
-    '[PagePilot Visual QA]',
-    `Web URL: ${meta.webUrl || ''}`,
-    `Figma Node: ${meta.figmaNodeId || ''}`,
-    `Created At: ${meta.createdAt || ''}`,
-    `Summary: ${summary}`,
-    '',
-    `Difference: ${comparison.differenceCount || 0}`,
-    `Figma only: ${comparison.figmaOnlyCount || 0}`,
-    `Web only: ${comparison.webOnlyCount || 0}`,
-    `Hero CTA: Figma ${hero.figmaCtaCount || 0} / Web ${hero.webCtaCount || 0}`,
-    `Hero Media: Figma ${(hero.figmaMediaTypes || []).join(', ') || '-'} / Web ${(hero.webMediaTypes || []).join(', ') || '-'}`,
-  ].join('\n')
 }
 
 export default App

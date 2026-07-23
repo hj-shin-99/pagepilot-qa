@@ -418,6 +418,11 @@
   gap: 18px;
 }
 
+.audit-header-top > div {
+  flex: 1;
+  min-width: 0;
+}
+
 .eyebrow {
   margin: 0;
   color: #2563eb;

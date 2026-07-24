@@ -51,7 +51,7 @@ function TechQaPanel({ result }) {
         <SectionHead
           title="URL 검사"
           meta={`전체 ${view.linkSummary.total} · 오류 ${view.linkSummary.error} · 확인 필요 ${view.linkSummary.warn} · 정상 ${view.linkSummary.ok}`}
-          note="링크와 이동 버튼에 URL이 올바르게 연결되어 있는지 확인하고, 연결된 URL의 응답 상태를 검사합니다."
+          note="링크와 이동 버튼에 URL이 연결되어 있는지 확인하고, 연결된 주소의 응답 상태를 검사합니다."
         />
         <LinkTable groups={linkGroups} />
       </section>
@@ -60,7 +60,7 @@ function TechQaPanel({ result }) {
         <SectionHead
           title="클릭 동작 검사"
           meta={`오류 ${view.clickActionGroups.actualErrors.length} · 확인 필요 ${view.clickActionGroups.warnings.length} · 정상 ${getNormalClickCount(view.clickActionGroups)}`}
-          note={`버튼과 UI 요소가 클릭에 정상적으로 반응하고 의도한 동작을 수행하는지 확인합니다. 검증 생략 ${view.clickActionGroups.safeSkipped.length} · UI 제어 ${view.clickActionGroups.uiControls.length}`}
+          note="URL 이동 여부와 관계없이 버튼, 메뉴 등 클릭 가능한 UI 요소를 실제로 조작하여 화면 반응을 확인합니다."
         />
         <ClickActionIssueTable groups={view.clickActionGroups} />
       </section>

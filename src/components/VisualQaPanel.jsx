@@ -98,7 +98,7 @@ function VisualQaPanel({ result, aiReview, aiReviewState = 'idle', pageTitle }) 
         </summary>
 
         <div className="visual-detail-stack">
-          <DetailAccordion title="AI 멀티모달 분석" note="최종 검토 요약">
+          <DetailAccordion title="멀티모달 AI 분석" note="최종 검토 요약">
             <AiVisionSummary aiReview={aiReview} state={aiReviewState} finalIssueCount={displayIssues.length} />
           </DetailAccordion>
 
@@ -193,15 +193,15 @@ function AiMultimodalComplete({ aiReview }) {
     <article className="detail-card ai-multimodal-complete">
       <div className="section-title-row">
         <div>
-          <h3>AI 멀티모달 검증 완료</h3>
-          <p className="panel-note relaxed-note">AI 멀티모달이 Figma 시안과 Web 화면을 교차 검토하여 최종 차이를 분석했습니다.</p>
+          <h3>멀티모달 AI 검증 완료</h3>
+          <p className="panel-note relaxed-note">멀티모달 AI가 Figma 시안과 Web 화면을 교차 검토하여 최종 차이를 분석했습니다.</p>
         </div>
       </div>
-      <ol className="ai-complete-steps" aria-label="AI 멀티모달 검증 완료 단계">
+      <ol className="ai-complete-steps" aria-label="멀티모달 AI 검증 완료 단계">
         <li>Playwright 수집 완료</li>
         <li>Figma API 비교 완료</li>
-        <li>Canonical 2차 검증 완료</li>
-        <li>AI 멀티모달 최종 검토 완료</li>
+        <li>데이터 정규화 완료</li>
+        <li>멀티모달 AI 최종 검토 완료</li>
       </ol>
       <div className="ai-complete-meta">
         <KeyValue label="모델" value={meta.model || (meta.openAiCalled ? '사용' : '미사용')} />
@@ -216,7 +216,7 @@ function AiVisionSummary({ aiReview, state, finalIssueCount }) {
   const meta = aiReview?.meta || {}
 
   if (state === 'loading') {
-    return <p className="visual-detail-section panel-note relaxed-note">AI 멀티모달 검토 중입니다.</p>
+    return <p className="visual-detail-section panel-note relaxed-note">멀티모달 AI 검토 중입니다.</p>
   }
 
   if (!review && state !== 'fallback') {

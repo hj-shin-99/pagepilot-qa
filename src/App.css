@@ -2292,6 +2292,17 @@
   background: rgba(255, 255, 255, 0.07);
 }
 
+.url-input.has-value {
+  border-color: rgba(226, 232, 240, 0.9);
+  color: #0f172a;
+  background: #ffffff;
+}
+
+.url-input.has-value:focus {
+  border-color: rgba(95, 157, 255, 0.75);
+  box-shadow: 0 0 0 4px rgba(28, 105, 212, 0.22);
+}
+
 .file-drop-label {
   border: 1px dashed rgba(255, 255, 255, 0.24);
   border-radius: 14px;

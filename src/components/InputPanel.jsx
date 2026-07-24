@@ -49,7 +49,7 @@ function InputPanel({
             </label>
             <input
               id="target-url"
-              className="url-input"
+              className={`url-input ${url ? 'has-value' : ''}`}
               type="url"
               value={url}
               placeholder="https://staging.example.com/page"
@@ -62,7 +62,7 @@ function InputPanel({
             </label>
             <input
               id="figma-frame-url"
-              className="url-input"
+              className={`url-input ${figmaUrl ? 'has-value' : ''}`}
               type="url"
               value={figmaUrl}
               placeholder="https://www.figma.com/design/...?...node-id=..."

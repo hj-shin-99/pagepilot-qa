@@ -2,9 +2,6 @@ const URLLESS_UI_CONTROL_PATTERN = /\b(tab|tabpanel|accordion|modal|dialog|drawe
 const URLLESS_UI_CONTROL_KO_PATTERN = /(닫기|이전|다음|재생|정지|음소거|메뉴|탭|토글|검색|필터|정렬|맨 위|위로|제출|초기화|열기|접기|펼치기)/i
 const NAVIGATION_ACTION_PATTERN = /\b(link|navigation|nav|cta|button|btn|more|details|learn|view|read|shop|buy|apply|reserve|book|download|contact|start|continue|go|quote|estimate)\b/i
 const NAVIGATION_ACTION_KO_PATTERN = /(바로가기|더보기|더 보기|더 알아보기|자세히|상세|보기|구매|신청|예약|문의|상담|견적|다운로드|이동|계속)/i
-const SOCIAL_HOST_PATTERN = /(^|\.)(facebook|instagram|twitter|x|linkedin|youtube|youtu|tiktok|pinterest|threads)\./i
-const DOWNLOAD_EXT_PATTERN = /\.(pdf|zip|xlsx?|docx?|pptx?|hwp|csv|jpg|jpeg|png|gif|webp|svg)(?:[?#]|$)/i
-
 export function createTechLinkAudit(targets = [], baseUrl = '') {
   const sourceTargets = Array.isArray(targets) ? targets.filter((target) => target && typeof target === 'object') : []
   const resultItems = []
@@ -84,7 +81,8 @@ export function mergeTechLinkAuditResults(audit = {}, checkedLinks = []) {
 export function normalizeCheckedLinkResult(link = {}, response = {}) {
   const statusCode = Number(response.statusCode || 0) || null
   const finalUrl = textOf(response.finalUrl) || link.url || ''
-  const redirected = Boolean(finalUrl && link.url && finalUrl !== link.url) || statusCode >= 300 && statusCode < 400
+  const redirected = Boolean(finalUrl && link.url && normalizeRequestUrl(finalUrl) !== normalizeRequestUrl(link.url)) || statusCode >= 300 && statusCode < 400
+  const finalLinkType = classifyResolvedLinkType(finalUrl, link.baseOrigin || '')
   return {
     ...link,
     finalUrl,
@@ -93,6 +91,9 @@ export function normalizeCheckedLinkResult(link = {}, response = {}) {
     category: statusCode >= 500 ? 'http-5xx' : statusCode >= 400 ? 'http-4xx' : redirected ? 'redirect' : 'http-ok',
     note: getLinkNote(statusCode),
     redirected,
+    finalLinkType,
+    isInternal: finalLinkType === 'internal',
+    isExternal: finalLinkType === 'external',
   }
 }
 
@@ -131,6 +132,8 @@ function normalizeCandidate(target, order, baseUrl) {
   const text = createTargetText(target)
   const isUiControl = isUrlOptionalUiControl(target, text)
   const isNavigation = looksLikeNavigationAction(target, text)
+  const baseOrigin = getOrigin(baseUrl)
+  const linkType = classifyCandidateLinkType({ href, resolvedUrl, hrefState, baseUrl })
   const base = {
     index: Number(target.index || order),
     order,
@@ -144,6 +147,11 @@ function normalizeCandidate(target, order, baseUrl) {
     easyExplanation: getHrefEasyExplanation(hrefState),
     url: resolvedUrl,
     normalizedUrl: normalizeRequestUrl(resolvedUrl),
+    requestedUrl: resolvedUrl,
+    baseOrigin,
+    linkType,
+    isInternal: linkType === 'internal',
+    isExternal: linkType === 'external',
     selector: textOf(target.selector),
     domPath: textOf(target.domPath),
     section: textOf(target.section),
@@ -158,11 +166,10 @@ function normalizeCandidate(target, order, baseUrl) {
 
   if (isUiControl && !resolvedUrl) return { ...base, hrefState: 'UI-control-no-url-required', technicalTerm: 'URL이 필요 없는 UI 제어', easyExplanation: getHrefEasyExplanation('UI-control-no-url-required'), classification: 'ui-control-without-url' }
   if (!href && !resolvedUrl) return { ...base, classification: isNavigation ? 'missing-navigation-url' : 'unknown-clickable-without-url' }
-  if (isSamePageAnchor(href, resolvedUrl, baseUrl)) return { ...base, classification: isNavigation ? 'same-page-anchor-navigation' : 'same-page-anchor' }
-  if (isPseudoUrl(href)) return { ...base, classification: isNavigation ? 'pseudo-navigation-url' : 'pseudo-ui-url' }
-  if (isSpecialScheme(href)) return { ...base, classification: 'special-scheme' }
-  if (isDownloadLink(href, resolvedUrl)) return { ...base, classification: 'download' }
-  if (isSocialUrl(resolvedUrl)) return { ...base, classification: 'external-social' }
+  if (linkType === 'anchor') return { ...base, classification: isNavigation ? 'same-page-anchor-navigation' : 'same-page-anchor' }
+  if (linkType === 'javascript') return { ...base, classification: isNavigation ? 'pseudo-navigation-url' : 'pseudo-ui-url' }
+  if (linkType === 'mailto' || linkType === 'tel') return { ...base, classification: 'special-scheme' }
+  if (linkType === 'invalid') return { ...base, classification: isNavigation ? 'invalid-navigation-url' : 'invalid-url' }
   if (resolvedUrl) return { ...base, classification: 'requestable' }
   return { ...base, classification: isNavigation ? 'missing-navigation-url' : 'unknown-clickable-without-url' }
 }
@@ -178,6 +185,12 @@ function createClassifiedResultItem(candidate) {
 
   if (candidate.classification === 'missing-navigation-url') {
     return { ...base, status: 'error', category: 'missing-navigation-url', note: '이동 목적의 클릭 요소에 URL 또는 action 근거가 없습니다.' }
+  }
+  if (candidate.classification === 'invalid-navigation-url') {
+    return { ...base, status: 'warn', category: 'invalid-url', note: '링크 주소 형식을 해석하지 못해 실제 이동 목적지 확인이 필요합니다.' }
+  }
+  if (candidate.classification === 'invalid-url') {
+    return { ...base, status: 'warn', category: 'invalid-url', note: '링크 주소 형식을 해석하지 못해 확인이 필요합니다.' }
   }
   if (candidate.classification === 'same-page-anchor-navigation') {
     return { ...base, status: 'warn', category: 'same-page-anchor', note: '이동 목적 CTA가 페이지 내부 anchor 또는 #로 연결되어 확인이 필요합니다.' }
@@ -195,13 +208,7 @@ function createClassifiedResultItem(candidate) {
     return { ...base, status: 'ok', category: 'url-not-required-ui-control', note: '모달, 탭, 아코디언 등 URL이 필요 없는 UI control로 분류했습니다.' }
   }
   if (candidate.classification === 'special-scheme') {
-    return { ...base, status: 'ok', category: 'special-scheme', note: '전화, 메일 등 브라우저 외부 앱으로 연결되는 링크로 실제 HTTP 검사를 제외했습니다.' }
-  }
-  if (candidate.classification === 'download') {
-    return { ...base, status: 'ok', category: 'download', note: '파일 다운로드 링크로 실제 HTTP 검사를 별도 분류했습니다.' }
-  }
-  if (candidate.classification === 'external-social') {
-    return { ...base, status: 'ok', category: 'external-social', note: '명확한 외부 소셜 링크로 실제 HTTP 검사를 제외했습니다.' }
+    return { ...base, status: 'warn', category: 'special-scheme', note: '전화 또는 메일 실행 링크라 실제 HTTP 요청 없이 유형만 분류했습니다.' }
   }
   if (candidate.classification === 'same-page-anchor') {
     return { ...base, status: 'ok', category: 'same-page-anchor', note: '같은 페이지 내부 이동 anchor입니다.' }
@@ -214,6 +221,7 @@ function getHrefState(target = {}, href, resolvedUrl) {
   if (!hasHrefAttribute && !resolvedUrl) return 'missing-href'
   if (hasHrefAttribute && !href && !resolvedUrl) return 'empty-href'
   if (/^#/.test(href)) return 'hash-only'
+  if (/^(mailto|tel):/i.test(href)) return 'special-scheme'
   if (/^javascript:/i.test(href)) return 'javascript-pseudo-url'
   if (resolvedUrl) return 'valid-url'
   return 'ambiguous-action'
@@ -223,6 +231,7 @@ function getHrefTechnicalTerm(state) {
   if (state === 'missing-href') return 'href 누락'
   if (state === 'empty-href') return '빈 href'
   if (state === 'hash-only') return '페이지 내부 앵커'
+  if (state === 'special-scheme') return 'special scheme'
   if (state === 'javascript-pseudo-url') return 'javascript:void(0)'
   if (state === 'valid-url') return 'valid-url'
   if (state === 'UI-control-no-url-required') return 'URL이 필요 없는 UI 제어'
@@ -233,6 +242,7 @@ function getHrefEasyExplanation(state) {
   if (state === 'missing-href') return 'href는 링크가 이동할 주소를 지정하는 HTML 속성입니다. href가 없으면 사용자가 눌러도 다른 페이지로 이동하지 않을 수 있습니다.'
   if (state === 'empty-href') return 'href 속성은 있지만 값이 비어 있습니다. 이동 목적 버튼이라면 목적지 URL이 누락됐을 수 있습니다.'
   if (state === 'hash-only') return '같은 페이지 내부 위치로 이동하는 앵커입니다. 이동 CTA라면 실제 목적지 URL이 필요한지 확인해야 합니다.'
+  if (state === 'special-scheme') return '전화나 메일처럼 브라우저 밖의 앱을 실행하는 링크입니다. 일반 HTTP 응답 검사 대상은 아닙니다.'
   if (state === 'javascript-pseudo-url') return '링크 주소 대신 JavaScript 동작만 지정된 상태입니다. 실제 이동 버튼이라면 목적지 URL이 누락됐을 수 있습니다.'
   if (state === 'valid-url') return 'HTTP 또는 상대 URL 목적지가 확인된 링크입니다.'
   if (state === 'UI-control-no-url-required') return '모달, 탭, 아코디언처럼 페이지 내부 상태를 바꾸는 UI 제어는 이동 URL이 없어도 정상일 수 있습니다.'
@@ -318,36 +328,33 @@ function normalizeRequestUrl(url) {
   }
 }
 
-function isSamePageAnchor(href, resolvedUrl, baseUrl) {
-  if (!href || !href.startsWith('#')) return false
+function classifyCandidateLinkType({ href, resolvedUrl, hrefState, baseUrl }) {
+  const normalizedHref = textOf(href)
+  if (!normalizedHref && !resolvedUrl) return hrefState === 'missing-href' ? 'invalid' : 'unknown'
+  if (/^#/.test(normalizedHref)) return 'anchor'
+  if (/^mailto:/i.test(normalizedHref)) return 'mailto'
+  if (/^tel:/i.test(normalizedHref)) return 'tel'
+  if (/^javascript:/i.test(normalizedHref) || /^void\(/i.test(normalizedHref)) return 'javascript'
+  if (resolvedUrl) return classifyResolvedLinkType(resolvedUrl, getOrigin(baseUrl))
+  return 'invalid'
+}
+
+function classifyResolvedLinkType(url, baseOrigin = '') {
   try {
-    const resolved = new URL(resolvedUrl || href, baseUrl)
-    const base = new URL(baseUrl)
-    resolved.hash = ''
-    base.hash = ''
-    return resolved.href === base.href
+    const parsed = new URL(url)
+    if (!/^https?:$/.test(parsed.protocol)) return 'invalid'
+    if (!baseOrigin) return 'external'
+    return parsed.origin === baseOrigin ? 'internal' : 'external'
   } catch {
-    return href.startsWith('#')
+    return 'invalid'
   }
 }
 
-function isPseudoUrl(href) {
-  return /^javascript:/i.test(textOf(href)) || /^void\(/i.test(textOf(href))
-}
-
-function isSpecialScheme(href) {
-  return /^(mailto|tel|sms):/i.test(textOf(href))
-}
-
-function isDownloadLink(href, url) {
-  return DOWNLOAD_EXT_PATTERN.test(textOf(href)) || DOWNLOAD_EXT_PATTERN.test(textOf(url))
-}
-
-function isSocialUrl(url) {
+function getOrigin(url) {
   try {
-    return SOCIAL_HOST_PATTERN.test(new URL(url).hostname)
+    return new URL(url).origin
   } catch {
-    return false
+    return ''
   }
 }
 

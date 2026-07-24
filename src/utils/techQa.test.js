@@ -217,6 +217,7 @@ test('Tech QA panel display hides unavailable completion meta for history fallba
 
 test('compact Tech QA source keeps table UI and closed detail policy', () => {
   const source = fs.readFileSync('src/components/TechQaPanel.jsx', 'utf8')
+  const css = fs.readFileSync('src/App.css', 'utf8')
 
   assert.equal(source.includes('view.summaryCards.map'), false)
   assert.equal(source.includes('tech-kpi-grid'), false)
@@ -236,6 +237,8 @@ test('compact Tech QA source keeps table UI and closed detail policy', () => {
   assert.equal(source.includes('tech-click-issue-table'), true)
   assert.equal(source.includes('안전상 클릭 생략 ${safeSkipped.length}개 보기'), true)
   assert.equal(source.includes('정상 동작 ${normalItems.length}개 더보기'), true)
+  assert.equal(source.includes('랜딩 페이지 검사'), true)
+  assert.equal(source.includes('검사할 URL 이동 또는 새 창 결과가 없습니다.'), true)
   assert.equal(source.includes('groups.definitions.map'), false)
   assert.equal(source.includes('클릭 동작 검사 요약'), false)
   assert.equal(source.includes('안전상 클릭 생략 전체'), true)
@@ -251,6 +254,9 @@ test('compact Tech QA source keeps table UI and closed detail policy', () => {
   assert.equal(source.includes('기술 정보 보기'), true)
   assert.equal(source.includes('판정 결과'), true)
   assert.equal(source.includes('확인 이유'), true)
+  assert.equal(source.includes('1단계 · 페이지 HTML에 연결된 모든 링크(URL)를 수집하여 응답 상태와 링크 유형을 확인합니다.'), true)
+  assert.equal(source.includes('2단계 · Playwright가 버튼, 메뉴, 링크 등 클릭 가능한 UI 요소를 실제로 조작하여 화면 반응을 확인합니다.'), true)
+  assert.equal(source.includes('3단계 · 클릭 후 이동한 최종 페이지가 정상적으로 열리는지 확인합니다.'), true)
   assert.equal(source.includes('고유 요소 오류'), false)
   assert.equal(source.includes('검사 근거 오류'), false)
   assert.equal(source.includes('쉬운 설명'), false)
@@ -263,6 +269,7 @@ test('compact Tech QA source keeps table UI and closed detail policy', () => {
   assert.equal(source.includes('우선 확인 팀'), false)
   assert.equal(source.includes('UID팀'), false)
   assert.equal(source.includes('개발팀'), false)
+  assert.equal(css.includes('max-width: 1720px;'), true)
 })
 
 test('Tech QA source defines separated click action display groups', () => {
@@ -412,7 +419,7 @@ test('Tech QA click action priority keeps only actionable click failures', () =>
     checks: [check({ id: 'click-actions', status: 'error', value: '4개 확인 필요' })],
     clickActions: [
       { category: 'covered-or-not-interactable', status: 'error', label: 'Hidden CTA', selector: '#hidden', reason: 'pointer-events:none 상태라 사용자가 클릭할 수 없습니다.' },
-      { category: 'no-observable-action', status: 'error', label: 'No change', selector: '#no-change', reason: '안전 클릭 후 관찰 가능한 변화가 없습니다.' },
+      { category: 'no-observable-action', status: 'warn', label: 'No change', selector: '#no-change', reason: '안전 클릭 후 관찰 가능한 변화가 없습니다.' },
       { category: 'ambiguous-action', status: 'warn', label: 'Apply', selector: '#apply', hrefState: 'missing-href', reason: '이동 버튼처럼 보이지만 href 또는 action 근거가 불완전합니다.' },
       { category: 'skipped-safe-click', status: 'warn', label: 'Delete', safeClickSkippedReason: 'dangerous-action' },
     ],
@@ -420,11 +427,51 @@ test('Tech QA click action priority keeps only actionable click failures', () =>
   const clickItem = view.priorityItems.find((entry) => entry.id === 'click-actions')
 
   assert.equal(clickItem.status, 'error')
-  assert.equal(clickItem.value, '실제 오류 2개 · 확인 필요 1개')
+  assert.equal(clickItem.value, '실제 오류 1개 · 확인 필요 2개')
   assert.equal(clickItem.problemItems.length, 3)
-  assert.equal(view.clickActionGroups.actualErrors.length, 2)
-  assert.equal(view.clickActionGroups.warnings.length, 1)
+  assert.equal(view.clickActionGroups.actualErrors.length, 1)
+  assert.equal(view.clickActionGroups.warnings.length, 2)
   assert.equal(view.clickActionGroups.safeSkipped.length, 1)
+})
+
+test('landing page groups support new section and remain compatible with optional history data', () => {
+  const current = createTechQaViewModel(result({
+    checks: [check({
+      id: 'landing-pages',
+      status: 'warn',
+      items: [
+        { auditId: 'landing-1', label: 'CTA', requestedUrl: 'https://example.com/go', finalUrl: 'https://example.com/final', statusCode: 200, redirected: true, status: 'warn', category: 'redirect', note: '리다이렉트 발생', sources: [{ label: 'CTA', interactionOutcome: 'navigation' }] },
+      ],
+      meta: { candidateCount: 1, inspectedCount: 1, noTarget: false },
+    })],
+  }))
+  const history = createTechQaViewModel(result({ checks: [] }))
+
+  assert.equal(current.landingPageGroups.total, 1)
+  assert.equal(current.landingPageGroups.hasTargets, true)
+  assert.equal(current.landingPageGroups.warnings.length, 1)
+  assert.equal(history.landingPageGroups.total, 0)
+  assert.equal(history.landingPageGroups.hasTargets, false)
+})
+
+test('landing page groups reuse existing visible row limits for initial display and more view', () => {
+  const view = createTechQaViewModel(result({
+    checks: [check({
+      id: 'landing-pages',
+      status: 'warn',
+      items: [
+        ...Array.from({ length: 7 }, (_, index) => ({ auditId: `landing-warn-${index}`, label: `Warn ${index}`, requestedUrl: `https://example.com/warn-${index}`, finalUrl: `https://example.com/warn-${index}`, statusCode: 200, status: 'warn', category: 'missing-title' })),
+        ...Array.from({ length: 8 }, (_, index) => ({ auditId: `landing-ok-${index}`, label: `OK ${index}`, requestedUrl: `https://example.com/ok-${index}`, finalUrl: `https://example.com/ok-${index}`, statusCode: 200, status: 'ok', category: 'landing-ok' })),
+      ],
+      meta: { candidateCount: 15, inspectedCount: 15, noTarget: false },
+    })],
+  }))
+  const visible = getVisibleLinkGroups(view.landingPageGroups.items)
+
+  assert.equal(visible.warnings.length, 5)
+  assert.equal(visible.hiddenWarnings.length, 2)
+  assert.equal(visible.normals.length, 5)
+  assert.equal(visible.hiddenNormals.length, 3)
 })
 
 test('click display fixture keeps only actual errors and actionable warnings in body counts', () => {

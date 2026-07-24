@@ -51,7 +51,7 @@ function TechQaPanel({ result }) {
         <SectionHead
           title="URL 검사"
           meta={`전체 ${view.linkSummary.total} · 오류 ${view.linkSummary.error} · 확인 필요 ${view.linkSummary.warn} · 정상 ${view.linkSummary.ok}`}
-          note="링크와 이동 버튼에 URL이 연결되어 있는지 확인하고, 연결된 주소의 응답 상태를 검사합니다."
+          note="1단계 · 페이지 HTML에 연결된 모든 링크(URL)를 수집하여 응답 상태와 링크 유형을 확인합니다. 실제 클릭이 아닌 href 기준으로 정상 연결, 리다이렉트 및 특수 링크 여부를 검사합니다."
         />
         <LinkTable groups={linkGroups} />
       </section>
@@ -60,10 +60,12 @@ function TechQaPanel({ result }) {
         <SectionHead
           title="클릭 동작 검사"
           meta={`오류 ${view.clickActionGroups.actualErrors.length} · 확인 필요 ${view.clickActionGroups.warnings.length} · 정상 ${getNormalClickCount(view.clickActionGroups)}`}
-          note="URL 이동 여부와 관계없이 버튼, 메뉴 등 클릭 가능한 UI 요소를 실제로 조작하여 화면 반응을 확인합니다."
+          note="2단계 · Playwright가 버튼, 메뉴, 링크 등 클릭 가능한 UI 요소를 실제로 조작하여 화면 반응을 확인합니다. URL 이동뿐 아니라 새 창, 탭, 아코디언, 모달 등 클릭 전후의 상태 변화를 검사합니다."
         />
         <ClickActionIssueTable groups={view.clickActionGroups} />
       </section>
+
+      <LandingPageSection groups={view.landingPageGroups} />
 
       <MarkupAccessibilitySection items={markupItems} />
 
@@ -242,10 +244,10 @@ function LinkTable({ groups }) {
     <>
       <div className="tech-link-table">
         <LinkTableHead />
-        {visible.length > 0 ? visible.map((item) => <LinkTableRow item={item} key={item.id} />) : <p className="empty-row">검사된 링크가 없습니다.</p>}
+        {visible.length > 0 ? visible.map((item, index) => <LinkTableRow item={item} key={getTechRowKey(item, 'link-visible', index)} />) : <p className="empty-row">검사된 링크가 없습니다.</p>}
       </div>
-      {groups.hiddenWarnings.length > 0 ? <CollapsedRows label={`확인 필요 링크 ${groups.hiddenWarnings.length}개 더보기`} items={groups.hiddenWarnings} /> : null}
-      {groups.hiddenNormals.length > 0 ? <CollapsedRows label={`정상 링크 ${groups.hiddenNormals.length}개 더보기`} items={groups.hiddenNormals} /> : null}
+      {groups.hiddenWarnings.length > 0 ? <CollapsedRows label={`확인 필요 링크 ${groups.hiddenWarnings.length}개 더보기`} items={groups.hiddenWarnings} renderRow={(item, index) => <LinkTableRow item={item} key={getTechRowKey(item, 'link-warning', index)} />} /> : null}
+      {groups.hiddenNormals.length > 0 ? <CollapsedRows label={`정상 링크 ${groups.hiddenNormals.length}개 더보기`} items={groups.hiddenNormals} renderRow={(item, index) => <LinkTableRow item={item} key={getTechRowKey(item, 'link-normal', index)} />} /> : null}
     </>
   )
 }
@@ -302,7 +304,7 @@ function ClickActionTable({ id, items, ariaLabel, className = '' }) {
     <div className={`tech-click-issue-table${className ? ` ${className}` : ''}`} id={id} aria-label={ariaLabel}>
       <ClickActionTableHead />
       <div className="tech-click-table-body">
-        {items.map((item, index) => <ClickActionRow item={item} key={`${index}-${item.auditId || item.selector || item.label || ''}`} />)}
+        {items.map((item, index) => <ClickActionRow item={item} key={getTechRowKey(item, 'click', index)} />)}
       </div>
     </div>
   )
@@ -322,9 +324,10 @@ function ClickActionTableHead() {
 }
 
 function CollapsedClickRows({ label, items }) {
+  const [isOpen, setIsOpen] = useState(false)
   return (
-    <details className="tech-more-details tech-click-more-details tech-click-more">
-      <summary className="tech-more-summary">{label}</summary>
+    <details className="tech-more-details tech-click-more-details tech-click-more" open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
+      <summary className="tech-more-summary">{isOpen ? '접기' : label}</summary>
       <ClickActionTable items={items} ariaLabel={label} className="tech-click-more-table" />
     </details>
   )
@@ -350,6 +353,112 @@ function ClickActionRow({ item }) {
         <span>{formatElementResult(item)}</span>
         <OwnerBadge owner={getUidOwner()} />
     </DetailRow>
+  )
+}
+
+function LandingPageSection({ groups }) {
+  const items = (groups?.errors || []).concat(groups?.warnings || [], groups?.normals || [])
+  const visibleGroups = getVisibleLinkGroups(items)
+  const visibleItems = visibleGroups.errors.concat(visibleGroups.warnings, visibleGroups.normals)
+  const meta = groups?.hasTargets
+    ? `전체 ${groups.total} · 오류 ${groups.errors.length} · 확인 필요 ${groups.warnings.length} · 정상 ${groups.normals.length}`
+    : '검사 대상 없음'
+
+  return (
+    <section className="detail-card tech-compact-card" id="tech-landing-section" aria-label="랜딩 페이지 검사">
+      <SectionHead
+        title="랜딩 페이지 검사"
+        meta={meta}
+        note="3단계 · 클릭 후 이동한 최종 페이지가 정상적으로 열리는지 확인합니다. 응답 상태, 최종 URL, 페이지 콘텐츠 및 주요 오류 여부를 함께 검사하여 실제 랜딩 상태를 검증합니다."
+      />
+      {groups?.hasTargets ? (
+        <>
+          <LandingPageTable items={visibleItems} />
+          {visibleGroups.hiddenWarnings.length > 0 ? <CollapsedRows label={`확인 필요 랜딩 ${visibleGroups.hiddenWarnings.length}개 더보기`} items={visibleGroups.hiddenWarnings} renderRow={(item, index) => <LandingPageRow item={item} key={getTechRowKey(item, 'landing-warning', index)} />} /> : null}
+          {visibleGroups.hiddenNormals.length > 0 ? <CollapsedRows label={`정상 랜딩 ${visibleGroups.hiddenNormals.length}개 더보기`} items={visibleGroups.hiddenNormals} renderRow={(item, index) => <LandingPageRow item={item} key={getTechRowKey(item, 'landing-normal', index)} />} /> : null}
+        </>
+      ) : <p className="empty-row">검사할 URL 이동 또는 새 창 결과가 없습니다.</p>}
+    </section>
+  )
+}
+
+function LandingPageTable({ items }) {
+  if (!items.length) return <p className="empty-row">검사된 랜딩 페이지가 없습니다.</p>
+  return (
+    <div className="tech-link-table" aria-label="랜딩 페이지 검사 결과">
+      <LandingPageTableHead />
+      <div className="tech-link-table-body">
+        {items.map((item, index) => <LandingPageRow item={item} key={getTechRowKey(item, 'landing-visible', index)} />)}
+      </div>
+    </div>
+  )
+}
+
+function LandingPageTableHead() {
+  return (
+    <div className="tech-link-head">
+      <span>상태</span>
+      <span>원본 클릭</span>
+      <span>랜딩 URL</span>
+      <span>HTTP</span>
+      <span>우선 확인</span>
+      <span>상세</span>
+    </div>
+  )
+}
+
+function LandingPageRow({ item }) {
+  const status = getLandingDisplayStatus(item)
+  return (
+    <DetailRow
+      className={`tech-link-row tech-row-details tech-row-with-details ${getStatusClass(status)}`}
+      summaryClassName="tech-link-row-summary"
+      detail={<LandingPageDetails item={item} />}
+    >
+      <span className={`status-badge ${getStatusClass(status)}`}>{TECH_STATUS_LABELS[status]}</span>
+      <strong>{item.label || '랜딩 페이지'}</strong>
+      <span className="tech-url-cell">{item.finalUrl || item.requestedUrl || '-'}</span>
+      <span>{item.statusCode || '-'}</span>
+      <OwnerBadge owner={getLandingOwner(item)} />
+    </DetailRow>
+  )
+}
+
+function LandingPageDetails({ item }) {
+  return (
+    <>
+      <dl className="tech-issue-meta">
+        <Meta label="검사 목적" value="클릭 후 최종 랜딩 페이지가 정상적으로 열리는지 확인합니다." />
+        <Meta label="검사 결과" value={formatLandingResult(item)} />
+        <Meta label="요청 URL" value={item.requestedUrl} />
+        <Meta label="최종 URL" value={item.finalUrl} />
+        <Meta label="페이지 title" value={item.pageTitle || 'title 없음'} />
+        <Meta label="리다이렉트" value={item.redirected ? '있음' : '없음'} />
+        <Meta label="새 창 여부" value={item.openedInNewWindow ? '새 창/새 탭' : '현재 창'} />
+        <Meta label="콘텐츠 신호" value={`visible ${item.visibleElementCount || 0} · body child ${item.bodyChildCount || 0} · text ${item.bodyTextLength || 0}`} />
+        <Meta label="오류 신호" value={formatLandingErrorSignals(item)} />
+      </dl>
+      <div className="tech-problem-elements is-single">
+        <strong>연결된 원본 클릭 {Array.isArray(item.sources) ? item.sources.length : 0}개</strong>
+        <ol>
+          {(item.sources || []).map((source, index) => (
+            <li key={`${item.auditId || item.requestedUrl}-${index}`}>
+              <strong>{source.label || `클릭 요소 ${index + 1}`} · {getUserLocation(source)}</strong>
+              <span>클릭 결과: {formatLandingSourceOutcome(source)}</span>
+              <span>대상 URL: {source.requestedUrl || '-'}</span>
+              <details className="tech-row-details">
+                <summary>기술 정보 보기</summary>
+                <dl className="tech-issue-meta">
+                  <Meta label="selector" value={source.selector} />
+                  <Meta label="section" value={source.section} />
+                  <Meta label="interaction outcome" value={source.interactionOutcome} />
+                </dl>
+              </details>
+            </li>
+          ))}
+        </ol>
+      </div>
+    </>
   )
 }
 
@@ -387,6 +496,7 @@ function getPriorityDetailTargetId(item = {}) {
   if (item.detailTargetId) return item.detailTargetId
   if (item.type === 'link') return 'tech-links-section'
   if (String(item.id || '').startsWith('click-actions')) return 'tech-click-section'
+  if (item.id === 'landing-pages') return 'tech-landing-section'
   if (MARKUP_ACCESSIBILITY_DETAIL_IDS.includes(item.id)) return getMarkupDetailId(item)
   return 'tech-basic-section'
 }
@@ -421,8 +531,18 @@ function getClickDisplayStatus(item = {}) {
   return 'ok'
 }
 
+function getLandingDisplayStatus(item = {}) {
+  if (item.status === 'error' || item.category === 'http-5xx' || item.category === 'http-4xx' || item.category === 'blank-screen') return 'error'
+  if (item.status === 'warn') return 'warn'
+  return 'ok'
+}
+
 function getUidOwner() {
   return ['UID', '팀'].join('')
+}
+
+function getDevOwner() {
+  return ['개발', '팀'].join('')
 }
 
 function formatHitTest(item = {}) {
@@ -444,6 +564,41 @@ function formatElementResult(item = {}) {
   if (item.status === 'error') return item.reason || item.message || item.category || '오류가 확인되었습니다.'
   if (item.status === 'warn') return item.reason || item.message || item.category || '확인이 필요한 항목입니다.'
   return item.reason || item.note || '정상으로 확인되었습니다.'
+}
+
+function formatLandingResult(item = {}) {
+  const parts = []
+  parts.push(`${TECH_STATUS_LABELS[getLandingDisplayStatus(item)] || '확인'}${item.statusCode ? ` · HTTP ${item.statusCode}` : ''}`)
+  if (item.note) parts.push(item.note)
+  return parts.join(' · ')
+}
+
+function formatLandingErrorSignals(item = {}) {
+  const signals = []
+  if (item.browserErrorPage) signals.push('브라우저 오류 화면')
+  if (item.loadWarning) signals.push(item.loadWarning)
+  if (item.navigationError) signals.push(item.navigationError)
+  if (Number(item.criticalConsoleErrorCount || 0) > 0) signals.push(`치명적 script error ${item.criticalConsoleErrorCount}건`)
+  if (Number(item.advisoryConsoleErrorCount || 0) > 0) signals.push(`참고 console error ${item.advisoryConsoleErrorCount}건`)
+  if (Number(item.thirdPartyConsoleErrorCount || 0) > 0) signals.push(`third-party ${item.thirdPartyConsoleErrorCount}건`)
+  if (item.unexpectedRedirect) signals.push('예기치 않은 최종 도메인/프로토콜 이동')
+  return signals.length > 0 ? signals.join(' · ') : '명확한 오류 신호 없음'
+}
+
+function formatLandingSourceOutcome(source = {}) {
+  const outcome = String(source.interactionOutcome || '').trim()
+  if (outcome === 'new-window') return '새 창 열림'
+  if (outcome === 'navigation') return '현재 창 URL 이동'
+  if (outcome === 'modal') return '모달 노출'
+  if (outcome === 'tab') return '탭/패널 전환'
+  if (outcome === 'accordion') return '아코디언 변화'
+  if (outcome === 'dropdown') return '메뉴/목록 노출'
+  if (outcome === 'scroll') return '스크롤 이동'
+  if (outcome === 'ui-change') return '기타 UI 변화'
+  if (outcome === 'skipped') return '안전 정책으로 생략'
+  if (outcome === 'blocked') return '클릭 불가'
+  if (outcome === 'error') return '클릭 오류'
+  return outcome || '확인 필요'
 }
 
 function formatElementIssue(item = {}) {
@@ -470,6 +625,13 @@ function getUserLocation(item = {}) {
   return 'Unknown'
 }
 
+function getLandingOwner(item = {}) {
+  if (item.category === 'http-5xx' || item.category === 'navigation-failed') return getDevOwner()
+  if (item.category === 'timeout' || item.category === 'restricted') return getUidOwner()
+  if (item.status === 'error' && Number(item.statusCode || 0) >= 500) return getDevOwner()
+  return getUidOwner()
+}
+
 function sanitizeUserFacingText(value) {
   const text = String(value || '').trim()
   if (!text) return ''
@@ -477,18 +639,35 @@ function sanitizeUserFacingText(value) {
   return text
 }
 
-function CollapsedRows({ label, items }) {
+function CollapsedRows({ label, items, renderRow }) {
+  const [isOpen, setIsOpen] = useState(false)
   return (
-    <details className="tech-more-details tech-normal-links-more tech-link-more">
-      <summary className="tech-more-summary">{label}</summary>
+    <details className="tech-more-details tech-normal-links-more tech-link-more" open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
+      <summary className="tech-more-summary">{isOpen ? '접기' : label}</summary>
       <div className="tech-link-table tech-link-more-table">
         <LinkTableHead />
         <div className="tech-link-table-body">
-          {items.map((item) => <LinkTableRow item={item} key={item.id} />)}
+          {items.map((item, index) => renderRow(item, index))}
         </div>
       </div>
     </details>
   )
+}
+
+function getTechRowKey(item = {}, prefix = 'row', index = 0) {
+  return [
+    prefix,
+    item.id,
+    item.auditId,
+    item.selector,
+    item.finalUrl,
+    item.requestedUrl,
+    item.url,
+    item.href,
+    item.label,
+    item.title,
+    index,
+  ].filter(Boolean).join(':')
 }
 
 function OwnerBadge({ owner }) {
@@ -561,6 +740,7 @@ function TechnicalInfo({ raw }) {
 function formatTechnicalEvidence(raw = {}) {
   return [
     raw?.technicalTerm || raw?.category ? `technical: ${raw.technicalTerm || raw.category}` : '',
+    raw?.linkType ? `link type: ${raw.linkType}` : '',
     raw?.tagName || raw?.kind ? `element: ${raw.tagName || raw.kind}` : '',
     raw?.role ? `role: ${raw.role}` : '',
     raw?.text || raw?.ariaLabel || raw?.label ? `text/aria-label: ${raw.text || raw.ariaLabel || raw.label}` : '',
@@ -568,8 +748,11 @@ function formatTechnicalEvidence(raw = {}) {
     raw?.section ? `section: ${raw.section}` : '',
     raw?.domPath ? `DOM path: ${raw.domPath}` : '',
     raw?.href || raw?.url ? `href/url: ${raw.href || raw.url}` : '',
+    raw?.finalUrl ? `final URL: ${raw.finalUrl}` : '',
+    raw?.redirected !== undefined ? `redirected: ${raw.redirected}` : '',
     raw?.requestUrl ? `request URL: ${raw.requestUrl}` : '',
     raw?.actionType || raw?.actionEvidence ? `action: ${raw.actionType || raw.actionEvidence}` : '',
+    raw?.interactionOutcome ? `interaction outcome: ${raw.interactionOutcome}` : '',
     raw?.source ? `source: ${raw.source}` : '',
     raw?.viewportState ? `viewport: ${raw.viewportState}` : '',
     raw?.visible !== undefined ? `visible: ${raw.visible}` : '',
@@ -580,6 +763,7 @@ function formatTechnicalEvidence(raw = {}) {
     raw?.overlaySelector ? `overlay: ${raw.overlaySelector}` : '',
     raw?.clickExecuted !== undefined ? `click executed: ${raw.clickExecuted}` : '',
     raw?.observableChange !== undefined ? `observed change: ${raw.observableChange}` : '',
+    raw?.pageTitle ? `page title: ${raw.pageTitle}` : '',
     raw?.safeClickResult?.error || raw?.message ? `raw failure: ${raw.safeClickResult?.error || raw.message}` : '',
     raw?.statusCode ?? raw?.status ? `status: ${raw.statusCode ?? raw.status}` : '',
     raw?.repeatCount ? `repeatCount: ${raw.repeatCount}` : '',
@@ -617,6 +801,10 @@ function ProblemElementCard({ entry, owner, index = null }) {
           <Meta label="rel" value={entry.rel} />
           <Meta label="meta property/name" value={entry.property || entry.name || (entry.label && /^og:|meta|canonical/i.test(entry.label) ? entry.label : '')} />
           <Meta label="href/action" value={entry.href || entry.formAction || entry.actionType || entry.actionEvidence} />
+          <Meta label="link type" value={entry.linkType} />
+          <Meta label="requested URL" value={entry.requestUrl || entry.url || entry.href} />
+          <Meta label="final URL" value={entry.finalUrl} />
+          <Meta label="redirected" value={entry.redirected} />
           <Meta label="selector" value={entry.selector} />
           <Meta label="section" value={entry.section || entry.sectionPath} />
           <Meta label="DOM path" value={entry.domPath} />
@@ -636,6 +824,9 @@ function ProblemElementCard({ entry, owner, index = null }) {
           <Meta label="overlay selector" value={entry.overlaySelector} />
           <Meta label="click executed" value={entry.clickExecuted} />
           <Meta label="observed change" value={entry.observableChange} />
+          <Meta label="interaction outcome" value={entry.interactionOutcome} />
+          <Meta label="interaction evidence" value={Array.isArray(entry.interactionEvidence) ? entry.interactionEvidence.join(' · ') : ''} />
+          <Meta label="landing URL" value={entry.landingUrl} />
           <Meta label="raw evidence" value={entry.category || entry.altReason || entry.altCategory || entry.status} />
           <Meta label="raw failure" value={entry.safeClickResult?.error || entry.message || entry.stack} />
         </dl>
@@ -672,6 +863,9 @@ function DeveloperInfo({ view, result }) {
       <Meta label="network raw" value={getCheckItemCount(result, 'network-failures')} />
       <Meta label="click candidates" value={result.clickActionAudit?.candidateCount} />
       <Meta label="safe click count" value={result.clickActionAudit?.safeClickAttemptCount} />
+      <Meta label="landing targets" value={view.landingPageGroups?.meta?.candidateCount} />
+      <Meta label="landing audited" value={view.landingPageGroups?.meta?.inspectedCount} />
+      <Meta label="landing redirects" value={view.landingPageGroups?.meta?.redirectCount} />
       <Meta label="errorCheckCount" value={view.issueCounts.errorCheckCount} />
       <Meta label="errorEvidenceCount" value={view.issueCounts.errorEvidenceCount} />
       <Meta label="errorUniqueElementCount" value={view.issueCounts.errorUniqueElementCount} />
@@ -689,12 +883,15 @@ function RawDetails({ view, result }) {
   const clickCheck = Array.isArray(result.checks) ? result.checks.find((check) => check.id === 'click-actions') : null
   const networkItems = Array.isArray(networkCheck?.items) ? networkCheck.items : []
   const clickItems = Array.isArray(result.clickActions) ? result.clickActions : Array.isArray(clickCheck?.items) ? clickCheck.items : []
+  const landingCheck = Array.isArray(result.checks) ? result.checks.find((check) => check.id === 'landing-pages') : null
+  const landingItems = Array.isArray(result.landingPages) ? result.landingPages : Array.isArray(landingCheck?.items) ? landingCheck.items : []
   return (
     <div className="tech-raw-grid">
       <CountBreakdown items={view.issueCounts.checkBreakdown || []} />
       <RawList title="안전상 클릭 생략 전체" items={view.clickActionGroups.safeSkipped} />
       <RawList title="URL 불필요 UI 제어 전체" items={view.clickActionGroups.uiControls} />
       <RawList title="정상 클릭 검증 전체" items={view.clickActionGroups.verified} />
+      <RawList title="Raw landing audits" items={landingItems} />
       <RawList title="Raw click candidates" items={clickItems} />
       <RawList title="Raw console" items={consoleItems} />
       <RawList title="Raw network" items={networkItems} />
@@ -729,7 +926,7 @@ function RawList({ title, items }) {
 }
 
 function formatRawItem(item = {}) {
-  return [item.type || item.tagName || item.kind, item.statusCode, item.url || item.href || item.source, item.selector, item.category, item.reason || item.message].filter(Boolean).join(' · ') || JSON.stringify(item)
+  return [item.type || item.tagName || item.kind, item.statusCode, item.finalUrl || item.requestedUrl || item.url || item.href || item.source, item.selector, item.category, item.reason || item.note || item.message].filter(Boolean).join(' · ') || JSON.stringify(item)
 }
 
 function getCheckItemCount(result, checkId) {

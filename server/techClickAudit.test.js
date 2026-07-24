@@ -59,8 +59,8 @@ test('H safe click with no observable change becomes no-observable-action', () =
   const item = classifyClickableCandidate(candidate({ tagName: 'button', label: 'Custom action', hasOnClick: true }))
   const checked = applySafeClickResult(item, { clicked: true, changed: false })
   assert.equal(checked.category, 'no-observable-action')
-  assert.equal(checked.status, 'error')
-  assert.equal(checked.actionClassification, 'actual-error')
+  assert.equal(checked.status, 'warn')
+  assert.equal(checked.actionClassification, 'actionable-warning')
 })
 
 test('I dangerous action skips actual click and is not hard error', () => {
@@ -86,19 +86,55 @@ test('click action summary preserves all problem items and meta counts', () => {
   assert.equal(summary.meta.actionableWarningCount, 1)
 })
 
+test('click action classifies direct href navigation and new-window outcomes', () => {
+  const navigation = classifyClickableCandidate(candidate({ tagName: 'a', href: '/product', url: 'https://example.com/product', label: 'Product' }))
+  const popup = classifyClickableCandidate(candidate({ tagName: 'a', href: '/brochure', url: 'https://example.com/brochure', target: '_blank', label: 'Brochure' }))
+
+  assert.equal(navigation.interactionOutcome, 'navigation')
+  assert.equal(navigation.landingUrl, 'https://example.com/product')
+  assert.equal(popup.interactionOutcome, 'new-window')
+})
+
+test('click action records modal tab accordion dropdown scroll and ui-change outcomes from safe click', () => {
+  const modal = applySafeClickResult(classifyClickableCandidate(candidate({ tagName: 'button', ariaControls: 'dialog-1', label: 'Open modal' })), { clicked: true, changed: true, interactionOutcome: 'modal', interactionEvidence: ['dialog/modal 노출'] })
+  const tab = applySafeClickResult(classifyClickableCandidate(candidate({ tagName: 'button', role: 'tab', label: 'Tab 2' })), { clicked: true, changed: true, interactionOutcome: 'tab', interactionEvidence: ['aria-selected 상태 변경'] })
+  const accordion = applySafeClickResult(classifyClickableCandidate(candidate({ tagName: 'button', ariaExpanded: 'false', label: 'FAQ' })), { clicked: true, changed: true, interactionOutcome: 'accordion', interactionEvidence: ['aria-expanded 상태 변경'] })
+  const dropdown = applySafeClickResult(classifyClickableCandidate(candidate({ tagName: 'button', label: 'Open menu', dataToggle: 'dropdown' })), { clicked: true, changed: true, interactionOutcome: 'dropdown', interactionEvidence: ['메뉴 또는 목록 노출'] })
+  const scroll = applySafeClickResult(classifyClickableCandidate(candidate({ tagName: 'a', href: '#top', label: 'Top' })), { clicked: true, changed: true, interactionOutcome: 'scroll', interactionEvidence: ['스크롤 위치 변경'] })
+  const uiChange = applySafeClickResult(classifyClickableCandidate(candidate({ tagName: 'button', label: 'Toggle summary', hasOnClick: true })), { clicked: true, changed: true, interactionOutcome: 'ui-change', interactionEvidence: ['DOM mutation 감지'] })
+
+  assert.equal(modal.actionClassification, 'verified-working')
+  assert.equal(tab.interactionOutcome, 'tab')
+  assert.equal(accordion.interactionOutcome, 'accordion')
+  assert.equal(dropdown.interactionOutcome, 'dropdown')
+  assert.equal(scroll.interactionOutcome, 'scroll')
+  assert.equal(uiChange.interactionOutcome, 'ui-change')
+})
+
+test('click action records blocked error and skipped outcomes', () => {
+  const skipped = classifyClickableCandidate(candidate({ tagName: 'button', label: 'Delete account', hasOnClick: true }))
+  const blocked = applySafeClickResult(classifyClickableCandidate(candidate({ tagName: 'button', label: 'Open panel', hasOnClick: true })), { clicked: false, changed: false, error: 'Element is not visible and another element would receive the click' })
+  const errored = applySafeClickResult(classifyClickableCandidate(candidate({ tagName: 'button', label: 'Run action', hasOnClick: true })), { clicked: false, changed: false, error: 'Execution context was destroyed' })
+
+  assert.equal(skipped.interactionOutcome, 'skipped')
+  assert.equal(blocked.interactionOutcome, 'blocked')
+  assert.equal(blocked.actionClassification, 'actual-error')
+  assert.equal(errored.interactionOutcome, 'error')
+})
+
 test('generic fixture separates five click classifications for counting', () => {
   const items = [
     classifyClickableCandidate(candidate({ auditId: 'pointer', tagName: 'a', href: '/product', url: 'https://example.com/product', pointerEvents: 'none', label: 'Product' })),
     classifyClickableCandidate(candidate({ auditId: 'overlay', tagName: 'a', href: '/covered', url: 'https://example.com/covered', hitTargetSame: false, hitTestStatus: 'hitTestFailed', label: 'Covered' })),
     ...Array.from({ length: 5 }, (_, index) => classifyClickableCandidate(candidate({ auditId: `skip-${index}`, tagName: 'button', label: `Delete ${index}`, hasOnClick: true }))),
     ...Array.from({ length: 8 }, (_, index) => classifyClickableCandidate(candidate({ auditId: `ui-${index}`, tagName: 'button', ariaControls: `panel-${index}`, label: `Accordion ${index}` }))),
-    ...Array.from({ length: 3 }, (_, index) => applySafeClickResult(classifyClickableCandidate(candidate({ auditId: `verified-${index}`, tagName: 'button', label: `Custom ${index}`, hasOnClick: true })), { clicked: true, changed: true, after: { mutationCount: 1 } })),
+    ...Array.from({ length: 3 }, (_, index) => applySafeClickResult(classifyClickableCandidate(candidate({ auditId: `verified-${index}`, tagName: 'button', label: `Custom ${index}`, hasOnClick: true })), { clicked: true, changed: true, interactionOutcome: 'ui-change', interactionEvidence: ['DOM mutation 감지'] })),
     applySafeClickResult(classifyClickableCandidate(candidate({ auditId: 'no-change', tagName: 'button', label: 'Custom action', hasOnClick: true })), { clicked: true, changed: false }),
   ]
   const summary = summarizeClickActionAudit(items)
 
-  assert.equal(summary.meta.actualErrorCount, 3)
-  assert.equal(summary.meta.actionableWarningCount, 0)
+  assert.equal(summary.meta.actualErrorCount, 2)
+  assert.equal(summary.meta.actionableWarningCount, 1)
   assert.equal(summary.meta.safeClickSkippedCount, 5)
   assert.equal(summary.meta.uiControlNoUrlRequiredCount, 8)
   assert.equal(summary.meta.verifiedWorkingCount, 3)
@@ -165,17 +201,17 @@ test('javascript pseudo URL is actionable warning, not actual error', () => {
 
 test('safe click result records executed and observable states', () => {
   const base = classifyClickableCandidate(candidate({ tagName: 'button', label: 'Open details', hasOnClick: true }))
-  const changed = applySafeClickResult(base, { clicked: true, changed: true, after: { mutationCount: 1 } })
+  const changed = applySafeClickResult(base, { clicked: true, changed: true, interactionOutcome: 'ui-change', interactionEvidence: ['DOM mutation 감지'] })
   const unchanged = applySafeClickResult(base, { clicked: true, changed: false })
   const failed = applySafeClickResult(base, { clicked: false, changed: false, error: 'not clickable' })
 
   assert.equal(changed.actionClassification, 'verified-working')
   assert.equal(changed.clickExecuted, true)
   assert.equal(changed.observableChange, true)
-  assert.equal(unchanged.actionClassification, 'actual-error')
+  assert.equal(unchanged.actionClassification, 'actionable-warning')
   assert.equal(unchanged.clickExecuted, true)
   assert.equal(unchanged.observableChange, false)
-  assert.equal(failed.actionClassification, 'actionable-warning')
+  assert.equal(failed.actionClassification, 'actual-error')
   assert.equal(failed.clickExecuted, false)
 })
 

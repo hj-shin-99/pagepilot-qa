@@ -15,6 +15,19 @@ test('Tech link audit includes normal internal links and dedupes duplicate reque
   assert.equal(audit.requestableLinks.length, 2)
   assert.equal(audit.meta.dedupedLinkCount, 1)
   assert.equal(audit.requestableLinks[0].sourceCount, 2)
+  assert.equal(audit.requestableLinks[0].linkType, 'internal')
+})
+
+test('Tech link audit classifies internal and external HTTP links', () => {
+  const audit = createTechLinkAudit([
+    anchor({ label: 'Internal', href: '/internal' }),
+    anchor({ label: 'External', href: 'https://outside.example/path', url: 'https://outside.example/path' }),
+  ], 'https://example.com/page')
+
+  assert.equal(audit.requestableLinks[0].linkType, 'internal')
+  assert.equal(audit.requestableLinks[0].isInternal, true)
+  assert.equal(audit.requestableLinks[1].linkType, 'external')
+  assert.equal(audit.requestableLinks[1].isExternal, true)
 })
 
 test('Tech link audit classifies missing navigation CTA as error evidence', () => {
@@ -41,6 +54,24 @@ test('Tech link audit flags # and javascript navigation CTAs without treating UI
   assert.equal(audit.uiControlsWithoutUrl.length, 2)
 })
 
+test('Tech link audit classifies anchor, mailto, tel, javascript, and invalid links without HTTP requests', () => {
+  const audit = createTechLinkAudit([
+    anchor({ label: 'Anchor', href: '#section' }),
+    anchor({ label: 'Mail', href: 'mailto:test@example.com' }),
+    anchor({ label: 'Tel', href: 'tel:01012345678' }),
+    anchor({ label: 'Pseudo', href: 'javascript:void(0)' }),
+    anchor({ label: 'Invalid', href: 'http://' }),
+  ], 'https://example.com/page')
+  const result = mergeTechLinkAuditResults(audit, [])
+
+  assert.equal(audit.requestableLinks.length, 0)
+  assert.deepEqual(new Set(result.links.map((item) => item.linkType)), new Set(['anchor', 'mailto', 'tel', 'javascript', 'invalid']))
+  assert.equal(result.links.find((item) => item.linkType === 'mailto').category, 'special-scheme')
+  assert.equal(result.links.find((item) => item.linkType === 'tel').category, 'special-scheme')
+  assert.equal(result.links.find((item) => item.linkType === 'javascript').category, 'javascript-pseudo-url')
+  assert.equal(result.links.find((item) => item.linkType === 'invalid').category, 'invalid-url')
+})
+
 test('Tech link audit preserves redirect final URL and timeout as priority error', () => {
   const audit = createTechLinkAudit([
     anchor({ label: 'Redirect', href: '/redirect' }),
@@ -57,6 +88,7 @@ test('Tech link audit preserves redirect final URL and timeout as priority error
   assert.equal(result.meta.timeoutCount, 1)
   assert.equal(result.links[0].category, 'timeout')
   assert.equal(result.links.find((item) => item.label === 'Redirect').finalUrl, 'https://example.com/final')
+  assert.equal(result.links.find((item) => item.label === 'Redirect').redirected, true)
 })
 
 function anchor(overrides = {}) {

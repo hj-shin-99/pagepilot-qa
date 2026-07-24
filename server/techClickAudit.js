@@ -27,6 +27,9 @@ export function classifyClickableCandidate(candidate = {}) {
     safeClickEligible: false,
     safeClickSkippedReason: '',
     actionClassification: 'actionable-warning',
+    interactionOutcome: 'unknown',
+    interactionEvidence: [],
+    landingUrl: resolveLandingUrl(candidate),
   }
 
   if (candidate.disabled || candidate.ariaDisabled === 'true') {
@@ -41,42 +44,65 @@ export function classifyClickableCandidate(candidate = {}) {
   }
 
   if (candidate.pointerEvents === 'none') {
-    return { ...base, status: 'error', category: 'covered-or-not-interactable', actionClassification: 'actual-error', reason: 'pointer-events:none 상태라 사용자가 클릭할 수 없습니다.' }
+    return { ...base, status: 'error', category: 'covered-or-not-interactable', actionClassification: 'actual-error', interactionOutcome: 'blocked', reason: 'pointer-events:none 상태라 사용자가 클릭할 수 없습니다.' }
   }
 
   if (hitTestStatus === 'hitTestFailed' && candidate.unrelatedOverlay !== false) {
     const overlay = textOf(candidate.overlaySelector || candidate.hitTargetSelector)
-    return { ...base, status: 'error', category: 'covered-or-not-interactable', actionClassification: 'actual-error', reason: overlay ? 'hit-test 결과 unrelated overlay가 실제 클릭 지점을 막고 있습니다.' : 'hit-test 결과 실제 클릭 지점을 막는 unrelated overlay가 감지되었습니다.' }
+    return { ...base, status: 'error', category: 'covered-or-not-interactable', actionClassification: 'actual-error', interactionOutcome: 'blocked', reason: overlay ? 'hit-test 결과 unrelated overlay가 실제 클릭 지점을 막고 있습니다.' : 'hit-test 결과 실제 클릭 지점을 막는 unrelated overlay가 감지되었습니다.' }
   }
 
   if (isUiControl && (isStrongUiControlCandidate(candidate) || hrefState !== 'valid-url')) {
-    return { ...base, status: 'ok', category: 'UI-control-no-url-required', technicalTerm: 'UI 제어 동작', displayName: 'UI 제어 동작', easyExplanation: '모달, 메뉴, 검색, 캐러셀, 탭처럼 URL 이동 없이 화면 상태를 바꾸는 클릭 제어입니다.', actionClassification: 'ui-control-no-url-required', clickExecuted: false, reason: 'URL이 필요 없는 UI 제어로 분류했습니다.', safeClickEligible: false }
+    return {
+      ...base,
+      status: 'ok',
+      category: 'UI-control-no-url-required',
+      technicalTerm: 'UI 제어 동작',
+      displayName: 'UI 제어 동작',
+      easyExplanation: '모달, 메뉴, 검색, 캐러셀, 탭처럼 URL 이동 없이 화면 상태를 바꾸는 클릭 제어입니다.',
+      actionClassification: 'ui-control-no-url-required',
+      clickExecuted: false,
+      interactionOutcome: inferUiControlOutcome(candidate),
+      reason: 'URL이 필요 없는 UI 제어로 분류했고 안전한 범위에서 실제 클릭 변화를 확인합니다.',
+      safeClickEligible: !isDangerous,
+    }
   }
 
   if (hrefState === 'valid-url') {
-    return { ...base, status: 'ok', category: 'valid-url', actionClassification: 'verified-working', verificationMethod: 'valid-navigation-url', clickExecuted: false, observableChange: false, reason: '정상 이동 URL이 확인되었습니다.' }
+    return {
+      ...base,
+      status: 'ok',
+      category: 'valid-url',
+      actionClassification: 'verified-working',
+      verificationMethod: 'valid-navigation-url',
+      clickExecuted: false,
+      observableChange: false,
+      interactionOutcome: candidate.target === '_blank' ? 'new-window' : 'navigation',
+      interactionEvidence: [candidate.target === '_blank' ? 'target=_blank 새 창 링크' : 'href 목적지 URL 확인'],
+      reason: '정상 이동 URL이 확인되었습니다.',
+    }
   }
 
   if (isDangerous && hasAction) {
-    return { ...base, status: 'ok', category: 'skipped-safe-click', actionClassification: 'safe-click-skipped', clickExecuted: false, reason: '위험할 수 있는 동작이라 실제 클릭 검증을 생략했습니다.', safeClickSkippedReason: 'dangerous-action' }
+    return { ...base, status: 'ok', category: 'skipped-safe-click', actionClassification: 'safe-click-skipped', clickExecuted: false, interactionOutcome: 'skipped', reason: '위험할 수 있는 동작이라 실제 클릭 검증을 생략했습니다.', safeClickSkippedReason: 'dangerous-action' }
   }
 
   if (hrefState === 'missing-href' && isNavigation) {
     if (!hasAction) {
-      return { ...base, status: 'warn', category: 'missing-navigation-action', actionClassification: 'actionable-warning', clickExecuted: false, reason: '이동 목적 요소처럼 보이지만 href, action, form action 근거가 모두 없어 확인이 필요합니다.' }
+      return { ...base, status: 'warn', category: 'missing-navigation-action', actionClassification: 'actionable-warning', clickExecuted: false, interactionOutcome: 'no-change', reason: '이동 목적 요소처럼 보이지만 href, action, form action 근거가 모두 없어 확인이 필요합니다.' }
     }
-    return { ...base, status: 'warn', category: 'ambiguous-action', actionClassification: 'actionable-warning', clickExecuted: false, reason: '이동 버튼처럼 보이지만 action evidence가 불완전합니다.', safeClickEligible: !isDangerous }
+    return { ...base, status: 'warn', category: 'ambiguous-action', actionClassification: 'actionable-warning', clickExecuted: false, interactionOutcome: 'unknown', reason: '이동 버튼처럼 보이지만 action evidence가 불완전합니다.', safeClickEligible: !isDangerous }
   }
 
   if (hrefState === 'empty-href' || hrefState === 'hash-only' || hrefState === 'javascript-pseudo-url') {
-    return { ...base, status: 'warn', category: hrefState, actionClassification: 'actionable-warning', clickExecuted: false, reason: '실제 이동 버튼이라면 목적지 URL이 누락됐을 수 있습니다.', safeClickEligible: !isDangerous && hasAction }
+    return { ...base, status: 'warn', category: hrefState, actionClassification: 'actionable-warning', clickExecuted: false, interactionOutcome: hrefState === 'hash-only' ? 'scroll' : 'unknown', reason: '실제 이동 버튼이라면 목적지 URL이 누락됐을 수 있습니다.', safeClickEligible: !isDangerous && hasAction }
   }
 
   if (!hasAction) {
-    return { ...base, status: 'warn', category: 'ambiguous-action', actionClassification: 'actionable-warning', clickExecuted: false, reason: '유효한 href, role, 이벤트, UI 제어 근거가 없어 UID팀 확인이 필요합니다.' }
+    return { ...base, status: 'warn', category: 'ambiguous-action', actionClassification: 'actionable-warning', clickExecuted: false, interactionOutcome: 'unknown', reason: '유효한 href, role, 이벤트, UI 제어 근거가 없어 UID팀 확인이 필요합니다.' }
   }
 
-  return { ...base, status: 'warn', category: 'ambiguous-action', actionClassification: 'actionable-warning', clickExecuted: false, reason: '클릭 이벤트는 있으나 목적을 자동으로 확정할 수 없습니다.', safeClickEligible: true }
+  return { ...base, status: 'warn', category: 'ambiguous-action', actionClassification: 'actionable-warning', clickExecuted: false, interactionOutcome: 'unknown', reason: '클릭 이벤트는 있으나 목적을 자동으로 확정할 수 없습니다.', safeClickEligible: true }
 }
 
 export function summarizeClickActionAudit(items = [], meta = {}) {
@@ -102,7 +128,7 @@ export function summarizeClickActionAudit(items = [], meta = {}) {
 
 export async function auditClickableActions(browser, targetUrl, candidates = [], instrumentation = null) {
   const classified = (Array.isArray(candidates) ? candidates : []).map(classifyClickableCandidate)
-  const safeCandidates = classified.filter((item) => item.safeClickEligible && item.status !== 'ok').slice(0, MAX_SAFE_CLICK_CANDIDATES)
+  const safeCandidates = classified.filter((item) => item.safeClickEligible && item.actionClassification !== 'safe-click-skipped' && item.actionClassification !== 'verified-working').slice(0, MAX_SAFE_CLICK_CANDIDATES)
   let safeClickAttemptCount = 0
   const safeResults = new Map()
 
@@ -134,8 +160,19 @@ export async function auditClickableActions(browser, targetUrl, candidates = [],
 }
 
 async function verifySafeClick(page, targetUrl, candidate) {
+  const consoleErrors = []
+  const pageErrors = []
+
   try {
     await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: SAFE_CLICK_TIMEOUT_MS })
+    const onConsole = (message) => {
+      if (message.type() === 'error') consoleErrors.push(message.text())
+    }
+    const onPageError = (error) => {
+      pageErrors.push(error.message || 'page error')
+    }
+    page.on('console', onConsole)
+    page.on('pageerror', onPageError)
     await page.evaluate(() => {
       window.__pagepilotMutationCount = 0
       window.__pagepilotDialogObserved = false
@@ -148,12 +185,18 @@ async function verifySafeClick(page, targetUrl, candidate) {
       dialog.dismiss().catch(() => {})
     })
     let popupObserved = false
+    let popupUrl = ''
     let navigationRequestObserved = false
     const onRequest = (request) => {
       if (request.isNavigationRequest() && request.resourceType() === 'document') navigationRequestObserved = true
     }
     page.once('popup', (popup) => {
       popupObserved = true
+      popupUrl = popup.url() || ''
+      popup.waitForLoadState('domcontentloaded', { timeout: SAFE_CLICK_TIMEOUT_MS }).catch(() => {})
+      popup.waitForTimeout(250).then(() => {
+        popupUrl = popup.url() || popupUrl
+      }).catch(() => {})
       popup.close().catch(() => {})
     })
     page.on('request', onRequest)
@@ -161,17 +204,32 @@ async function verifySafeClick(page, targetUrl, candidate) {
     await page.locator(candidate.selector).first().click({ timeout: SAFE_CLICK_TIMEOUT_MS, noWaitAfter: true, trial: false })
     await page.waitForTimeout(350)
     page.off('request', onRequest)
+    page.off('console', onConsole)
+    page.off('pageerror', onPageError)
     const after = await getClickState(page, candidate.selector)
-    const changed = before.url !== after.url
-      || before.ariaExpanded !== after.ariaExpanded
-      || after.dialogVisible === true
-      || after.targetVisible === true && before.targetVisible !== after.targetVisible
-      || after.mutationCount > before.mutationCount
-      || popupObserved
-      || navigationRequestObserved
-    return { clicked: true, changed, before, after, popupObserved, navigationRequestObserved }
+    const interaction = deriveInteractionOutcome(candidate, before, after, { popupObserved, popupUrl, navigationRequestObserved, consoleErrors, pageErrors })
+    return {
+      clicked: true,
+      changed: interaction.outcome !== 'no-change',
+      before,
+      after,
+      popupObserved,
+      popupUrl,
+      navigationRequestObserved,
+      consoleErrors,
+      pageErrors,
+      interactionOutcome: interaction.outcome,
+      interactionEvidence: interaction.evidence,
+      landingUrl: interaction.landingUrl,
+    }
   } catch (error) {
-    return { clicked: false, changed: false, error: error instanceof Error ? error.message : 'safe click failed' }
+    return {
+      clicked: false,
+      changed: false,
+      error: error instanceof Error ? error.message : 'safe click failed',
+      interactionOutcome: classifySafeClickFailure(error).outcome,
+      interactionEvidence: [classifySafeClickFailure(error).reason],
+    }
   }
 }
 
@@ -181,11 +239,19 @@ async function getClickState(page, selector) {
     const controlsId = target?.getAttribute('aria-controls') || ''
     const controlled = controlsId ? document.getElementById(controlsId) : null
     const rect = controlled?.getBoundingClientRect()
+    const visibleMenu = document.querySelector('[role="menu"]:not([hidden]), [data-state="open"], [aria-expanded="true"]')
     return {
       url: location.href,
+      originPath: `${location.origin}${location.pathname}${location.search}`,
+      hash: location.hash,
+      scrollY: Number(window.scrollY || window.pageYOffset || 0),
       ariaExpanded: target?.getAttribute('aria-expanded') || '',
+      ariaSelected: target?.getAttribute('aria-selected') || '',
       dialogVisible: Boolean(document.querySelector('dialog[open], [role="dialog"]:not([hidden])')),
       targetVisible: Boolean(controlled && rect && rect.width > 0 && rect.height > 0 && getComputedStyle(controlled).display !== 'none' && getComputedStyle(controlled).visibility !== 'hidden'),
+      menuVisible: Boolean(visibleMenu),
+      bodyTextSample: String(document.body?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 240),
+      targetClassName: target && typeof target.className === 'string' ? target.className : '',
       mutationCount: Number(window.__pagepilotMutationCount || 0),
     }
   }, selector).catch(() => ({ url: '', ariaExpanded: '', dialogVisible: false, targetVisible: false, mutationCount: 0 }))
@@ -193,9 +259,53 @@ async function getClickState(page, selector) {
 
 export function applySafeClickResult(item, result) {
   if (!result) return item
-  if (result.changed) return { ...item, status: 'ok', category: 'observable-action', actionClassification: 'verified-working', verificationMethod: 'safe-click-observed-action', clickExecuted: true, observableChange: true, reason: '안전 클릭 후 URL, navigation request, DOM, popup, dialog 또는 aria 상태 변화가 관찰되었습니다.', safeClickResult: result }
-  if (result.clicked) return { ...item, status: 'error', category: 'no-observable-action', actionClassification: 'actual-error', clickExecuted: true, observableChange: false, reason: '안전 클릭 후 관찰 가능한 변화가 없습니다.', safeClickResult: result }
-  return { ...item, status: 'warn', category: 'ambiguous-action', actionClassification: 'actionable-warning', clickExecuted: false, observableChange: false, safeClickSkippedReason: 'safe-click-failed', reason: `안전 클릭을 완료하지 못했습니다. ${sanitizeMessage(result.error)}`, safeClickResult: result }
+  const outcome = result.interactionOutcome || (result.changed ? 'ui-change' : 'no-change')
+  const evidence = Array.isArray(result.interactionEvidence) ? result.interactionEvidence : []
+  if (result.clicked && outcome !== 'no-change') {
+    return {
+      ...item,
+      status: outcome === 'error' || outcome === 'blocked' ? 'error' : 'ok',
+      category: outcome === 'navigation' || outcome === 'new-window' || outcome === 'modal' || outcome === 'tab' || outcome === 'accordion' || outcome === 'dropdown' || outcome === 'scroll' || outcome === 'ui-change' ? 'observable-action' : outcome,
+      actionClassification: outcome === 'error' || outcome === 'blocked' ? 'actual-error' : 'verified-working',
+      verificationMethod: 'safe-click-observed-action',
+      clickExecuted: true,
+      observableChange: true,
+      interactionOutcome: outcome,
+      interactionEvidence: evidence,
+      landingUrl: result.landingUrl || item.landingUrl,
+      reason: formatInteractionReason(outcome, evidence),
+      safeClickResult: result,
+    }
+  }
+  if (result.clicked) {
+    return {
+      ...item,
+      status: 'warn',
+      category: 'no-observable-action',
+      actionClassification: 'actionable-warning',
+      clickExecuted: true,
+      observableChange: false,
+      interactionOutcome: 'no-change',
+      interactionEvidence: evidence,
+      reason: '안전 클릭은 수행됐지만 관찰 가능한 변화가 없어 실제 동작 여부를 추가 확인해야 합니다.',
+      safeClickResult: result,
+    }
+  }
+
+  const failure = classifySafeClickFailure(result.error)
+  return {
+    ...item,
+    status: failure.outcome === 'blocked' || failure.outcome === 'error' ? 'error' : 'warn',
+    category: failure.outcome === 'blocked' ? 'covered-or-not-interactable' : 'click-error',
+    actionClassification: failure.outcome === 'blocked' || failure.outcome === 'error' ? 'actual-error' : 'actionable-warning',
+    clickExecuted: false,
+    observableChange: false,
+    interactionOutcome: failure.outcome,
+    interactionEvidence: [failure.reason],
+    safeClickSkippedReason: 'safe-click-failed',
+    reason: `안전 클릭을 완료하지 못했습니다. ${failure.reason}`,
+    safeClickResult: result,
+  }
 }
 
 function getActionClassification(item = {}) {
@@ -203,7 +313,7 @@ function getActionClassification(item = {}) {
   if (item.category === 'skipped-safe-click' || item.safeClickSkippedReason) return 'safe-click-skipped'
   if (item.category === 'UI-control-no-url-required') return 'ui-control-no-url-required'
   if (item.status === 'ok' || item.category === 'valid-url' || item.category === 'observable-action') return 'verified-working'
-  if (item.category === 'covered-or-not-interactable' || item.category === 'no-observable-action' || item.category === 'disabled-action') return 'actual-error'
+  if (item.category === 'covered-or-not-interactable' || item.category === 'disabled-action' || item.interactionOutcome === 'blocked' || item.interactionOutcome === 'error') return 'actual-error'
   return 'actionable-warning'
 }
 
@@ -306,6 +416,105 @@ function inferActionType(candidate, hrefState, isUiControl) {
   if (isUiControl) return 'ui-control'
   if (candidate.hasOnClick) return 'click-handler'
   return 'unknown'
+}
+
+function inferUiControlOutcome(candidate = {}) {
+  const text = searchableText(candidate)
+  if (/dialog|modal|popup|닫기|모달|팝업/.test(text)) return 'modal'
+  if (/tab|tabpanel|aria-selected|탭/.test(text)) return 'tab'
+  if (/accordion|collapse|expand|faq|접기|펼치기/.test(text)) return 'accordion'
+  if (/dropdown|menu|popover|메뉴|드롭다운/.test(text)) return 'dropdown'
+  if (/scroll|top|위로/.test(text)) return 'scroll'
+  return 'ui-change'
+}
+
+function resolveLandingUrl(candidate = {}) {
+  if (isHttpUrl(candidate.url)) return candidate.url
+  if (isHttpUrl(candidate.href)) return candidate.href
+  return ''
+}
+
+function deriveInteractionOutcome(candidate = {}, before = {}, after = {}, context = {}) {
+  const evidence = []
+  const sameDocument = before.originPath && after.originPath && before.originPath === after.originPath
+  const urlChanged = before.url && after.url && before.url !== after.url
+  const hashChanged = before.hash !== after.hash && sameDocument
+  const scrollChanged = Math.abs(Number(after.scrollY || 0) - Number(before.scrollY || 0)) >= 40
+  const ariaExpandedChanged = before.ariaExpanded !== after.ariaExpanded
+  const ariaSelectedChanged = before.ariaSelected !== after.ariaSelected
+  const dialogAppeared = after.dialogVisible === true && before.dialogVisible !== true
+  const menuAppeared = after.menuVisible === true && before.menuVisible !== true
+  const controlledVisibilityChanged = before.targetVisible !== after.targetVisible
+  const textChanged = before.bodyTextSample !== after.bodyTextSample
+  const classChanged = before.targetClassName !== after.targetClassName
+  const mutationChanged = Number(after.mutationCount || 0) > Number(before.mutationCount || 0)
+  const errorCount = (context.consoleErrors || []).length + (context.pageErrors || []).length
+
+  if (context.popupObserved) {
+    evidence.push('새 창 또는 새 탭 열림')
+    return { outcome: 'new-window', evidence, landingUrl: context.popupUrl || candidate.landingUrl || '' }
+  }
+  if (urlChanged && !hashChanged) {
+    evidence.push('현재 창 URL 변경')
+    return { outcome: 'navigation', evidence, landingUrl: after.url || candidate.landingUrl || '' }
+  }
+  if (dialogAppeared) {
+    evidence.push('dialog/modal 노출')
+    return { outcome: 'modal', evidence, landingUrl: '' }
+  }
+  if (ariaSelectedChanged) {
+    evidence.push('aria-selected 상태 변경')
+    return { outcome: 'tab', evidence, landingUrl: '' }
+  }
+  if (ariaExpandedChanged || controlledVisibilityChanged) {
+    evidence.push(ariaExpandedChanged ? 'aria-expanded 상태 변경' : '연결 패널 visibility 변경')
+    return { outcome: inferUiControlOutcome(candidate), evidence, landingUrl: '' }
+  }
+  if (menuAppeared) {
+    evidence.push('메뉴 또는 목록 노출')
+    return { outcome: 'dropdown', evidence, landingUrl: '' }
+  }
+  if (hashChanged || scrollChanged) {
+    evidence.push(hashChanged ? '같은 페이지 hash 이동' : '스크롤 위치 변경')
+    return { outcome: 'scroll', evidence, landingUrl: '' }
+  }
+  if (mutationChanged || textChanged || classChanged) {
+    evidence.push(mutationChanged ? 'DOM mutation 감지' : textChanged ? '주요 텍스트 변화' : 'class 상태 변화')
+    if (errorCount > 0) evidence.push(`console/page error ${errorCount}건`)
+    return { outcome: 'ui-change', evidence, landingUrl: '' }
+  }
+  if (context.navigationRequestObserved) {
+    evidence.push('문서 navigation request 감지')
+    return { outcome: 'navigation', evidence, landingUrl: after.url || candidate.landingUrl || '' }
+  }
+  return { outcome: 'no-change', evidence: errorCount > 0 ? [`console/page error ${errorCount}건 감지`] : ['관찰 가능한 변화 없음'], landingUrl: '' }
+}
+
+function classifySafeClickFailure(error) {
+  const message = sanitizeMessage(error instanceof Error ? error.message : error)
+  if (/intercept|pointer|not visible|element is outside|another element would receive|not enabled/i.test(message)) {
+    return { outcome: 'blocked', reason: message || '클릭이 다른 요소에 가로막혔습니다.' }
+  }
+  if (/timeout|timed out/i.test(message)) {
+    return { outcome: 'unknown', reason: message || '클릭 제한 시간 안에 동작을 완료하지 못했습니다.' }
+  }
+  return { outcome: 'error', reason: message || '클릭 중 예외가 발생했습니다.' }
+}
+
+function formatInteractionReason(outcome, evidence = []) {
+  const detail = Array.isArray(evidence) && evidence.length > 0 ? ` (${evidence.join(' · ')})` : ''
+  if (outcome === 'navigation') return `현재 창에서 URL 이동이 감지되었습니다.${detail}`
+  if (outcome === 'new-window') return `새 창 또는 새 탭 열림이 감지되었습니다.${detail}`
+  if (outcome === 'modal') return `모달 또는 dialog 노출이 감지되었습니다.${detail}`
+  if (outcome === 'tab') return `탭 또는 패널 상태 변경이 감지되었습니다.${detail}`
+  if (outcome === 'accordion') return `아코디언 펼침/접힘 변화가 감지되었습니다.${detail}`
+  if (outcome === 'dropdown') return `메뉴 또는 목록 노출이 감지되었습니다.${detail}`
+  if (outcome === 'scroll') return `동일 페이지 내 스크롤 또는 anchor 이동이 감지되었습니다.${detail}`
+  if (outcome === 'ui-change') return `기타 화면 상태 변화가 감지되었습니다.${detail}`
+  if (outcome === 'blocked') return `클릭이 가로막혀 동작하지 않았습니다.${detail}`
+  if (outcome === 'error') return `클릭 중 예외 또는 오류가 발생했습니다.${detail}`
+  if (outcome === 'skipped') return `안전 정책에 따라 클릭을 생략했습니다.${detail}`
+  return `관찰 가능한 변화가 없습니다.${detail}`
 }
 
 function searchableText(candidate = {}) {

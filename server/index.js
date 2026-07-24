@@ -17,6 +17,7 @@ import { createTextDifferenceCandidates } from './textDiff.js'
 import { matchTextNodes } from './textMatcher.js'
 import { createCheckedLinkFailure, createTechLinkAudit, mergeTechLinkAuditResults, normalizeCheckedLinkResult } from './techLinkAudit.js'
 import { auditClickableActions, summarizeClickActionAudit } from './techClickAudit.js'
+import { auditLandingPages } from './techLandingAudit.js'
 import { classifyConsoleMessages } from './techConsoleAudit.js'
 import { buildVisualQaPayloadArtifacts } from './visualQaPayload.js'
 import { buildQaRunResponse, createQaRunHandler, isWebScanNavigationFailure } from './qaRunRoute.js'
@@ -1901,6 +1902,7 @@ async function scanUrl(targetUrl, options = {}) {
   let webScreenshot
   let visualPayloadData = null
   let clickActionAuditResult
+  let landingAuditResult
 
   try {
     const context = await browser.newContext({
@@ -1941,6 +1943,20 @@ async function scanUrl(targetUrl, options = {}) {
       items: [],
       meta: { candidateCount: domSnapshot?.clickableCandidates?.length || 0, safeClickAttemptCount: 0, safeClickLimit: 0, error: error instanceof Error ? error.message : 'click audit failed' },
     }))
+    landingAuditResult = await auditLandingPages(browser, targetUrl, clickActionAuditResult.items, scanOptions.instrumentation).catch((error) => ({
+      items: [],
+      meta: {
+        candidateCount: 0,
+        inspectedCount: 0,
+        okCount: 0,
+        warningCount: 0,
+        errorCount: 1,
+        redirectCount: 0,
+        newWindowCount: 0,
+        noTarget: true,
+        error: error instanceof Error ? error.message : 'landing audit failed',
+      },
+    }))
   } finally {
     await browser.close()
   }
@@ -1948,6 +1964,7 @@ async function scanUrl(targetUrl, options = {}) {
   const safePageTitle = pageTitle || ''
   const snapshot = domSnapshot || createEmptyDomSnapshot()
   const safeMobileResult = mobileResult || createMobileFallback()
+  const safeLandingAuditResult = landingAuditResult || { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, redirectCount: 0, newWindowCount: 0, noTarget: true } }
   const linkAudit = createTechLinkAudit(snapshot.interactionTargets, targetUrl)
   const linksToCheck = getLinksToCheck(linkAudit.requestableLinks)
   const checkedLinks = await checkLinkStatuses(linksToCheck)
@@ -1982,6 +1999,7 @@ async function scanUrl(targetUrl, options = {}) {
     unlabeledClickables: snapshot.unlabeledClickables,
     linkAuditMeta: linkAuditResult.meta,
     clickActionSummary,
+    landingAuditResult: safeLandingAuditResult,
   })
 
   return {
@@ -2000,6 +2018,7 @@ async function scanUrl(targetUrl, options = {}) {
     linkAudit: linkAuditResult.meta,
     clickActions: clickActionAuditResult.items,
     clickActionAudit: clickActionSummary.meta,
+    landingAudit: safeLandingAuditResult.meta,
     images,
     designElements: snapshot.designElements,
     webCtaHints: snapshot.webCtaHints || [],
@@ -3454,12 +3473,17 @@ function buildChecks({
   unlabeledClickables = [],
   linkAuditMeta = {},
   clickActionSummary = { status: 'ok', value: '정상', items: [], meta: {} },
+  landingAuditResult = { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, redirectCount: 0, newWindowCount: 0, noTarget: true } },
 }) {
   const httpStatus = mainResponse?.status() ?? null
   const brokenImages = images.filter((image) => image.status === 'error')
   const missingHrefCount = missingHrefLinks.length
   const badLinks = linkStatuses.filter((link) => link.status === 'error')
   const warningLinks = linkStatuses.filter((link) => link.status === 'warn')
+  const landingItems = Array.isArray(landingAuditResult.items) ? landingAuditResult.items : []
+  const landingMeta = landingAuditResult.meta || {}
+  const landingErrors = landingItems.filter((item) => item.status === 'error')
+  const landingWarnings = landingItems.filter((item) => item.status === 'warn')
   const missingMetaFields = getMissingMetaFields(metaInfo)
   const formMissingLabels = Array.isArray(formInfo.missingLabels) ? formInfo.missingLabels : []
   const headingItems = createHeadingIssueItems(headingInfo)
@@ -3626,6 +3650,17 @@ function buildChecks({
         : '버튼이나 링크처럼 보이는 요소 중 동작 근거 또는 실제 클릭 가능 여부 확인이 필요한 항목이 있습니다.',
       items: clickActionSummary.items,
       meta: clickActionSummary.meta,
+    },
+    {
+      id: 'landing-pages',
+      title: '랜딩 페이지 검사',
+      status: landingErrors.length > 0 ? 'error' : landingWarnings.length > 0 ? 'warn' : 'ok',
+      value: landingMeta.noTarget ? '검사 대상 없음' : `${landingErrors.length}개 오류 / ${landingWarnings.length}개 확인 필요`,
+      detail: landingMeta.noTarget
+        ? 'URL 이동 또는 새 창으로 이어지는 HTTP/HTTPS 랜딩 대상이 없어 랜딩 페이지 검사를 생략했습니다.'
+        : `대상 ${Number(landingMeta.candidateCount || landingItems.length)}개 중 중복을 정리한 최종 ${landingItems.length}개 랜딩 페이지를 확인했습니다.`,
+      items: landingItems,
+      meta: landingMeta,
     },
     {
       id: 'unlabeled-clickables',

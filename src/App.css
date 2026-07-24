@@ -2379,6 +2379,7 @@
 }
 
 .workspace-content {
+  width: 100%;
   min-width: 0;
 }
 
@@ -4341,8 +4342,36 @@
 }
 
 .tech-section-head .panel-note {
-  max-width: 760px;
+  max-width: none;
   margin-top: 4px;
+  text-wrap: pretty;
+}
+
+.tech-section-head {
+  align-items: flex-start;
+}
+
+.tech-section-head > div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tech-section-head > span {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+@media (min-width: 1680px) {
+  .tech-section-head .panel-note {
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 1679px) {
+  .tech-section-head .panel-note,
+  .tech-section-head > span {
+    white-space: normal;
+  }
 }
 
 .tech-compact-table,
@@ -4532,6 +4561,7 @@
 #tech-click-section,
 #tech-click-actual-errors,
 #tech-click-warnings,
+#tech-landing-section,
 #tech-markup-accessibility-section,
 .tech-markup-check-row {
   scroll-margin-top: 24px;
@@ -5129,7 +5159,7 @@
 }
 
 .workspace {
-  max-width: 1480px;
+  max-width: 1720px;
   width: 100%;
   margin: 0 auto;
   padding: 28px 32px 48px;

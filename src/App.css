@@ -6727,7 +6727,7 @@
   justify-content: space-between;
   gap: 12px;
   min-height: 36px;
-  margin-bottom: 42px;
+  margin-bottom: 22px;
 }
 
 .control-panel.is-collapsed .sidebar-topbar {
@@ -6751,25 +6751,93 @@
   display: inline-flex;
   align-items: center;
   box-sizing: border-box;
-  gap: 9px;
-  min-height: 36px;
-  padding: 8px 11px;
+  gap: 10px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: var(--panel-text);
+  background: transparent;
+  font-size: 11px;
+  font-weight: 720;
+  line-height: 1;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.brand-version {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 7px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 999px;
-  color: var(--panel-text);
-  background: rgba(255, 255, 255, 0.06);
-  font-size: 12px;
-  font-weight: 800;
-  line-height: 1;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  color: #9aa7b7;
+  background: rgba(255, 255, 255, 0.045);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: none;
 }
 
 .sidebar-topbar .sidebar-toggle-button {
   box-sizing: border-box;
-  min-height: 36px;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
   margin: 0;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  color: #cbd5e1;
+  background: rgba(255, 255, 255, 0.045);
   line-height: 1;
+}
+
+.sidebar-topbar .sidebar-toggle-button:hover {
+  border-color: rgba(255, 255, 255, 0.28);
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.075);
+}
+
+.sidebar-toggle-icon {
+  position: relative;
+  display: inline-block;
+  width: 16px;
+  height: 14px;
+  border: 1.5px solid currentColor;
+  border-radius: 4px;
+}
+
+.sidebar-toggle-icon::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 4px;
+  width: 1.5px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.8;
+}
+
+.sidebar-toggle-icon::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 3px;
+  width: 4px;
+  height: 4px;
+  border-top: 1.5px solid currentColor;
+  border-right: 1.5px solid currentColor;
+  transform: rotate(-135deg);
+}
+
+.control-panel.is-collapsed .sidebar-toggle-icon::after {
+  right: auto;
+  left: 3px;
+  transform: rotate(45deg);
 }
 
 .control-panel h1 {
@@ -6781,12 +6849,24 @@
 }
 
 .sidebar-description {
+  display: grid;
+  gap: 8px;
   max-width: 260px;
   margin: 0;
   color: var(--panel-muted);
   font-size: 13px;
   line-height: 1.72;
   word-break: keep-all;
+}
+
+.sidebar-description strong {
+  color: #e5edf6;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.sidebar-description span {
+  display: block;
 }
 
 .scan-form {

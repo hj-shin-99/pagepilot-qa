@@ -39,7 +39,7 @@ function InputPanel({
             <h1>PagePilot QA</h1>
             <p className="sidebar-description">
               <strong>AI 기반 Web QA 플랫폼</strong>
-              <span>Tech QA로 웹 품질을 분석하고<br />Visual QA로 Figma와 화면을 비교합니다.</span>
+              <span>Web 페이지의 기술 품질을 점검하고, Figma 시안과 실제 화면의 콘텐츠·디자인 차이를 AI로 함께 검수합니다.</span>
             </p>
           </div>
 
@@ -49,7 +49,7 @@ function InputPanel({
             </label>
             <input
               id="target-url"
-              className={`url-input ${url ? 'has-value' : ''}`}
+              className={`url-input scan-input ${url ? 'has-value' : ''}`}
               type="url"
               value={url}
               placeholder="https://staging.example.com/page"
@@ -62,7 +62,7 @@ function InputPanel({
             </label>
             <input
               id="figma-frame-url"
-              className={`url-input ${figmaUrl ? 'has-value' : ''}`}
+              className={`url-input scan-input ${figmaUrl ? 'has-value' : ''}`}
               type="url"
               value={figmaUrl}
               placeholder="https://www.figma.com/design/...?...node-id=..."

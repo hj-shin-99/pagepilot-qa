@@ -2292,17 +2292,6 @@
   background: rgba(255, 255, 255, 0.07);
 }
 
-.url-input.has-value {
-  border-color: rgba(226, 232, 240, 0.9);
-  color: #0f172a;
-  background: #ffffff;
-}
-
-.url-input.has-value:focus {
-  border-color: rgba(95, 157, 255, 0.75);
-  box-shadow: 0 0 0 4px rgba(28, 105, 212, 0.22);
-}
-
 .file-drop-label {
   border: 1px dashed rgba(255, 255, 255, 0.24);
   border-radius: 14px;
@@ -2329,6 +2318,83 @@
   border: 0;
   color: #ffffff;
   background: #0f172a;
+}
+
+.control-panel {
+  --sidebar-input-border: rgba(255, 255, 255, 0.16);
+  --sidebar-input-border-filled: rgba(226, 232, 240, 0.9);
+  --sidebar-input-background: rgba(255, 255, 255, 0.07);
+  --sidebar-input-background-filled: #ffffff;
+  --sidebar-input-text: #ffffff;
+  --sidebar-input-text-filled: #0f172a;
+  --sidebar-input-placeholder: #718096;
+}
+
+.scan-input {
+  width: 100%;
+  border: 1px solid var(--sidebar-input-border);
+  border-radius: 14px;
+  padding: 13px 14px;
+  color: var(--sidebar-input-text);
+  background: var(--sidebar-input-background);
+  font: inherit;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease, color 160ms ease;
+}
+
+.scan-input::placeholder {
+  color: var(--sidebar-input-placeholder);
+}
+
+.scan-input.has-value {
+  border-color: var(--sidebar-input-border-filled);
+  color: var(--sidebar-input-text-filled);
+  background: var(--sidebar-input-background-filled);
+}
+
+.scan-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--focus-line);
+}
+
+.scan-input:-webkit-autofill,
+.scan-input:-webkit-autofill:hover,
+.scan-input:-webkit-autofill:focus {
+  border: 1px solid var(--sidebar-input-border-filled);
+  -webkit-text-fill-color: var(--sidebar-input-text-filled);
+  box-shadow: 0 0 0 1000px var(--sidebar-input-background-filled) inset;
+}
+
+.scan-input:-webkit-autofill:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1000px var(--sidebar-input-background-filled) inset, 0 0 0 4px var(--focus-line);
+}
+
+.workspace {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.workspace-content {
+  min-width: 0;
+}
+
+.workspace-content.is-empty {
+  display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.workspace-content.is-empty > .empty-state {
+  width: 100%;
+  min-height: 100%;
+}
+
+.workspace-content.is-empty > .empty-state > div {
+  margin: auto;
 }
 
 .workspace {

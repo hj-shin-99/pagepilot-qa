@@ -35,6 +35,7 @@ function App() {
   const isScanning = visualScanState === 'loading' || techScanState === 'loading' || aiReviewState === 'loading'
   const isVisualTabEnabled = Boolean(visualResult) || visualScanState === 'loading' || visualScanState === 'success' || visualScanState === 'error'
   const isTechTabEnabled = Boolean(techResult) || techScanState === 'loading' || techScanState === 'success' || techScanState === 'error'
+  const isEmptyWorkspaceView = activeTab !== 'history' && ((activeTab === 'tech' && !techResult) || (activeTab === 'visual' && !visualResult) || activeTab === 'overview')
 
   const handleTabChange = (tabId) => {
     if (tabId === 'visual' && !isVisualTabEnabled) return
@@ -200,6 +201,31 @@ function App() {
     }
   }
 
+  const workspaceContent = activeTab === 'history'
+    ? (
+      <HistoryPanel
+        historyItems={historyItems}
+        isScanning={isScanning}
+        onDeleteHistory={handleDeleteHistory}
+        onNewScan={resetToNewScan}
+        onRestoreHistory={handleRestoreHistory}
+      />
+    ) : activeTab === 'tech'
+      ? (techResult
+        ? <TechQaPanel result={techResult} />
+        : <EmptyState scanState={techScanState} scanError={techScanError} mode="tech" combined={visualScanState === 'loading'} scanStage={scanStage} />)
+      : activeTab === 'visual' && visualResult
+        ? (
+          <VisualQaPanel
+            result={visualResult}
+            aiReview={aiReview}
+            aiReviewState={aiReviewState}
+            pageTitle={techResult?.pageTitle}
+          />
+        ) : activeTab === 'visual'
+          ? <EmptyState scanState={visualScanState} scanError={visualScanError} mode="visual" combined={techScanState === 'loading'} scanStage={scanStage} />
+          : <EmptyState scanState="idle" scanError="" mode="overview" combined={false} scanStage={scanStage} />
+
   return (
     <main className={`app-shell ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       <InputPanel
@@ -228,30 +254,9 @@ function App() {
           onTabChange={handleTabChange}
         />
 
-        {activeTab === 'history' ? (
-          <HistoryPanel
-            historyItems={historyItems}
-            isScanning={isScanning}
-            onDeleteHistory={handleDeleteHistory}
-            onNewScan={resetToNewScan}
-            onRestoreHistory={handleRestoreHistory}
-          />
-        ) : activeTab === 'tech' ? (
-          techResult ? (
-            <TechQaPanel result={techResult} />
-          ) : <EmptyState scanState={techScanState} scanError={techScanError} mode="tech" combined={visualScanState === 'loading'} scanStage={scanStage} />
-        ) : activeTab === 'visual' && visualResult ? (
-          <VisualQaPanel
-            result={visualResult}
-            aiReview={aiReview}
-            aiReviewState={aiReviewState}
-            pageTitle={techResult?.pageTitle}
-          />
-        ) : activeTab === 'visual' ? (
-          <EmptyState scanState={visualScanState} scanError={visualScanError} mode="visual" combined={techScanState === 'loading'} scanStage={scanStage} />
-        ) : (
-          <EmptyState scanState="idle" scanError="" mode="overview" combined={false} scanStage={scanStage} />
-        )}
+        <div className={`workspace-content ${isEmptyWorkspaceView ? 'is-empty' : ''}`}>
+          {workspaceContent}
+        </div>
       </section>
     </main>
   )

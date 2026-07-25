@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { createTechQaViewModel, getVisibleLinkGroups, TECH_STATUS_LABELS } from '../utils/techQa'
-import { createTechPanelDisplayModel } from '../utils/techQaPanelView'
+import { createTechQaViewModel, getSectionVisibility, getVisibleLinkGroups, TECH_STATUS_LABELS } from '../utils/techQa'
+import { createTechPanelDisplayModel, getBasicCheckDetailId, getMarkupDetailId } from '../utils/techQaPanelView'
 import { formatScanTime } from '../utils/report'
 import { createTechQaTitle } from '../utils/techTitle'
 
@@ -10,8 +10,8 @@ const MARKUP_ACCESSIBILITY_DETAIL_IDS = ['meta', 'image-alt', 'external-links', 
 function TechQaPanel({ result }) {
   const view = createTechQaViewModel(result)
   const display = createTechPanelDisplayModel(result, view)
-  const linkGroups = getVisibleLinkGroups(view.links)
-  const markupItems = createMarkupAccessibilityItems(view.checkItems)
+  const linkGroups = getVisibleLinkGroups(display.detailRows.linkRows)
+  const markupItems = createMarkupAccessibilityItems(display.detailRows.markupRows)
   const techTitle = createTechQaTitle(view.title)
 
   return (
@@ -29,22 +29,13 @@ function TechQaPanel({ result }) {
 
       <TechCompletionCard completion={display.completion} />
 
-      <section className="detail-card tech-compact-card" aria-label="우선 확인 필요">
-        <SectionHead
-          title={`우선 확인 결과 ${display.priorityRows.length}건`}
-          meta={`오류 ${display.priorityCounts.error}건 · 확인 필요 ${display.priorityCounts.warn}건`}
-          note="우선 확인이 필요한 항목만 표시합니다. 상세를 선택하면 관련 검사 영역으로 이동합니다."
-        />
-        {display.priorityRows.length > 0 ? <TechCompactTable items={display.priorityRows} mode="priority" /> : <p className="empty-row">오류 또는 확인 필요 항목이 없습니다.</p>}
-      </section>
-
       <section className="detail-card tech-compact-card" id="tech-basic-section" aria-label="주요 검사 결과">
         <SectionHead
           title="주요 검사 결과"
           meta={`오류 검사 ${view.issueCounts.errorCheckCount} · 확인 필요 검사 ${view.issueCounts.warningCheckCount} · 정상 검사 ${view.issueCounts.normalCheckCount}`}
           note="페이지의 주요 Tech QA 검사 결과를 한눈에 확인할 수 있습니다."
         />
-        <TechCompactTable items={view.basicCheckItems} mode="basic" />
+        <TechCompactTable items={display.detailRows.basicRows} mode="basic" />
       </section>
 
       <section className="detail-card tech-compact-card" id="tech-links-section" aria-label="URL 검사">
@@ -62,10 +53,10 @@ function TechQaPanel({ result }) {
           meta={`오류 ${view.clickActionGroups.actualErrors.length} · 확인 필요 ${view.clickActionGroups.warnings.length} · 정상 ${getNormalClickCount(view.clickActionGroups)}`}
           note="2단계 · Playwright가 버튼, 메뉴, 링크 등 클릭 가능한 UI 요소를 실제로 조작하여 화면 반응을 확인합니다. URL 이동뿐 아니라 새 창, 탭, 아코디언, 모달 등 클릭 전후의 상태 변화를 검사합니다."
         />
-        <ClickActionIssueTable groups={view.clickActionGroups} />
+        <ClickActionIssueTable rows={display.detailRows.clickRows} />
       </section>
 
-      <LandingPageSection groups={view.landingPageGroups} />
+      <LandingPageSection groups={view.landingPageGroups} rows={display.detailRows.landingRows} />
 
       <MarkupAccessibilitySection items={markupItems} />
 
@@ -127,32 +118,15 @@ function TechCompactTable({ items, mode }) {
         <span>우선 확인</span>
         <span>상세</span>
       </div>
-      {items.map((item) => mode === 'priority' ? <PriorityTableRow item={item} key={item.id} /> : <TechTableRow item={item} key={item.id} />)}
+      {items.map((item) => <TechTableRow item={item} key={item.rowKey || item.id} />)}
     </div>
-  )
-}
-
-function PriorityTableRow({ item }) {
-  const targetId = getPriorityDetailTargetId(item)
-  return (
-    <a className={`tech-table-row tech-priority-row ${getStatusClass(item.status)}`} href={`#${targetId}`} aria-label={`${item.title} 아래 상세 보기`}>
-      <div className="tech-table-title">
-        <span className="tech-category-chip">{item.categoryLabel || 'Tech'}</span>
-        <strong>{item.title}</strong>
-      </div>
-      <span className={`status-badge ${getStatusClass(item.status)}`}>{TECH_STATUS_LABELS[item.status]}</span>
-      <span className="tech-table-value">{item.value || '-'}</span>
-      <OwnerBadge owner={item.status === 'ok' ? '-' : item.owner} />
-      <span className="tech-detail-jump">
-        <span aria-hidden="true">⌄</span>
-      </span>
-    </a>
   )
 }
 
 function TechTableRow({ item }) {
   return (
     <DetailRow
+      id={item.rowId || getBasicCheckDetailId(item)}
       className={`tech-table-row tech-row-details tech-row-with-details ${getStatusClass(item.status)}`}
       detail={<IssueDetails item={item} />}
     >
@@ -189,7 +163,7 @@ function MarkupAccessibilitySection({ items }) {
             <span>우선 확인</span>
             <span>상세</span>
           </div>
-          {problemItems.map((item) => <MarkupCheckRow item={item} key={item.id} />)}
+          {problemItems.map((item) => <MarkupCheckRow item={item} key={item.rowKey || item.id} />)}
         </div>
       ) : <p className="empty-row">마크업 및 접근성 확인 필요 항목이 없습니다.</p>}
       {normalItems.length > 0 ? <NormalMarkupSummary items={normalItems} /> : null}
@@ -200,7 +174,7 @@ function MarkupAccessibilitySection({ items }) {
 function MarkupCheckRow({ item }) {
   return (
     <DetailRow
-      id={getMarkupDetailId(item)}
+      id={item.rowId || getMarkupDetailId(item)}
       className={`tech-table-row tech-row-details tech-row-with-details tech-markup-row tech-markup-check-row ${getStatusClass(item.status)}`}
       detail={<MarkupCheckDetails item={item} />}
     >
@@ -239,15 +213,13 @@ function NormalMarkupSummary({ items }) {
 }
 
 function LinkTable({ groups }) {
-  const visible = groups.errors.concat(groups.warnings, groups.normals)
   return (
     <>
       <div className="tech-link-table">
         <LinkTableHead />
-        {visible.length > 0 ? visible.map((item, index) => <LinkTableRow item={item} key={getTechRowKey(item, 'link-visible', index)} />) : <p className="empty-row">검사된 링크가 없습니다.</p>}
+        {groups.visibleItems.length > 0 ? groups.visibleItems.map((item, index) => <LinkTableRow item={item} key={item.rowKey || getTechRowKey(item, 'link-visible', index)} />) : <p className="empty-row">검사된 링크가 없습니다.</p>}
       </div>
-      {groups.hiddenWarnings.length > 0 ? <CollapsedRows label={`확인 필요 링크 ${groups.hiddenWarnings.length}개 더보기`} items={groups.hiddenWarnings} renderRow={(item, index) => <LinkTableRow item={item} key={getTechRowKey(item, 'link-warning', index)} />} /> : null}
-      {groups.hiddenNormals.length > 0 ? <CollapsedRows label={`정상 링크 ${groups.hiddenNormals.length}개 더보기`} items={groups.hiddenNormals} renderRow={(item, index) => <LinkTableRow item={item} key={getTechRowKey(item, 'link-normal', index)} />} /> : null}
+      {groups.hiddenCount > 0 ? <CollapsedRows label={getCollapsedResultsLabel(groups.hiddenCount)} items={groups.hiddenItems} renderHead={() => <LinkTableHead />} renderRow={(item, index) => <LinkTableRow item={item} key={item.rowKey || getTechRowKey(item, 'link-hidden', index)} />} /> : null}
     </>
   )
 }
@@ -269,6 +241,7 @@ function LinkTableRow({ item }) {
   const raw = item.raw || {}
   return (
     <DetailRow
+      id={item.rowId}
       className={`tech-link-row tech-row-details tech-row-with-details ${getStatusClass(item.status)}`}
       summaryClassName="tech-link-row-summary"
       detail={<IssueDetails item={item} />}
@@ -282,19 +255,13 @@ function LinkTableRow({ item }) {
   )
 }
 
-function ClickActionIssueTable({ groups }) {
-  const actualErrors = groups?.actualErrors || []
-  const warnings = groups?.warnings || []
-  const safeSkipped = groups?.safeSkipped || []
-  const normalItems = (groups?.uiControls || []).concat(groups?.verified || [])
-  if (!groups || !groups.total) return <p className="empty-row">클릭 후보가 없습니다.</p>
+function ClickActionIssueTable({ rows }) {
+  const visibility = getSectionVisibility(rows, { maxVisible: 5, statusOrder: ['error', 'warn', 'info', 'ok'] })
+  if (!rows.length) return <p className="empty-row">클릭 후보가 없습니다.</p>
   return (
     <>
-      {actualErrors.length > 0 ? <ClickActionTable id="tech-click-actual-errors" items={actualErrors} ariaLabel="클릭 동작 실제 오류" /> : null}
-      {warnings.length > 0 ? <ClickActionTable id="tech-click-warnings" items={warnings} ariaLabel="클릭 동작 확인 필요" /> : null}
-      {actualErrors.length === 0 && warnings.length === 0 ? <p className="empty-row">실제 오류 또는 확인 필요 클릭 항목이 없습니다.</p> : null}
-      {safeSkipped.length > 0 ? <CollapsedClickRows label={`안전상 클릭 생략 ${safeSkipped.length}개 보기`} items={safeSkipped} /> : null}
-      {normalItems.length > 0 ? <CollapsedClickRows label={`정상 동작 ${normalItems.length}개 더보기 · UI 제어 ${groups.uiControls.length} · 정상 검증 ${groups.verified.length}`} items={normalItems} /> : null}
+      {visibility.visibleItems.length > 0 ? <ClickActionTable id="tech-click-section-table" items={visibility.visibleItems} ariaLabel="클릭 동작 검사 결과" /> : <p className="empty-row">클릭 결과가 없습니다.</p>}
+      {visibility.hiddenItems.length > 0 ? <CollapsedClickRows label={getCollapsedResultsLabel(visibility.hiddenItems.length)} items={visibility.hiddenItems} /> : null}
     </>
   )
 }
@@ -304,7 +271,7 @@ function ClickActionTable({ id, items, ariaLabel, className = '' }) {
     <div className={`tech-click-issue-table${className ? ` ${className}` : ''}`} id={id} aria-label={ariaLabel}>
       <ClickActionTableHead />
       <div className="tech-click-table-body">
-        {items.map((item, index) => <ClickActionRow item={item} key={getTechRowKey(item, 'click', index)} />)}
+        {items.map((item, index) => <ClickActionRow item={item} key={item.rowKey || getTechRowKey(item, 'click', index)} />)}
       </div>
     </div>
   )
@@ -334,32 +301,30 @@ function CollapsedClickRows({ label, items }) {
 }
 
 function ClickActionRow({ item }) {
-  const status = getClickDisplayStatus(item)
   return (
     <DetailRow
-      className={`tech-click-issue-row tech-click-row tech-row-details tech-row-with-details ${getStatusClass(status)}`}
+      id={item.rowId}
+      className={`tech-click-issue-row tech-click-row tech-row-details tech-row-with-details ${getStatusClass(item.status)}`}
       summaryClassName="tech-click-row-summary"
       detail={(
         <div className="tech-problem-elements is-single">
           <ol>
-            <ProblemElementCard entry={item} owner={getUidOwner()} />
+            <ProblemElementCard entry={item} owner={item.owner || getUidOwner()} />
           </ol>
         </div>
       )}
     >
-        <span className={`status-badge ${getStatusClass(status)}`}>{TECH_STATUS_LABELS[status]}</span>
-        <strong>{getElementName(item)}</strong>
+        <span className={`status-badge ${getStatusClass(item.status)}`}>{TECH_STATUS_LABELS[item.status]}</span>
+        <strong>{item.title || getElementName(item)}</strong>
         <span>{getUserLocation(item)}</span>
-        <span>{formatElementResult(item)}</span>
-        <OwnerBadge owner={getUidOwner()} />
+        <span>{item.value || formatElementResult(item)}</span>
+        <OwnerBadge owner={item.owner || getUidOwner()} />
     </DetailRow>
   )
 }
 
-function LandingPageSection({ groups }) {
-  const items = (groups?.errors || []).concat(groups?.warnings || [], groups?.normals || [])
-  const visibleGroups = getVisibleLinkGroups(items)
-  const visibleItems = visibleGroups.errors.concat(visibleGroups.warnings, visibleGroups.normals)
+function LandingPageSection({ groups, rows }) {
+  const visibleGroups = getVisibleLinkGroups(rows)
   const meta = groups?.hasTargets
     ? `전체 ${groups.total} · 오류 ${groups.errors.length} · 확인 필요 ${groups.warnings.length} · 정상 ${groups.normals.length}`
     : '검사 대상 없음'
@@ -373,9 +338,8 @@ function LandingPageSection({ groups }) {
       />
       {groups?.hasTargets ? (
         <>
-          <LandingPageTable items={visibleItems} />
-          {visibleGroups.hiddenWarnings.length > 0 ? <CollapsedRows label={`확인 필요 랜딩 ${visibleGroups.hiddenWarnings.length}개 더보기`} items={visibleGroups.hiddenWarnings} renderRow={(item, index) => <LandingPageRow item={item} key={getTechRowKey(item, 'landing-warning', index)} />} /> : null}
-          {visibleGroups.hiddenNormals.length > 0 ? <CollapsedRows label={`정상 랜딩 ${visibleGroups.hiddenNormals.length}개 더보기`} items={visibleGroups.hiddenNormals} renderRow={(item, index) => <LandingPageRow item={item} key={getTechRowKey(item, 'landing-normal', index)} />} /> : null}
+          <LandingPageTable items={visibleGroups.visibleItems} />
+          {visibleGroups.hiddenCount > 0 ? <CollapsedRows label={getCollapsedResultsLabel(visibleGroups.hiddenCount)} items={visibleGroups.hiddenItems} renderHead={() => <LandingPageTableHead />} renderRow={(item, index) => <LandingPageRow item={item} key={item.rowKey || getTechRowKey(item, 'landing-hidden', index)} />} /> : null}
         </>
       ) : <p className="empty-row">검사할 URL 이동 또는 새 창 결과가 없습니다.</p>}
     </section>
@@ -388,7 +352,7 @@ function LandingPageTable({ items }) {
     <div className="tech-link-table" aria-label="랜딩 페이지 검사 결과">
       <LandingPageTableHead />
       <div className="tech-link-table-body">
-        {items.map((item, index) => <LandingPageRow item={item} key={getTechRowKey(item, 'landing-visible', index)} />)}
+        {items.map((item, index) => <LandingPageRow item={item} key={item.rowKey || getTechRowKey(item, 'landing-visible', index)} />)}
       </div>
     </div>
   )
@@ -408,18 +372,18 @@ function LandingPageTableHead() {
 }
 
 function LandingPageRow({ item }) {
-  const status = getLandingDisplayStatus(item)
   return (
     <DetailRow
-      className={`tech-link-row tech-row-details tech-row-with-details ${getStatusClass(status)}`}
+      id={item.rowId}
+      className={`tech-link-row tech-row-details tech-row-with-details ${getStatusClass(item.status)}`}
       summaryClassName="tech-link-row-summary"
       detail={<LandingPageDetails item={item} />}
     >
-      <span className={`status-badge ${getStatusClass(status)}`}>{TECH_STATUS_LABELS[status]}</span>
-      <strong>{item.label || '랜딩 페이지'}</strong>
+      <span className={`status-badge ${getStatusClass(item.status)}`}>{TECH_STATUS_LABELS[item.status]}</span>
+      <strong>{item.title || item.label || '랜딩 페이지'}</strong>
       <span className="tech-url-cell">{item.finalUrl || item.requestedUrl || '-'}</span>
       <span>{item.statusCode || '-'}</span>
-      <OwnerBadge owner={getLandingOwner(item)} />
+      <OwnerBadge owner={item.owner || getLandingOwner(item)} />
     </DetailRow>
   )
 }
@@ -492,25 +456,8 @@ function createMarkupAccessibilityItems(checkItems = []) {
   })
 }
 
-function getPriorityDetailTargetId(item = {}) {
-  if (item.detailTargetId) return item.detailTargetId
-  if (item.type === 'link') return 'tech-links-section'
-  if (String(item.id || '').startsWith('click-actions')) return 'tech-click-section'
-  if (item.id === 'landing-pages') return 'tech-landing-section'
-  if (MARKUP_ACCESSIBILITY_DETAIL_IDS.includes(item.id)) return getMarkupDetailId(item)
-  return 'tech-basic-section'
-}
-
-function getMarkupDetailId(item = {}) {
-  return `tech-markup-${String(item.id || item.title || 'check').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-|-$/g, '').toLowerCase()}`
-}
-
-function formatTechStatusMessage(display = {}) {
-  const errors = Number(display.priorityCounts?.error || 0)
-  const warnings = Number(display.priorityCounts?.warn || 0)
-  const total = Number(display.priorityRows?.length || 0)
-  if (total > 0) return `우선 확인이 필요한 결과는 총 ${total}건입니다. (오류 ${errors}건 · 확인 필요 ${warnings}건)`
-  return '우선 확인 결과가 없습니다.'
+function formatTechStatusMessage() {
+  return 'Tech QA 검사가 완료되었습니다. 아래 항목에서 오류 및 확인 필요 결과를 확인해 주세요.'
 }
 
 function formatMarkupCheckResult(item = {}, problemItems = []) {
@@ -522,13 +469,6 @@ function formatMarkupCheckResult(item = {}, problemItems = []) {
 
 function getNormalClickCount(groups = {}) {
   return (groups.uiControls || []).length + (groups.verified || []).length
-}
-
-function getClickDisplayStatus(item = {}) {
-  if (item.actionClassification === 'actual-error' || item.status === 'error') return 'error'
-  if (item.actionClassification === 'actionable-warning' || item.status === 'warn') return 'warn'
-  if (item.actionClassification === 'safe-click-skipped') return 'info'
-  return 'ok'
 }
 
 function getLandingDisplayStatus(item = {}) {
@@ -639,13 +579,13 @@ function sanitizeUserFacingText(value) {
   return text
 }
 
-function CollapsedRows({ label, items, renderRow }) {
+function CollapsedRows({ label, items, renderHead, renderRow }) {
   const [isOpen, setIsOpen] = useState(false)
   return (
     <details className="tech-more-details tech-normal-links-more tech-link-more" open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
       <summary className="tech-more-summary">{isOpen ? '접기' : label}</summary>
       <div className="tech-link-table tech-link-more-table">
-        <LinkTableHead />
+        {renderHead()}
         <div className="tech-link-table-body">
           {items.map((item, index) => renderRow(item, index))}
         </div>
@@ -670,11 +610,29 @@ function getTechRowKey(item = {}, prefix = 'row', index = 0) {
   ].filter(Boolean).join(':')
 }
 
+function getCollapsedResultsLabel(count = 0) {
+  return `결과 ${count}개 더보기`
+}
+
+function getLargeResourceThreshold(item = {}) {
+  const detail = String(item.raw?.detail || '').trim()
+  return detail.includes('1MB') ? '1MB 이상' : ''
+}
+
+function formatResourceSize(value) {
+  const size = Number(value)
+  if (!Number.isFinite(size) || size <= 0) return '-'
+  if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(2)} MB (${size} B)`
+  if (size >= 1024) return `${(size / 1024).toFixed(1)} KB (${size} B)`
+  return `${size} B`
+}
+
 function OwnerBadge({ owner }) {
   return <span className="tech-owner-badge">{owner || '-'}</span>
 }
 
 function IssueDetails({ item }) {
+  if (item.id === 'resource-size') return <ResourceSizeDetails item={item} />
   if (item.status === 'ok') return <NormalIssueDetails item={item} />
   if (item.type === 'link') return <SingleProblemDetails item={item} />
   const problemItems = item.problemItems || item.raw?.items
@@ -688,6 +646,53 @@ function IssueDetails({ item }) {
       </dl>
       {hasProblemItems ? <ProblemElementList items={problemItems} owner={item.owner} /> : <TechnicalInfo raw={item.raw} />}
     </>
+  )
+}
+
+function ResourceSizeDetails({ item }) {
+  const problemItems = Array.isArray(item.problemItems) && item.problemItems.length > 0 ? item.problemItems : Array.isArray(item.raw?.items) ? item.raw.items : []
+  const hasProblemItems = problemItems.length > 0
+  const threshold = getLargeResourceThreshold(item)
+  const resultText = item.status === 'ok'
+    ? '정상 · 큰 리소스 없음'
+    : hasProblemItems ? `확인 필요 · 기준 초과 ${problemItems.length}개` : item.value || TECH_STATUS_LABELS[item.status] || '확인 필요'
+  return (
+    <>
+      <dl className="tech-issue-meta">
+        <Meta label="검사 목적" value={item.description} />
+        <Meta label="검사 결과" value={resultText} />
+        <Meta label="판정 기준" value={threshold} />
+      </dl>
+      {hasProblemItems ? <LargeResourceList items={problemItems} threshold={threshold} /> : <p className="tech-normal-note">{item.status === 'ok' ? '1MB 이상으로 수집된 리소스가 없습니다.' : item.raw?.detail || item.value || '세부 리소스 데이터가 없습니다.'}</p>}
+    </>
+  )
+}
+
+function LargeResourceList({ items, threshold }) {
+  return (
+    <div className="tech-problem-elements">
+      <strong>확인할 리소스 {items.length}개</strong>
+      <ol>
+        {items.map((entry, index) => (
+          <li key={`${entry.url || entry.selector || 'resource'}-${index}`}>
+            <strong>{entry.url || `리소스 ${index + 1}`}</strong>
+            <span>리소스 유형: {entry.type || 'resource'}</span>
+            <span>리소스 용량: {formatResourceSize(entry.sizeBytes)}</span>
+            {threshold ? <span>큰 리소스 기준: {threshold}</span> : null}
+            <span>확인 이유: 1MB 이상으로 수집된 리소스라 로딩 영향 확인이 필요합니다.</span>
+            <details className="tech-row-details">
+              <summary>기술 정보 보기</summary>
+              <dl className="tech-issue-meta">
+                <Meta label="resource URL" value={entry.url} />
+                <Meta label="resource type" value={entry.type} />
+                <Meta label="size bytes" value={entry.sizeBytes} />
+                <Meta label="status" value={entry.statusCode || entry.status} />
+              </dl>
+            </details>
+          </li>
+        ))}
+      </ol>
+    </div>
   )
 }
 
@@ -721,6 +726,7 @@ function formatTeamAction(item = {}) {
 function formatNormalDetail(item = {}) {
   if (item.id === 'access') return `페이지 접속에 성공했습니다.${item.value ? ` ${item.value.replace(/^접속 가능\s*·\s*/, '')}` : ''}`
   if (item.id === 'images') return `${item.value || '이미지 로딩이 정상입니다.'}`
+  if (item.id === 'resource-size') return '1MB 이상으로 수집된 리소스가 없습니다.'
   return `${item.title || '검사 항목'}: ${item.value || '정상'}`
 }
 

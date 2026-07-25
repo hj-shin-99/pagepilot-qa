@@ -1,80 +1,88 @@
+const MARKUP_ACCESSIBILITY_PRIMARY_IDS = ['meta', 'image-alt', 'external-links']
+const MARKUP_ACCESSIBILITY_DETAIL_IDS = ['meta', 'image-alt', 'external-links', 'headings', 'duplicate-ids', 'forms', 'unlabeled-clickables']
+
 export function createTechPanelDisplayModel(result = {}, view = {}) {
-  const priorityRows = createTechPriorityRows(view)
-  const priorityCounts = countPriorityRows(priorityRows)
+  const detailRows = createTechDetailRows(view)
   const completion = createTechCompletion(result, view)
 
   return {
     completion,
-    priorityRows,
-    priorityCounts,
+    detailRows,
   }
 }
 
-export function createTechPriorityRows(view = {}) {
-  const clickRows = createClickPriorityRows(view)
-  const sourceRows = Array.isArray(view.allItems) && view.allItems.length > 0 ? view.allItems : Array.isArray(view.priorityItems) ? view.priorityItems : []
-  const nonClickRows = sourceRows.filter(isDisplayPriorityRow)
-  return clickRows.concat(nonClickRows)
-}
+export function createTechDetailRows(view = {}) {
+  const basicRows = arrayOfObjects(view.basicCheckItems).map((item) => createDetailRowItem(item, getBasicCheckDetailId(item)))
+  const linkRows = arrayOfObjects(view.links).map((item, index) => createDetailRowItem(item, getTechDetailRowId('tech-link', item, index)))
+  const clickRows = createClickDetailRows(view.clickActionGroups)
+  const landingRows = createLandingDetailRows(view.landingPageGroups)
+  const markupRows = createMarkupDetailRows(view.checkItems)
 
-function isDisplayPriorityRow(item = {}) {
-  if (item.status === 'ok') return false
-  if (item.id === 'click-actions') return false
-  if (item.id === 'bad-links') return false
-  if (item.id === 'missing-href') return false
-  return true
-}
-
-function createClickPriorityRows(view = {}) {
-  const groups = view.clickActionGroups || {}
-  const clickCheck = Array.isArray(view.checkItems) ? view.checkItems.find((item) => item.id === 'click-actions') : null
-  const base = clickCheck || {
-    id: 'click-actions',
-    type: 'check',
-    section: 'frontend',
-    owner: 'UID팀',
-    categoryLabel: 'UI QA',
-    priority: 4,
+  return {
+    basicRows,
+    linkRows,
+    clickRows,
+    landingRows,
+    markupRows,
   }
-  const rows = []
-  const actualErrors = Array.isArray(groups.actualErrors) ? groups.actualErrors : []
-  const warnings = Array.isArray(groups.warnings) ? groups.warnings : []
+}
 
-  if (actualErrors.length > 0) {
-    rows.push({
-      ...base,
-      id: 'click-actions-actual-errors',
-      title: '클릭 동작 오류',
-      status: 'error',
-      value: `실제 오류 ${actualErrors.length}개`,
-      problemItems: actualErrors,
-      detailTargetId: 'tech-click-actual-errors',
-      priority: Number(base.priority || 4),
+function createClickDetailRows(groups = {}) {
+  const items = arrayOfObjects(groups.actualErrors)
+    .concat(arrayOfObjects(groups.warnings), arrayOfObjects(groups.safeSkipped), arrayOfObjects(groups.uiControls), arrayOfObjects(groups.verified))
+
+  return items.map((item, index) => {
+    const rowId = getTechDetailRowId('tech-click', item, index)
+    const status = getClickDetailStatus(item)
+    return {
+      ...item,
+      id: item.id || rowId,
+      rowId,
+      rowKey: rowId,
+      detailTargetId: rowId,
+      status,
+      title: getClickDetailTitle(item),
+      value: getClickDetailValue(item),
+      owner: 'UID팀',
+      categoryLabel: 'UI',
+    }
+  })
+}
+
+function createLandingDetailRows(groups = {}) {
+  const items = arrayOfObjects(groups.errors).concat(arrayOfObjects(groups.warnings), arrayOfObjects(groups.normals))
+  return items.map((item, index) => {
+    const rowId = getTechDetailRowId('tech-landing', item, index)
+    return {
+      ...item,
+      id: item.id || rowId,
+      rowId,
+      rowKey: rowId,
+      detailTargetId: rowId,
+      title: item.label || '랜딩 페이지',
+      value: formatLandingResult(item),
+      owner: getLandingOwner(item),
+      categoryLabel: 'UI',
+    }
+  })
+}
+
+function createMarkupDetailRows(checkItems = []) {
+  return arrayOfObjects(checkItems)
+    .filter((item) => {
+      if (MARKUP_ACCESSIBILITY_PRIMARY_IDS.includes(item.id)) return true
+      return MARKUP_ACCESSIBILITY_DETAIL_IDS.includes(item.id) && item.status !== 'ok'
     })
-  }
-
-  if (warnings.length > 0) {
-    rows.push({
-      ...base,
-      id: 'click-actions-warnings',
-      title: '클릭 동작 확인 필요',
-      status: 'warn',
-      value: `확인 필요 ${warnings.length}개`,
-      problemItems: warnings,
-      detailTargetId: 'tech-click-warnings',
-      priority: Number(base.priority || 4) + 0.1,
-    })
-  }
-
-  return rows
+    .map((item) => createDetailRowItem(item, getMarkupDetailId(item)))
 }
 
-function countPriorityRows(rows = []) {
-  return rows.reduce((counts, row) => {
-    if (row.status === 'error') return { ...counts, error: counts.error + 1 }
-    if (row.status === 'warn') return { ...counts, warn: counts.warn + 1 }
-    return counts
-  }, { error: 0, warn: 0 })
+function createDetailRowItem(item = {}, rowId = '') {
+  return {
+    ...item,
+    rowId,
+    rowKey: rowId,
+    detailTargetId: rowId,
+  }
 }
 
 function createTechCompletion(result = {}, view = {}) {
@@ -198,4 +206,77 @@ function hasMarkupChecks(checks = []) {
 function getPositiveNumber(value) {
   const number = Number(value || 0)
   return Number.isFinite(number) && number > 0 ? number : null
+}
+
+export function getBasicCheckDetailId(item = {}) {
+  return `tech-basic-${normalizeRowId(item.id || item.title || 'check')}`
+}
+
+export function getMarkupDetailId(item = {}) {
+  return `tech-markup-${normalizeRowId(item.id || item.title || 'check')}`
+}
+
+function getTechDetailRowId(prefix, item = {}, index = 0) {
+  const identity = [
+    item.id,
+    item.auditId,
+    item.selector,
+    item.finalUrl,
+    item.requestedUrl,
+    item.url,
+    item.href,
+    item.label,
+    item.title,
+    item.text,
+    item.category,
+    index,
+  ].filter((value) => value !== undefined && value !== null && value !== '').join('-')
+  return `${prefix}-${normalizeRowId(identity || `row-${index}`)}`
+}
+
+function normalizeRowId(value) {
+  return String(value || 'row')
+    .replace(/[^a-z0-9_-]+/gi, '-')
+    .replace(/^-|-$/g, '')
+    .toLowerCase()
+}
+
+function arrayOfObjects(value) {
+  return Array.isArray(value) ? value.filter((item) => item && typeof item === 'object') : []
+}
+
+function getClickDetailStatus(item = {}) {
+  if (item.actionClassification === 'actual-error' || item.status === 'error') return 'error'
+  if (item.actionClassification === 'actionable-warning' || item.status === 'warn') return 'warn'
+  if (item.actionClassification === 'safe-click-skipped') return 'info'
+  return 'ok'
+}
+
+function getClickDetailTitle(item = {}) {
+  return item.label || item.text || item.ariaLabel || item.title || item.url || '클릭 요소'
+}
+
+function getClickDetailValue(item = {}) {
+  if (item.actionClassification === 'actual-error') return item.reason || item.category || '실제 클릭 오류가 확인되었습니다.'
+  if (item.actionClassification === 'actionable-warning') return item.reason || item.category || '자동 검사에서 동작 여부를 확정하지 못했습니다.'
+  if (item.status === 'error') return item.reason || item.message || item.category || '오류가 확인되었습니다.'
+  if (item.status === 'warn') return item.reason || item.message || item.category || '확인이 필요한 항목입니다.'
+  return item.reason || item.note || '정상으로 확인되었습니다.'
+}
+
+function formatLandingResult(item = {}) {
+  const status = item.status === 'error' || item.category === 'http-5xx' || item.category === 'http-4xx' || item.category === 'blank-screen'
+    ? '오류'
+    : item.status === 'warn' ? '확인 필요' : '정상'
+  const parts = []
+  parts.push(`${status}${item.statusCode ? ` · HTTP ${item.statusCode}` : ''}`)
+  if (item.note) parts.push(item.note)
+  return parts.join(' · ')
+}
+
+function getLandingOwner(item = {}) {
+  if (item.category === 'http-5xx' || item.category === 'navigation-failed') return '개발팀'
+  if (item.category === 'timeout' || item.category === 'restricted') return 'UID팀'
+  if (item.status === 'error' && Number(item.statusCode || 0) >= 500) return '개발팀'
+  return 'UID팀'
 }

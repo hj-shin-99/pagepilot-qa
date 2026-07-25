@@ -4559,41 +4559,11 @@
 #tech-basic-section,
 #tech-links-section,
 #tech-click-section,
-#tech-click-actual-errors,
-#tech-click-warnings,
 #tech-landing-section,
 #tech-markup-accessibility-section,
+.tech-row-with-details,
 .tech-markup-check-row {
   scroll-margin-top: 24px;
-}
-
-.tech-priority-row {
-  min-height: 44px;
-  color: inherit;
-  text-decoration: none;
-}
-
-.tech-detail-jump {
-  display: inline-flex;
-  width: 28px;
-  height: 28px;
-  align-items: center;
-  justify-content: center;
-  justify-self: start;
-  border-radius: 6px;
-  color: #667085;
-  text-decoration: none;
-  line-height: 1;
-}
-
-.tech-detail-jump:hover {
-  color: #175cd3;
-  background: #f2f4f7;
-}
-
-.tech-detail-jump:focus-visible {
-  outline: 3px solid var(--focus-line);
-  outline-offset: 2px;
 }
 
 .tech-markup-check-list {
@@ -5066,20 +5036,6 @@
   .tech-click-issue-row {
     grid-template-columns: 1fr;
     align-items: start;
-  }
-
-  .tech-priority-row {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .tech-priority-row > :not(.tech-detail-jump) {
-    grid-column: 1;
-  }
-
-  .tech-priority-row > .tech-detail-jump {
-    grid-column: 2;
-    grid-row: 1;
-    justify-self: end;
   }
 
   .tech-compact-table .tech-table-row > .tech-row-summary,

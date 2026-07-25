@@ -19,6 +19,7 @@ const BASIC_CHECK_ORDER = [
   'title',
   'console-errors',
   'images',
+  'resource-size',
   'links',
   'missing-href',
   'mobile',
@@ -74,7 +75,6 @@ export function createTechQaViewModel(result = {}) {
   const normalCheckItems = checkItems.filter((item) => item.status === 'ok').sort(comparePriorityItems)
   const counts = countStatuses(allItems)
   const issueCounts = createTechQaCounts(checkItems, rawPriorityItems)
-  const priorityCounts = { error: issueCounts.errorUniqueElementCount, warn: issueCounts.warningUniqueElementCount, ok: 0 }
   const statusMessage = issueCounts.errorUniqueElementCount > 0
     ? `오류 ${issueCounts.errorUniqueElementCount}개 · ${issueCounts.errorCheckCount}개 검사에서 발견되었습니다.`
     : issueCounts.warningUniqueElementCount > 0
@@ -88,7 +88,6 @@ export function createTechQaViewModel(result = {}) {
     statusMessage,
     counts,
     issueCounts,
-    priorityCounts,
     summaryCards: createSummaryCards(result, issueCounts, linkSummary),
     checkItems,
     basicCheckItems: createBasicCheckItems(checkItems),
@@ -130,15 +129,49 @@ export function createLinkItems(links = []) {
 }
 
 export function getVisibleLinkGroups(links = [], normalLimit = 5, warnLimit = 5) {
-  const errors = links.filter((link) => link.status === 'error')
-  const warnings = links.filter((link) => link.status === 'warn')
-  const normals = links.filter((link) => link.status === 'ok')
+  const visibility = getSectionVisibility(links, { maxVisible: Math.max(Number(normalLimit || 0), Number(warnLimit || 0), 5) })
   return {
-    errors,
-    warnings: warnings.slice(0, warnLimit),
-    hiddenWarnings: warnings.slice(warnLimit),
-    normals: normals.slice(0, normalLimit),
-    hiddenNormals: normals.slice(normalLimit),
+    errors: visibility.visibleByStatus.error,
+    warnings: visibility.visibleByStatus.warn,
+    normals: visibility.visibleByStatus.ok,
+    hiddenErrors: visibility.hiddenByStatus.error,
+    hiddenWarnings: visibility.hiddenByStatus.warn,
+    hiddenNormals: visibility.hiddenByStatus.ok,
+    visibleItems: visibility.visibleItems,
+    hiddenItems: visibility.hiddenItems,
+    hiddenCount: visibility.hiddenItems.length,
+    total: visibility.totalCount,
+  }
+}
+
+export function getSectionVisibility(items = [], options = {}) {
+  const maxVisible = Number(options.maxVisible || 5)
+  const getStatus = typeof options.getStatus === 'function' ? options.getStatus : (item) => item?.status
+  const statusOrder = Array.isArray(options.statusOrder) && options.statusOrder.length > 0 ? options.statusOrder : ['error', 'warn', 'ok']
+  const visibleByStatus = Object.fromEntries(statusOrder.map((status) => [status, []]))
+  const hiddenByStatus = Object.fromEntries(statusOrder.map((status) => [status, []]))
+  const remainingItems = []
+  let remainingVisibleSlots = Math.max(0, maxVisible)
+
+  statusOrder.forEach((status) => {
+    const bucket = items.filter((item) => normalizeVisibilityStatus(getStatus(item)) === status)
+    const visibleCount = Math.min(bucket.length, remainingVisibleSlots)
+    visibleByStatus[status] = bucket.slice(0, visibleCount)
+    hiddenByStatus[status] = bucket.slice(visibleCount)
+    remainingVisibleSlots -= visibleCount
+  })
+
+  items.forEach((item) => {
+    const normalizedStatus = normalizeVisibilityStatus(getStatus(item))
+    if (!statusOrder.includes(normalizedStatus)) remainingItems.push(item)
+  })
+
+  return {
+    visibleByStatus,
+    hiddenByStatus,
+    visibleItems: statusOrder.flatMap((status) => visibleByStatus[status]).concat(remainingVisibleSlots > 0 ? remainingItems.slice(0, remainingVisibleSlots) : []),
+    hiddenItems: statusOrder.flatMap((status) => hiddenByStatus[status]).concat(remainingVisibleSlots > 0 ? remainingItems.slice(remainingVisibleSlots) : remainingItems),
+    totalCount: items.length,
   }
 }
 
@@ -220,15 +253,17 @@ function createSections(checkItems, links) {
 }
 
 function createVisibleItems(items = []) {
-  const errors = items.filter((item) => item.status === 'error')
-  const warnings = items.filter((item) => item.status === 'warn')
-  const normals = items.filter((item) => item.status === 'ok')
+  const visibility = getSectionVisibility(items)
   return {
-    errors,
-    warnings: warnings.slice(0, 5),
-    hiddenWarnings: warnings.slice(5),
-    normals: normals.slice(0, 5),
-    hiddenNormals: normals.slice(5),
+    errors: visibility.visibleByStatus.error,
+    warnings: visibility.visibleByStatus.warn,
+    hiddenErrors: visibility.hiddenByStatus.error,
+    hiddenWarnings: visibility.hiddenByStatus.warn,
+    normals: visibility.visibleByStatus.ok,
+    hiddenNormals: visibility.hiddenByStatus.ok,
+    visibleItems: visibility.visibleItems,
+    hiddenItems: visibility.hiddenItems,
+    hiddenCount: visibility.hiddenItems.length,
   }
 }
 
@@ -360,6 +395,11 @@ function getObjectiveCheckValue(check = {}, context = {}, problemItems = []) {
   if (check.id === 'title') return check.value ? `수집됨 · ${check.value}` : result.pageTitle ? `수집됨 · ${result.pageTitle}` : '비어 있음'
   if (check.id === 'console-errors') return formatConsoleCheckValue(check, items)
   if (check.id === 'images') return `총 ${getImageTotal(check, result, items)}개 · 실패 ${getProblemCount(check, problemItems)}개`
+  if (check.id === 'resource-size') {
+    if (problemCount > 0) return `기준 초과 ${problemCount}개`
+    if (normalizeStatus(check.status) === 'warn') return check.value || '확인 필요'
+    return '큰 리소스 없음'
+  }
   if (check.id === 'links') return `총 ${getLinkTotal(check, linkSummary)}개 · 요청 오류 ${Number(linkSummary.error || 0)}개`
   if (check.id === 'missing-href') return `총 ${getButtonTotal(result, check)}개 · URL 확인 필요 ${problemCount}개`
   if (check.id === 'mobile') return formatMobileCheckValue(check, result)
@@ -729,6 +769,11 @@ function normalizeStatus(status) {
   if (status === 'error' || status === '오류') return 'error'
   if (status === 'warn' || status === 'warning' || status === 'check' || status === '확인 필요') return 'warn'
   return 'ok'
+}
+
+function normalizeVisibilityStatus(status) {
+  if (status === 'info' || status === '참고') return 'info'
+  return normalizeStatus(status)
 }
 
 function arrayOfObjects(value) {

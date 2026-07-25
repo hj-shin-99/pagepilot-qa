@@ -1,8 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import { createLinkItems, createTechQaViewModel, getVisibleLinkGroups } from './techQa.js'
-import { createTechPanelDisplayModel, resolveTechQaEngine } from './techQaPanelView.js'
+import { createLinkItems, createTechQaViewModel, getSectionVisibility, getVisibleLinkGroups } from './techQa.js'
+import { createTechDetailRows, createTechPanelDisplayModel, resolveTechQaEngine } from './techQaPanelView.js'
 
 test('A normal internal links show first five and preserve all twelve', () => {
   const view = createTechQaViewModel(result({ links: Array.from({ length: 12 }, (_, index) => link({ label: `Link ${index + 1}`, url: `https://example.com/${index + 1}` })) }))
@@ -25,9 +25,77 @@ test('B errors are all visible before normal links', () => {
   const groups = getVisibleLinkGroups(view.links)
 
   assert.equal(groups.errors.length, 2)
-  assert.equal(groups.normals.length, 5)
+  assert.equal(groups.normals.length, 3)
+  assert.equal(groups.hiddenNormals.length, 7)
   assert.equal(view.links[0].status, 'error')
   assert.equal(view.links[1].status, 'error')
+})
+
+test('B-1 section visibility keeps only first five error rows when errors exceed the limit', () => {
+  const groups = getVisibleLinkGroups(Array.from({ length: 6 }, (_, index) => link({ label: `Error ${index + 1}`, status: 'error', statusCode: 404, category: 'http-4xx', url: `https://example.com/error-${index}` })))
+
+  assert.equal(groups.errors.length, 5)
+  assert.equal(groups.hiddenErrors.length, 1)
+  assert.equal(groups.visibleItems.length, 5)
+  assert.equal(groups.hiddenItems.length, 1)
+})
+
+test('B-2 section visibility fills remaining slots with warnings after errors', () => {
+  const groups = getVisibleLinkGroups([
+    ...Array.from({ length: 2 }, (_, index) => link({ label: `Error ${index + 1}`, status: 'error', statusCode: 500, category: 'http-5xx', url: `https://example.com/error-${index}` })),
+    ...Array.from({ length: 4 }, (_, index) => link({ label: `Warn ${index + 1}`, status: 'warn', category: 'redirect', statusCode: 301, url: `https://example.com/warn-${index}` })),
+  ])
+
+  assert.equal(groups.errors.length, 2)
+  assert.equal(groups.warnings.length, 3)
+  assert.equal(groups.hiddenWarnings.length, 1)
+  assert.equal(groups.visibleItems.length, 5)
+  assert.equal(groups.hiddenItems.length, 1)
+})
+
+test('B-3 section visibility fills remaining slots with normal rows after warnings', () => {
+  const groups = getVisibleLinkGroups([
+    link({ label: 'Warn 1', status: 'warn', category: 'redirect', statusCode: 301, url: 'https://example.com/warn-1' }),
+    ...Array.from({ length: 72 }, (_, index) => link({ label: `OK ${index + 1}`, url: `https://example.com/ok-${index}` })),
+  ])
+
+  assert.equal(groups.warnings.length, 1)
+  assert.equal(groups.normals.length, 4)
+  assert.equal(groups.hiddenNormals.length, 68)
+  assert.equal(groups.visibleItems.length, 5)
+  assert.equal(groups.hiddenItems.length, 68)
+})
+
+test('B-4 section visibility keeps only five normal rows when all rows are normal', () => {
+  const groups = getVisibleLinkGroups(Array.from({ length: 73 }, (_, index) => link({ label: `OK ${index + 1}`, url: `https://example.com/ok-${index}` })))
+
+  assert.equal(groups.errors.length, 0)
+  assert.equal(groups.warnings.length, 0)
+  assert.equal(groups.normals.length, 5)
+  assert.equal(groups.hiddenNormals.length, 68)
+})
+
+test('B-5 section visibility keeps all rows visible when the total is five or less', () => {
+  const groups = getVisibleLinkGroups(Array.from({ length: 5 }, (_, index) => link({ label: `OK ${index + 1}`, url: `https://example.com/ok-${index}` })))
+
+  assert.equal(groups.visibleItems.length, 5)
+  assert.equal(groups.hiddenItems.length, 0)
+  assert.equal(groups.hiddenCount, 0)
+})
+
+test('B-6 section visibility keeps visible and hidden items disjoint while preserving total count', () => {
+  const view = createTechQaViewModel(result({
+    links: [
+      ...Array.from({ length: 2 }, (_, index) => link({ label: `Error ${index + 1}`, status: 'error', statusCode: 404, category: 'http-4xx', url: `https://example.com/error-${index}` })),
+      ...Array.from({ length: 2 }, (_, index) => link({ label: `Warn ${index + 1}`, status: 'warn', category: 'redirect', statusCode: 301, url: `https://example.com/warn-${index}` })),
+      ...Array.from({ length: 4 }, (_, index) => link({ label: `OK ${index + 1}`, url: `https://example.com/ok-${index}` })),
+    ],
+  }))
+  const groups = getVisibleLinkGroups(view.links)
+  const visibleKeys = new Set(groups.visibleItems.map((item) => item.id))
+
+  assert.equal(groups.hiddenItems.some((item) => visibleKeys.has(item.id)), false)
+  assert.equal(groups.visibleItems.length + groups.hiddenItems.length, 8)
 })
 
 test('C missing href navigation CTA is error with frontend publishing owner', () => {
@@ -224,19 +292,23 @@ test('compact Tech QA source keeps table UI and closed detail policy', () => {
   assert.equal(source.includes('TechCompletionCard'), true)
   assert.equal(source.includes('tech-completion-card'), true)
   assert.equal(source.includes('우선 확인 결과 ${display.priorityRows.length}개'), false)
-  assert.equal(source.includes('우선 확인 결과 ${display.priorityRows.length}건'), true)
-  assert.equal(source.includes('우선 확인 결과가 없습니다.'), true)
+  assert.equal(source.includes('우선 확인 결과 ${display.priorityRows.length}건'), false)
+  assert.equal(source.includes('우선 확인 결과가 없습니다.'), false)
+  assert.equal(source.includes('Tech QA 검사가 완료되었습니다. 아래 항목에서 오류 및 확인 필요 결과를 확인해 주세요.'), true)
   assert.equal(source.includes('tech-compact-table'), true)
   assert.equal(source.includes('tech-link-table'), true)
   assert.equal(source.includes('tech-owner-badge'), true)
-  assert.equal(source.includes('정상 링크 ${groups.hiddenNormals.length}개 더보기'), true)
+  assert.equal(source.includes('display.priorityVisibility.visibleItems'), false)
+  assert.equal(source.includes('CollapsedPriorityRows'), false)
+  assert.equal(source.includes('PriorityTableRow'), false)
+  assert.equal(source.includes('getCollapsedResultsLabel(groups.hiddenCount)'), true)
   assert.equal(source.includes('전체 검사 항목'), false)
   assert.equal(source.includes('주요 검사 결과'), true)
   assert.equal(source.includes('정상 검사 {view.normalCheckItems.length}개 펼치기'), false)
   assert.equal(source.includes('tech-click-summary'), false)
   assert.equal(source.includes('tech-click-issue-table'), true)
-  assert.equal(source.includes('안전상 클릭 생략 ${safeSkipped.length}개 보기'), true)
-  assert.equal(source.includes('정상 동작 ${normalItems.length}개 더보기'), true)
+  assert.equal(source.includes('const visibility = getSectionVisibility(rows, { maxVisible: 5'), true)
+  assert.equal(source.includes('getCollapsedResultsLabel(visibility.hiddenItems.length)'), true)
   assert.equal(source.includes('랜딩 페이지 검사'), true)
   assert.equal(source.includes('검사할 URL 이동 또는 새 창 결과가 없습니다.'), true)
   assert.equal(source.includes('groups.definitions.map'), false)
@@ -282,6 +354,16 @@ test('Tech QA source defines separated click action display groups', () => {
   assert.equal(source.includes('정상 검증 완료'), true)
 })
 
+test('Tech QA priority implementation does not hardcode specific sites or hostname branches', () => {
+  const panelSource = fs.readFileSync('src/components/TechQaPanel.jsx', 'utf8')
+  const viewSource = fs.readFileSync('src/utils/techQaPanelView.js', 'utf8')
+  const utilSource = fs.readFileSync('src/utils/techQa.js', 'utf8')
+  const combined = [panelSource, viewSource, utilSource].join('\n')
+
+  assert.equal(/BMW|NAVER/.test(combined), false)
+  assert.equal(/hostname\s*===|location\.hostname|includes\(['"]naver|includes\(['"]bmw/i.test(combined), false)
+})
+
 test('Tech QA click action detail preserves technical evidence items', () => {
   const view = createTechQaViewModel(result({
     checks: [check({
@@ -312,83 +394,6 @@ test('Tech QA click action detail preserves technical evidence items', () => {
   assert.equal(item.raw.items[0].selector, '#apply')
 })
 
-test('Tech QA panel priority A splits click states and matches rendered row counts', () => {
-  const view = createTechQaViewModel(result({
-    images: Array.from({ length: 25 }, (_, index) => ({ src: `https://example.com/image-${index}.png` })),
-    links: [link({ label: 'Pseudo CTA', status: 'warn', category: 'javascript-pseudo-url', href: 'javascript:void(0)', url: '', selector: '#pseudo' })],
-    checks: [
-      check({ id: 'click-actions', status: 'error' }),
-      check({ id: 'meta', status: 'warn', items: [{ label: 'Meta description', status: 'warn' }] }),
-      check({ id: 'image-alt', status: 'warn', items: [{ src: 'https://example.com/missing-alt.png', status: 'warn' }] }),
-      check({ id: 'external-links', status: 'warn', totalCount: 12, items: [{ href: 'https://external.example', status: 'warn' }] }),
-    ],
-    clickActions: [
-      clickAction({ label: 'Blocked', selector: '#blocked', actionClassification: 'actual-error', status: 'error' }),
-      clickAction({ label: 'Ambiguous', selector: '#ambiguous', actionClassification: 'actionable-warning', status: 'warn' }),
-    ],
-  }))
-  const display = createTechPanelDisplayModel({}, view)
-
-  assert.equal(display.priorityRows.length, 6)
-  assert.equal(display.priorityCounts.error, 1)
-  assert.equal(display.priorityCounts.warn, 5)
-  assert.deepEqual(display.priorityRows.slice(0, 2).map((item) => item.title), ['클릭 동작 오류', '클릭 동작 확인 필요'])
-  assert.equal(display.priorityRows.find((item) => item.id === 'click-actions-actual-errors').value, '실제 오류 1개')
-  assert.equal(display.priorityRows.find((item) => item.id === 'click-actions-warnings').value, '확인 필요 1개')
-})
-
-test('Tech QA panel priority B only creates click warning row when click error is zero', () => {
-  const view = createTechQaViewModel(result({
-    checks: [check({ id: 'click-actions', status: 'warn' })],
-    clickActions: [clickAction({ actionClassification: 'actionable-warning', status: 'warn' })],
-  }))
-  const display = createTechPanelDisplayModel({}, view)
-
-  assert.equal(display.priorityRows.filter((item) => String(item.id).startsWith('click-actions')).length, 1)
-  assert.equal(display.priorityRows[0].id, 'click-actions-warnings')
-  assert.equal(display.priorityCounts.error, 0)
-  assert.equal(display.priorityCounts.warn, 1)
-})
-
-test('Tech QA panel priority C creates one click error row for multiple actual errors', () => {
-  const view = createTechQaViewModel(result({
-    checks: [check({ id: 'click-actions', status: 'error' })],
-    clickActions: [
-      clickAction({ label: 'Error 1', actionClassification: 'actual-error', status: 'error' }),
-      clickAction({ label: 'Error 2', actionClassification: 'actual-error', status: 'error' }),
-    ],
-  }))
-  const display = createTechPanelDisplayModel({}, view)
-
-  assert.equal(display.priorityRows.length, 1)
-  assert.equal(display.priorityRows[0].id, 'click-actions-actual-errors')
-  assert.equal(display.priorityRows[0].value, '실제 오류 2개')
-  assert.equal(display.priorityCounts.error, 1)
-})
-
-test('Tech QA panel priority D counts image alt as one row while preserving problem count in value', () => {
-  const view = createTechQaViewModel(result({
-    images: Array.from({ length: 25 }, (_, index) => ({ src: `https://example.com/image-${index}.png` })),
-    checks: [check({ id: 'image-alt', status: 'warn', items: Array.from({ length: 5 }, (_, index) => ({ src: `https://example.com/missing-alt-${index}.png`, status: 'warn' })) })],
-  }))
-  const display = createTechPanelDisplayModel({}, view)
-
-  assert.equal(display.priorityRows.length, 1)
-  assert.equal(display.priorityRows[0].id, 'image-alt')
-  assert.equal(display.priorityRows[0].value, '총 25개 · alt 확인 필요 5개')
-  assert.equal(display.priorityCounts.warn, 1)
-})
-
-test('Tech QA panel priority E keeps completion card and empty priority state when no issues exist', () => {
-  const view = createTechQaViewModel(result({ checks: [check({ id: 'access', status: 'ok' })] }))
-  const display = createTechPanelDisplayModel(result(), view)
-
-  assert.equal(display.priorityRows.length, 0)
-  assert.equal(display.priorityCounts.error, 0)
-  assert.equal(display.priorityCounts.warn, 0)
-  assert.equal(display.completion.title, 'Tech QA 검사 완료')
-})
-
 test('Tech QA priority count excludes safe click skips and normal UI controls', () => {
   const view = createTechQaViewModel(result({
     checks: [check({
@@ -407,7 +412,6 @@ test('Tech QA priority count excludes safe click skips and normal UI controls', 
 
   assert.equal(clickItem.status, 'ok')
   assert.equal(view.priorityItems.some((item) => item.id === 'click-actions'), false)
-  assert.equal(view.priorityCounts.warn, 0)
   assert.equal(view.issueCounts.warningElementCount, 0)
   assert.equal(view.clickActionGroups.safeSkipped.length, 1)
   assert.equal(view.clickActionGroups.uiControls.length, 1)
@@ -470,8 +474,24 @@ test('landing page groups reuse existing visible row limits for initial display 
 
   assert.equal(visible.warnings.length, 5)
   assert.equal(visible.hiddenWarnings.length, 2)
-  assert.equal(visible.normals.length, 5)
-  assert.equal(visible.hiddenNormals.length, 3)
+  assert.equal(visible.normals.length, 0)
+  assert.equal(visible.hiddenNormals.length, 8)
+  assert.equal(visible.visibleItems.length, 5)
+  assert.equal(visible.hiddenItems.length, 10)
+})
+
+test('click section visibility applies the same first-five rule with error warn info and normal ordering', () => {
+  const visibility = getSectionVisibility([
+    ...Array.from({ length: 2 }, (_, index) => ({ id: `error-${index}`, displayStatus: 'error' })),
+    ...Array.from({ length: 4 }, (_, index) => ({ id: `warn-${index}`, displayStatus: 'warn' })),
+    ...Array.from({ length: 3 }, (_, index) => ({ id: `info-${index}`, displayStatus: 'info' })),
+    ...Array.from({ length: 6 }, (_, index) => ({ id: `ok-${index}`, displayStatus: 'ok' })),
+  ], { maxVisible: 5, getStatus: (item) => item.displayStatus, statusOrder: ['error', 'warn', 'info', 'ok'] })
+  const visibleIds = visibility.visibleItems.map((item) => item.id)
+
+  assert.deepEqual(visibleIds, ['error-0', 'error-1', 'warn-0', 'warn-1', 'warn-2'])
+  assert.equal(visibility.hiddenItems.length, 10)
+  assert.equal(new Set(visibility.visibleItems.map((item) => item.id)).size, 5)
 })
 
 test('click display fixture keeps only actual errors and actionable warnings in body counts', () => {
@@ -526,7 +546,7 @@ test('same CTA in link and click warning is counted once and shown once in prior
   assert.equal(view.issueCounts.warningCheckCount, 2)
 })
 
-test('Tech QA panel priority rows do not use deduped evidence counts as row counts', () => {
+test('Tech QA detail rows keep link and click entries separate even when evidence is deduped elsewhere', () => {
   const scanResult = result({
     links: [link({ label: 'Apply', status: 'warn', category: 'javascript-pseudo-url', href: 'javascript:void(0)', url: '', selector: '#same-cta' })],
     checks: [check({ id: 'click-actions', status: 'warn' })],
@@ -536,8 +556,8 @@ test('Tech QA panel priority rows do not use deduped evidence counts as row coun
   const display = createTechPanelDisplayModel(scanResult, view)
 
   assert.equal(view.issueCounts.warningUniqueElementCount, 1)
-  assert.equal(display.priorityRows.filter((item) => item.type === 'link' || String(item.id).startsWith('click-actions')).length, 2)
-  assert.equal(display.priorityCounts.warn, 2)
+  assert.equal(display.detailRows.linkRows.filter((item) => item.status === 'warn').length, 1)
+  assert.equal(display.detailRows.clickRows.filter((item) => item.status === 'warn').length, 1)
 })
 
 test('console repeated duplicate contributes one top-level element and preserves repeatCount', () => {
@@ -650,6 +670,7 @@ test('basic diagnostic table keeps normal rows visible without accordion', () =>
       check({ id: 'title', status: 'ok', value: 'Example' }),
       check({ id: 'console-errors', status: 'ok', value: 'first-party 0 · third-party 0' }),
       check({ id: 'images', status: 'ok', value: '25개 중 실패 0' }),
+      check({ id: 'resource-size', status: 'ok', value: '0개 확인 필요', detail: '1MB 이상으로 수집된 리소스가 없습니다.' }),
       check({ id: 'links', status: 'ok', value: '10개' }),
       check({ id: 'missing-href', status: 'ok', value: '0개' }),
       check({ id: 'mobile', status: 'ok', value: '200' }),
@@ -660,11 +681,70 @@ test('basic diagnostic table keeps normal rows visible without accordion', () =>
     ],
   }))
 
-  assert.deepEqual(view.basicCheckItems.map((item) => item.id), ['access', 'http-status', 'title', 'console-errors', 'images', 'links', 'missing-href', 'mobile', 'headings', 'duplicate-ids', 'network-failures', 'forms'])
+  assert.deepEqual(view.basicCheckItems.map((item) => item.id), ['access', 'http-status', 'title', 'console-errors', 'images', 'resource-size', 'links', 'missing-href', 'mobile', 'headings', 'duplicate-ids', 'network-failures', 'forms'])
   assert.equal(view.basicCheckItems.every((item) => item.status === 'ok'), true)
   assert.equal(view.basicCheckItems.find((item) => item.id === 'access').value, '접속 가능 · HTTP 200')
   assert.equal(view.basicCheckItems.find((item) => item.id === 'images').value, '총 25개 · 실패 0개')
+  assert.equal(view.basicCheckItems.find((item) => item.id === 'resource-size').value, '큰 리소스 없음')
   assert.equal(view.basicCheckItems.find((item) => item.id === 'links').value, '총 10개 · 요청 오류 0개')
+})
+
+test('resource size check remains in basic results and preserves raw evidence for detail rendering', () => {
+  const view = createTechQaViewModel(result({
+    checks: [check({
+      id: 'resource-size',
+      status: 'warn',
+      value: '1개 확인 필요',
+      detail: '1MB 이상으로 추정되는 큰 리소스가 있어 로딩 속도 확인이 필요합니다.',
+      items: [{ url: 'https://cdn.example.com/app.js', type: 'script', sizeBytes: 1572864 }],
+    })],
+  }))
+  const item = view.basicCheckItems.find((entry) => entry.id === 'resource-size')
+
+  assert.equal(item.status, 'warn')
+  assert.equal(item.value, '기준 초과 1개')
+  assert.equal(item.problemItems.length, 1)
+  assert.equal(item.problemItems[0].url, 'https://cdn.example.com/app.js')
+  assert.equal(item.problemItems[0].type, 'script')
+  assert.equal(item.problemItems[0].sizeBytes, 1572864)
+})
+
+test('resource size issue appears in both priority rows and basic detail rows', () => {
+  const scanResult = result({
+    checks: [check({
+      id: 'resource-size',
+      status: 'warn',
+      detail: '1MB 이상으로 추정되는 큰 리소스가 있어 로딩 속도 확인이 필요합니다.',
+      items: [{ url: 'https://cdn.example.com/app.js', type: 'script', sizeBytes: 1572864 }],
+    })],
+  })
+  const view = createTechQaViewModel(scanResult)
+  const display = createTechPanelDisplayModel(scanResult, view)
+
+  assert.equal(display.detailRows.basicRows.some((item) => item.id === 'resource-size' && item.status === 'warn'), true)
+  assert.equal(view.basicCheckItems.some((item) => item.id === 'resource-size'), true)
+})
+
+test('resource size ok state keeps a normal basic row without creating a priority row', () => {
+  const scanResult = result({
+    checks: [check({ id: 'resource-size', status: 'ok', detail: '1MB 이상으로 수집된 리소스가 없습니다.', items: [] })],
+  })
+  const view = createTechQaViewModel(scanResult)
+  const display = createTechPanelDisplayModel(scanResult, view)
+
+  assert.equal(view.basicCheckItems.some((item) => item.id === 'resource-size' && item.status === 'ok'), true)
+  assert.equal(display.detailRows.basicRows.some((item) => item.id === 'resource-size' && item.status === 'ok'), true)
+})
+
+test('resource size history fallback stays safe even when detail fields are missing', () => {
+  const view = createTechQaViewModel(result({
+    checks: [check({ id: 'resource-size', status: 'warn', value: '2개 확인 필요', items: [] })],
+  }))
+  const item = view.basicCheckItems.find((entry) => entry.id === 'resource-size')
+
+  assert.equal(item.status, 'warn')
+  assert.equal(item.value, '2개 확인 필요')
+  assert.deepEqual(item.problemItems, [])
 })
 
 test('generic Tech QA display A keeps all basic checks normal with objective counts', () => {
@@ -802,6 +882,25 @@ test('frontend owner badges are normalized to UID team or dev team only', () => 
   const owners = new Set(view.allItems.filter((item) => item.status !== 'ok').map((item) => item.owner))
 
   assert.deepEqual([...owners].sort(), ['UID팀', '개발팀'].sort())
+})
+
+test('priority detail rows can be recreated from display detail rows without loss', () => {
+  const view = createTechQaViewModel(result({
+    checks: [check({ id: 'meta', status: 'warn', items: [{ label: 'Meta description', status: 'warn' }] })],
+    clickActions: [clickAction({ label: 'Apply', selector: '#apply', actionClassification: 'actionable-warning', status: 'warn' })],
+  }))
+  const detailRows = createTechDetailRows(view)
+  const display = createTechPanelDisplayModel(result(), view)
+
+  assert.equal(Array.isArray(detailRows.basicRows), true)
+  assert.equal(Array.isArray(detailRows.linkRows), true)
+  assert.equal(Array.isArray(detailRows.clickRows), true)
+  assert.equal(Array.isArray(detailRows.landingRows), true)
+  assert.equal(Array.isArray(detailRows.markupRows), true)
+  assert.equal(detailRows.clickRows.every((item) => item.rowId && item.rowKey && item.detailTargetId === item.rowId), true)
+  assert.equal('priorityRows' in display, false)
+  assert.equal('priorityCounts' in display, false)
+  assert.equal('priorityVisibility' in display, false)
 })
 
 function result(overrides = {}) {

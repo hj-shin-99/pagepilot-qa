@@ -51,6 +51,9 @@ const CHECK_DEFINITIONS = {
   'mobile-overflow': { section: 'frontend', owner: 'UID팀', label: '모바일 가로 스크롤', description: '모바일 화면 너비보다 문서가 넓어지는지 확인합니다.' },
   'click-actions': { section: 'frontend', owner: 'UID팀', label: '클릭 동작', description: 'Playwright가 버튼, 메뉴, 링크 등 클릭 가능한 UI 요소를 실제로 조작하여 화면 반응을 확인합니다. URL 이동뿐 아니라 새 창, 탭 전환, 아코디언, 모달 등 클릭 전후의 상태 변화를 검사합니다.' },
   'landing-pages': { section: 'frontend', owner: 'UID팀', label: '랜딩 페이지', description: 'URL 이동 또는 새 창이 발생한 클릭 결과를 대상으로, 최종 도착 페이지가 정상적으로 열리는지 확인합니다. 응답 상태, 페이지 제목, 오류 화면 및 로딩 실패 여부를 함께 검사합니다.' },
+  'form-interaction': { section: 'frontend', owner: 'UID팀', label: 'Form QA', description: '페이지의 입력 필드와 선택 요소를 분석하여 필수값, 라벨 연결, 입력 형식 및 유효성 검사 상태를 확인합니다. 실제 데이터 전송 없이 사용자 입력 과정에서 발생하는 검증 반응을 검사합니다.' },
+  'hover-interaction': { section: 'frontend', owner: 'UID팀', label: 'Hover / Dropdown QA', description: '메뉴, 툴팁, 드롭다운 등 마우스 오버로 반응하는 UI 요소를 실제로 조작하여 노출 상태와 접근성 변화를 확인합니다. Hover 전후의 visibility, ARIA 상태 및 화면 이탈 여부를 검사합니다.' },
+  'modal-interaction': { section: 'frontend', owner: 'UID팀', label: 'Modal QA', description: '버튼이나 링크로 열리는 모달 UI를 조작하여 열기·닫기 동작, 키보드 접근성 및 배경 화면 제어 상태를 확인합니다. ESC, 닫기 버튼, 포커스 이동과 스크롤 잠금 여부를 함께 검사합니다.' },
   'unlabeled-clickables': { section: 'planning', owner: 'UID팀', label: '클릭 가능한 요소 이름', description: '버튼과 링크에 사용자용 이름이 있는지 확인합니다.' },
 }
 
@@ -66,6 +69,9 @@ export function createTechQaViewModel(result = {}) {
   const checks = arrayOfObjects(result.checks)
   const clickActionGroups = createClickActionGroups(result)
   const landingPageGroups = createLandingPageGroups(result)
+  const formInteractionGroups = createInteractionGroups(result, 'form-interaction', 'formInteractions', 'formAudit')
+  const hoverInteractionGroups = createInteractionGroups(result, 'hover-interaction', 'hoverInteractions', 'hoverAudit')
+  const modalInteractionGroups = createInteractionGroups(result, 'modal-interaction', 'modalInteractions', 'modalAudit')
   const links = createLinkItems(result.links)
   const linkSummary = createLinkSummary(links, result.linkAudit)
   const checkItems = checks.map((check) => createCheckItem(check, clickActionGroups, { result, linkSummary }))
@@ -97,6 +103,9 @@ export function createTechQaViewModel(result = {}) {
     linkSummary,
     clickActionGroups,
     landingPageGroups,
+    formInteractionGroups,
+    hoverInteractionGroups,
+    modalInteractionGroups,
     links,
     allItems: allItems.sort(comparePriorityItems),
     developer: createDeveloperInfo(result, linkSummary),
@@ -338,6 +347,21 @@ function createLandingPageGroups(result = {}) {
     total: items.length,
     hasTargets: landingCheck?.meta?.noTarget !== true && (items.length > 0 || Number(landingCheck?.meta?.candidateCount || 0) > 0),
     meta: landingCheck?.meta || result.landingAudit || {},
+  }
+}
+
+function createInteractionGroups(result = {}, checkId = '', resultField = '', auditField = '') {
+  const check = arrayOfObjects(result.checks).find((entry) => entry.id === checkId)
+  const items = arrayOfObjects(result[resultField]).length > 0 ? arrayOfObjects(result[resultField]) : arrayOfObjects(check?.items)
+  return {
+    items,
+    errors: items.filter((item) => normalizeInteractionItemStatus(item.status) === 'error'),
+    warnings: items.filter((item) => normalizeInteractionItemStatus(item.status) === 'warn'),
+    infos: items.filter((item) => normalizeInteractionItemStatus(item.status) === 'info'),
+    normals: items.filter((item) => normalizeInteractionItemStatus(item.status) === 'ok'),
+    total: items.length,
+    hasTargets: check?.meta?.noTarget !== true && (items.length > 0 || Number(check?.meta?.candidateCount || result[auditField]?.candidateCount || 0) > 0),
+    meta: check?.meta || result[auditField] || {},
   }
 }
 
@@ -773,6 +797,11 @@ function normalizeStatus(status) {
 
 function normalizeVisibilityStatus(status) {
   if (status === 'info' || status === '참고') return 'info'
+  return normalizeStatus(status)
+}
+
+function normalizeInteractionItemStatus(status) {
+  if (status === 'info' || status === 'skipped' || status === '참고' || status === '생략') return 'info'
   return normalizeStatus(status)
 }
 

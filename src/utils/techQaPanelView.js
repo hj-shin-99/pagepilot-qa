@@ -16,6 +16,9 @@ export function createTechDetailRows(view = {}) {
   const linkRows = arrayOfObjects(view.links).map((item, index) => createDetailRowItem(item, getTechDetailRowId('tech-link', item, index)))
   const clickRows = createClickDetailRows(view.clickActionGroups)
   const landingRows = createLandingDetailRows(view.landingPageGroups)
+  const formRows = createInteractionDetailRows(view.formInteractionGroups, 'tech-form')
+  const hoverRows = createInteractionDetailRows(view.hoverInteractionGroups, 'tech-hover')
+  const modalRows = createInteractionDetailRows(view.modalInteractionGroups, 'tech-modal')
   const markupRows = createMarkupDetailRows(view.checkItems)
 
   return {
@@ -23,6 +26,9 @@ export function createTechDetailRows(view = {}) {
     linkRows,
     clickRows,
     landingRows,
+    formRows,
+    hoverRows,
+    modalRows,
     markupRows,
   }
 }
@@ -62,6 +68,27 @@ function createLandingDetailRows(groups = {}) {
       title: item.label || '랜딩 페이지',
       value: formatLandingResult(item),
       owner: getLandingOwner(item),
+      categoryLabel: 'UI',
+    }
+  })
+}
+
+function createInteractionDetailRows(groups = {}, prefix = 'tech-interaction') {
+  const items = arrayOfObjects(groups.errors)
+    .concat(arrayOfObjects(groups.warnings), arrayOfObjects(groups.normals), arrayOfObjects(groups.infos))
+
+  return items.map((item, index) => {
+    const rowId = getTechDetailRowId(prefix, item, index)
+    return {
+      ...item,
+      id: item.id || rowId,
+      rowId,
+      rowKey: rowId,
+      detailTargetId: rowId,
+      status: getInteractionDetailStatus(item),
+      title: getInteractionDetailTitle(item),
+      value: getInteractionDetailValue(item),
+      owner: item.owner || 'UID팀',
       categoryLabel: 'UI',
     }
   })
@@ -109,7 +136,7 @@ function createCompletionSteps(result = {}, view = {}) {
   if (result.accessible !== undefined || hasCheck('access') || checks.length > 0) steps.push('페이지 및 DOM 수집 완료')
   if (getEnvironmentLabel(result)) steps.push(`${getEnvironmentLabel(result)} 검사 완료`)
   if (hasLinks(result, view) || hasImages(result)) steps.push('링크 및 리소스 검사 완료')
-  if (hasCheck('click-actions') || hasMarkupChecks(checks)) steps.push('클릭 및 마크업 검사 완료')
+  if (hasCheck('click-actions') || hasCheck('form-interaction') || hasCheck('hover-interaction') || hasCheck('modal-interaction') || hasMarkupChecks(checks)) steps.push('클릭 및 마크업 검사 완료')
 
   return steps.length > 0 ? steps : ['Tech QA 결과 수집 완료']
 }
@@ -279,4 +306,18 @@ function getLandingOwner(item = {}) {
   if (item.category === 'timeout' || item.category === 'restricted') return 'UID팀'
   if (item.status === 'error' && Number(item.statusCode || 0) >= 500) return '개발팀'
   return 'UID팀'
+}
+
+function getInteractionDetailStatus(item = {}) {
+  if (item.status === 'info' || item.status === 'skipped') return 'info'
+  if (item.status === 'error' || item.status === 'warn' || item.status === 'ok') return item.status
+  return 'warn'
+}
+
+function getInteractionDetailTitle(item = {}) {
+  return item.title || item.label || item.name || item.selector || item.type || '검사 항목'
+}
+
+function getInteractionDetailValue(item = {}) {
+  return item.value || item.note || item.reason || item.validationMessage || item.category || '확인 결과가 기록되었습니다.'
 }

@@ -58,6 +58,36 @@ function TechQaPanel({ result }) {
 
       <LandingPageSection groups={view.landingPageGroups} rows={display.detailRows.landingRows} />
 
+      <InteractionAuditSection
+        id="tech-form-section"
+        title="Form QA"
+        ariaLabel="Form QA"
+        note="4단계 · 페이지의 입력 필드와 선택 요소를 분석하여 필수값, 라벨 연결, 입력 형식 및 유효성 검사 상태를 확인합니다. 실제 데이터 전송 없이 사용자 입력 과정에서 발생하는 검증 반응을 검사합니다."
+        emptyMessage="검사할 입력 폼이 없습니다."
+        groups={view.formInteractionGroups}
+        rows={display.detailRows.formRows}
+      />
+
+      <InteractionAuditSection
+        id="tech-hover-section"
+        title="Hover / Dropdown QA"
+        ariaLabel="Hover / Dropdown QA"
+        note="5단계 · 메뉴, 툴팁, 드롭다운 등 마우스 오버로 반응하는 UI 요소를 실제로 조작하여 노출 상태와 접근성 변화를 확인합니다. Hover 전후의 visibility, ARIA 상태 및 화면 이탈 여부를 검사합니다."
+        emptyMessage="검사할 Hover 또는 드롭다운 요소가 없습니다."
+        groups={view.hoverInteractionGroups}
+        rows={display.detailRows.hoverRows}
+      />
+
+      <InteractionAuditSection
+        id="tech-modal-section"
+        title="Modal QA"
+        ariaLabel="Modal QA"
+        note="6단계 · 버튼이나 링크로 열리는 모달 UI를 조작하여 열기·닫기 동작, 키보드 접근성 및 배경 화면 제어 상태를 확인합니다. ESC, 닫기 버튼, 포커스 이동과 스크롤 잠금 여부를 함께 검사합니다."
+        emptyMessage="검사할 모달 트리거가 없습니다."
+        groups={view.modalInteractionGroups}
+        rows={display.detailRows.modalRows}
+      />
+
       <MarkupAccessibilitySection items={markupItems} />
 
       <details className="detail-card tech-detail-accordion">
@@ -346,6 +376,77 @@ function LandingPageSection({ groups, rows }) {
   )
 }
 
+function InteractionAuditSection({ id, title, ariaLabel, note, emptyMessage, groups, rows }) {
+  const visibility = getSectionVisibility(rows, { maxVisible: 5, statusOrder: ['error', 'warn', 'ok', 'info'] })
+  return (
+    <section className="detail-card tech-compact-card" id={id} aria-label={ariaLabel}>
+      <SectionHead
+        title={title}
+        meta={formatInteractionSectionMeta(groups)}
+        note={note}
+      />
+      {groups?.hasTargets ? (
+        <>
+          <InteractionAuditTable items={visibility.visibleItems} label={ariaLabel} />
+          {visibility.hiddenItems.length > 0 ? <CollapsedInteractionRows label={getCollapsedResultsLabel(visibility.hiddenItems.length)} items={visibility.hiddenItems} /> : null}
+        </>
+      ) : <p className="empty-row">{emptyMessage}</p>}
+    </section>
+  )
+}
+
+function InteractionAuditTable({ items, label, className = '' }) {
+  if (!items.length) return <p className="empty-row">검사 결과가 없습니다.</p>
+  return (
+    <div className={`tech-click-issue-table tech-interaction-table${className ? ` ${className}` : ''}`} aria-label={label}>
+      <InteractionAuditTableHead />
+      <div className="tech-click-table-body">
+        {items.map((item, index) => <InteractionAuditRow item={item} key={item.rowKey || getTechRowKey(item, 'interaction', index)} />)}
+      </div>
+    </div>
+  )
+}
+
+function InteractionAuditTableHead() {
+  return (
+    <div className="tech-click-issue-head">
+      <span>상태</span>
+      <span>검사 대상</span>
+      <span>유형</span>
+      <span>결과</span>
+      <span>우선 확인</span>
+      <span>상세</span>
+    </div>
+  )
+}
+
+function CollapsedInteractionRows({ label, items }) {
+  const [isOpen, setIsOpen] = useState(false)
+  return (
+    <details className="tech-more-details tech-click-more-details tech-click-more" open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
+      <summary className="tech-more-summary">{isOpen ? '접기' : label}</summary>
+      <InteractionAuditTable items={items} label={label} className="tech-click-more-table" />
+    </details>
+  )
+}
+
+function InteractionAuditRow({ item }) {
+  return (
+    <DetailRow
+      id={item.rowId}
+      className={`tech-click-issue-row tech-click-row tech-row-details tech-row-with-details ${getStatusClass(item.status)}`}
+      summaryClassName="tech-click-row-summary"
+      detail={<InteractionAuditDetails item={item} />}
+    >
+      <span className={`status-badge ${getStatusClass(item.status)}`}>{TECH_STATUS_LABELS[item.status] || item.status}</span>
+      <strong>{item.title || getElementName(item)}</strong>
+      <span>{formatInteractionCategory(item)}</span>
+      <span>{item.value || item.note || item.reason || '확인 결과가 기록되었습니다.'}</span>
+      <OwnerBadge owner={item.owner || getUidOwner()} />
+    </DetailRow>
+  )
+}
+
 function LandingPageTable({ items }) {
   if (!items.length) return <p className="empty-row">검사된 랜딩 페이지가 없습니다.</p>
   return (
@@ -422,6 +523,51 @@ function LandingPageDetails({ item }) {
           ))}
         </ol>
       </div>
+    </>
+  )
+}
+
+function InteractionAuditDetails({ item }) {
+  return (
+    <>
+      <dl className="tech-issue-meta">
+        <Meta label="검사 목적" value={item.description} />
+        <Meta label="검사 결과" value={item.value || item.note || item.reason} />
+        <Meta label="유형" value={formatInteractionCategory(item)} />
+        <Meta label="field type" value={item.inputType || item.type || item.tagName} />
+        <Meta label="name" value={item.name} />
+        <Meta label="required" value={formatBoolean(item.required)} />
+        <Meta label="disabled" value={formatBoolean(item.disabled)} />
+        <Meta label="readonly" value={formatBoolean(item.readOnly)} />
+        <Meta label="autocomplete" value={item.autocomplete} />
+        <Meta label="validation state" value={formatValidationState(item.validationState)} />
+        <Meta label="validation message" value={item.validationMessage} />
+        <Meta label="aria-invalid" value={item.ariaInvalid} />
+        <Meta label="submit attempted" value={formatBoolean(item.submitAttempted)} />
+        <Meta label="submit blocked" value={formatBoolean(item.submitBlocked)} />
+        <Meta label="request methods" value={formatRequestMethods(item.requestMethods)} />
+        <Meta label="panel selector" value={item.panelSelector || item.dialogSelector} />
+        <Meta label="aria-haspopup" value={item.ariaHaspopup} />
+        <Meta label="aria-expanded" value={item.ariaExpanded} />
+        <Meta label="accessible name" value={item.accessibleName} />
+        <Meta label="close button" value={formatBoolean(item.hasCloseButton)} />
+        <Meta label="ESC close" value={formatBoolean(item.escClosed)} />
+        <Meta label="backdrop close" value={formatBoolean(item.backdropClosed)} />
+        <Meta label="focus moved" value={formatBoolean(item.focusMovedInside)} />
+        <Meta label="focus return" value={formatBoolean(item.focusReturned)} />
+        <Meta label="scroll lock" value={formatBoolean(item.scrollLocked)} />
+        <Meta label="selector" value={item.selector} />
+        <Meta label="section" value={item.section} />
+      </dl>
+      {Array.isArray(item.issues) && item.issues.length > 0 ? (
+        <div className="tech-problem-elements is-single">
+          <strong>확인 필요 사유 {item.issues.length}개</strong>
+          <ol>
+            {item.issues.map((entry, index) => <li key={`${item.rowId || item.auditId || item.selector}-${index}`}><span>{entry}</span></li>)}
+          </ol>
+        </div>
+      ) : null}
+      <TechnicalInfo raw={item} />
     </>
   )
 }
@@ -612,6 +758,37 @@ function getTechRowKey(item = {}, prefix = 'row', index = 0) {
 
 function getCollapsedResultsLabel(count = 0) {
   return `결과 ${count}개 더보기`
+}
+
+function formatInteractionSectionMeta(groups = {}) {
+  const infoPart = Number(groups.infos?.length || 0) > 0 ? ` · 참고 ${groups.infos.length}` : ''
+  return groups?.hasTargets
+    ? `전체 ${groups.total} · 오류 ${groups.errors.length} · 확인 필요 ${groups.warnings.length} · 정상 ${groups.normals.length}${infoPart}`
+    : '검사 대상 없음'
+}
+
+function formatInteractionCategory(item = {}) {
+  return item.category || item.inputType || item.type || item.kindHint || item.tagName || '-'
+}
+
+function formatValidationState(validationState = {}) {
+  if (!validationState || typeof validationState !== 'object') return ''
+  const parts = []
+  if (validationState.valid === true) parts.push('valid')
+  if (validationState.valueMissing === true) parts.push('valueMissing')
+  if (validationState.typeMismatch === true) parts.push('typeMismatch')
+  if (validationState.patternMismatch === true) parts.push('patternMismatch')
+  return parts.join(' · ')
+}
+
+function formatBoolean(value) {
+  if (value === true) return '예'
+  if (value === false) return '아니오'
+  return ''
+}
+
+function formatRequestMethods(value) {
+  return Array.isArray(value) && value.length > 0 ? value.join(', ') : ''
 }
 
 function getLargeResourceThreshold(item = {}) {
@@ -872,6 +1049,12 @@ function DeveloperInfo({ view, result }) {
       <Meta label="landing targets" value={view.landingPageGroups?.meta?.candidateCount} />
       <Meta label="landing audited" value={view.landingPageGroups?.meta?.inspectedCount} />
       <Meta label="landing redirects" value={view.landingPageGroups?.meta?.redirectCount} />
+      <Meta label="form candidates" value={view.formInteractionGroups?.meta?.candidateCount} />
+      <Meta label="form audited" value={view.formInteractionGroups?.meta?.inspectedCount} />
+      <Meta label="hover candidates" value={view.hoverInteractionGroups?.meta?.candidateCount} />
+      <Meta label="hover audited" value={view.hoverInteractionGroups?.meta?.inspectedCount} />
+      <Meta label="modal candidates" value={view.modalInteractionGroups?.meta?.candidateCount} />
+      <Meta label="modal audited" value={view.modalInteractionGroups?.meta?.inspectedCount} />
       <Meta label="errorCheckCount" value={view.issueCounts.errorCheckCount} />
       <Meta label="errorEvidenceCount" value={view.issueCounts.errorEvidenceCount} />
       <Meta label="errorUniqueElementCount" value={view.issueCounts.errorUniqueElementCount} />
@@ -891,12 +1074,21 @@ function RawDetails({ view, result }) {
   const clickItems = Array.isArray(result.clickActions) ? result.clickActions : Array.isArray(clickCheck?.items) ? clickCheck.items : []
   const landingCheck = Array.isArray(result.checks) ? result.checks.find((check) => check.id === 'landing-pages') : null
   const landingItems = Array.isArray(result.landingPages) ? result.landingPages : Array.isArray(landingCheck?.items) ? landingCheck.items : []
+  const formCheck = Array.isArray(result.checks) ? result.checks.find((check) => check.id === 'form-interaction') : null
+  const formItems = Array.isArray(result.formInteractions) ? result.formInteractions : Array.isArray(formCheck?.items) ? formCheck.items : []
+  const hoverCheck = Array.isArray(result.checks) ? result.checks.find((check) => check.id === 'hover-interaction') : null
+  const hoverItems = Array.isArray(result.hoverInteractions) ? result.hoverInteractions : Array.isArray(hoverCheck?.items) ? hoverCheck.items : []
+  const modalCheck = Array.isArray(result.checks) ? result.checks.find((check) => check.id === 'modal-interaction') : null
+  const modalItems = Array.isArray(result.modalInteractions) ? result.modalInteractions : Array.isArray(modalCheck?.items) ? modalCheck.items : []
   return (
     <div className="tech-raw-grid">
       <CountBreakdown items={view.issueCounts.checkBreakdown || []} />
       <RawList title="안전상 클릭 생략 전체" items={view.clickActionGroups.safeSkipped} />
       <RawList title="URL 불필요 UI 제어 전체" items={view.clickActionGroups.uiControls} />
       <RawList title="정상 클릭 검증 전체" items={view.clickActionGroups.verified} />
+      <RawList title="Raw form audits" items={formItems} />
+      <RawList title="Raw hover audits" items={hoverItems} />
+      <RawList title="Raw modal audits" items={modalItems} />
       <RawList title="Raw landing audits" items={landingItems} />
       <RawList title="Raw click candidates" items={clickItems} />
       <RawList title="Raw console" items={consoleItems} />

@@ -458,6 +458,27 @@ test('landing page groups support new section and remain compatible with optiona
   assert.equal(history.landingPageGroups.hasTargets, false)
 })
 
+test('form hover and modal groups remain compatible with optional history data', () => {
+  const current = createTechQaViewModel(result({
+    checks: [
+      check({ id: 'form-interaction', status: 'warn', items: [{ auditId: 'form-1', label: 'Email', status: 'warn', inputType: 'email', note: 'autocomplete 설정이 없습니다.' }], meta: { candidateCount: 1, inspectedCount: 1, noTarget: false } }),
+      check({ id: 'hover-interaction', status: 'warn', items: [{ auditId: 'hover-1', label: 'Menu', status: 'warn', category: 'no-change', note: 'Hover 전후 변화 없음' }], meta: { candidateCount: 1, inspectedCount: 1, noTarget: false } }),
+      check({ id: 'modal-interaction', status: 'warn', items: [{ auditId: 'modal-1', label: 'Open modal', status: 'warn', category: 'needs-review', note: 'ESC 닫기 확인 필요' }], meta: { candidateCount: 1, inspectedCount: 1, noTarget: false } }),
+    ],
+  }))
+  const history = createTechQaViewModel(result({ checks: [] }))
+
+  assert.equal(current.formInteractionGroups.total, 1)
+  assert.equal(current.hoverInteractionGroups.total, 1)
+  assert.equal(current.modalInteractionGroups.total, 1)
+  assert.equal(current.formInteractionGroups.hasTargets, true)
+  assert.equal(current.hoverInteractionGroups.hasTargets, true)
+  assert.equal(current.modalInteractionGroups.hasTargets, true)
+  assert.equal(history.formInteractionGroups.total, 0)
+  assert.equal(history.hoverInteractionGroups.total, 0)
+  assert.equal(history.modalInteractionGroups.total, 0)
+})
+
 test('landing page groups reuse existing visible row limits for initial display and more view', () => {
   const view = createTechQaViewModel(result({
     checks: [check({
@@ -492,6 +513,24 @@ test('click section visibility applies the same first-five rule with error warn 
   assert.deepEqual(visibleIds, ['error-0', 'error-1', 'warn-0', 'warn-1', 'warn-2'])
   assert.equal(visibility.hiddenItems.length, 10)
   assert.equal(new Set(visibility.visibleItems.map((item) => item.id)).size, 5)
+})
+
+test('new interaction detail rows are created for form hover and modal sections', () => {
+  const view = createTechQaViewModel(result({
+    checks: [
+      check({ id: 'form-interaction', status: 'warn', items: [{ auditId: 'form-1', label: 'Email', status: 'warn', inputType: 'email', note: 'autocomplete 설정이 없습니다.' }], meta: { candidateCount: 1, inspectedCount: 1, noTarget: false } }),
+      check({ id: 'hover-interaction', status: 'ok', items: [{ auditId: 'hover-1', label: 'Menu', status: 'ok', category: 'menu', note: 'Hover 후 메뉴 노출 확인' }], meta: { candidateCount: 1, inspectedCount: 1, noTarget: false } }),
+      check({ id: 'modal-interaction', status: 'warn', items: [{ auditId: 'modal-1', label: 'Open modal', status: 'warn', category: 'needs-review', note: '닫기 버튼 확인 필요' }], meta: { candidateCount: 1, inspectedCount: 1, noTarget: false } }),
+    ],
+  }))
+  const display = createTechPanelDisplayModel(result(), view)
+
+  assert.equal(display.detailRows.formRows.length, 1)
+  assert.equal(display.detailRows.hoverRows.length, 1)
+  assert.equal(display.detailRows.modalRows.length, 1)
+  assert.equal(display.detailRows.formRows[0].rowId.startsWith('tech-form-'), true)
+  assert.equal(display.detailRows.hoverRows[0].rowId.startsWith('tech-hover-'), true)
+  assert.equal(display.detailRows.modalRows[0].rowId.startsWith('tech-modal-'), true)
 })
 
 test('click display fixture keeps only actual errors and actionable warnings in body counts', () => {

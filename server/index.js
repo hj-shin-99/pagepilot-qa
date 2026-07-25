@@ -17,7 +17,10 @@ import { createTextDifferenceCandidates } from './textDiff.js'
 import { matchTextNodes } from './textMatcher.js'
 import { createCheckedLinkFailure, createTechLinkAudit, mergeTechLinkAuditResults, normalizeCheckedLinkResult } from './techLinkAudit.js'
 import { auditClickableActions, summarizeClickActionAudit } from './techClickAudit.js'
+import { auditForms } from './techFormAudit.js'
+import { auditHoverInteractions } from './techHoverAudit.js'
 import { auditLandingPages } from './techLandingAudit.js'
+import { auditModalInteractions } from './techModalAudit.js'
 import { classifyConsoleMessages } from './techConsoleAudit.js'
 import { buildVisualQaPayloadArtifacts } from './visualQaPayload.js'
 import { buildQaRunResponse, createQaRunHandler, isWebScanNavigationFailure } from './qaRunRoute.js'
@@ -1903,6 +1906,9 @@ async function scanUrl(targetUrl, options = {}) {
   let visualPayloadData = null
   let clickActionAuditResult
   let landingAuditResult
+  let formAuditResult
+  let hoverAuditResult
+  let modalAuditResult
 
   try {
     const context = await browser.newContext({
@@ -1957,6 +1963,45 @@ async function scanUrl(targetUrl, options = {}) {
         error: error instanceof Error ? error.message : 'landing audit failed',
       },
     }))
+    formAuditResult = await auditForms(browser, targetUrl, scanOptions.instrumentation).catch((error) => ({
+      items: [],
+      meta: {
+        candidateCount: 0,
+        inspectedCount: 0,
+        okCount: 0,
+        warningCount: 0,
+        errorCount: 1,
+        skippedCount: 0,
+        noTarget: true,
+        error: error instanceof Error ? error.message : 'form audit failed',
+      },
+    }))
+    hoverAuditResult = await auditHoverInteractions(browser, targetUrl, scanOptions.instrumentation).catch((error) => ({
+      items: [],
+      meta: {
+        candidateCount: 0,
+        inspectedCount: 0,
+        okCount: 0,
+        warningCount: 0,
+        errorCount: 1,
+        skippedCount: 0,
+        noTarget: true,
+        error: error instanceof Error ? error.message : 'hover audit failed',
+      },
+    }))
+    modalAuditResult = await auditModalInteractions(browser, targetUrl, clickActionAuditResult.items, scanOptions.instrumentation).catch((error) => ({
+      items: [],
+      meta: {
+        candidateCount: 0,
+        inspectedCount: 0,
+        okCount: 0,
+        warningCount: 0,
+        errorCount: 1,
+        skippedCount: 0,
+        noTarget: true,
+        error: error instanceof Error ? error.message : 'modal audit failed',
+      },
+    }))
   } finally {
     await browser.close()
   }
@@ -1965,6 +2010,9 @@ async function scanUrl(targetUrl, options = {}) {
   const snapshot = domSnapshot || createEmptyDomSnapshot()
   const safeMobileResult = mobileResult || createMobileFallback()
   const safeLandingAuditResult = landingAuditResult || { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, redirectCount: 0, newWindowCount: 0, noTarget: true } }
+  const safeFormAuditResult = formAuditResult || { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } }
+  const safeHoverAuditResult = hoverAuditResult || { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } }
+  const safeModalAuditResult = modalAuditResult || { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } }
   const linkAudit = createTechLinkAudit(snapshot.interactionTargets, targetUrl)
   const linksToCheck = getLinksToCheck(linkAudit.requestableLinks)
   const checkedLinks = await checkLinkStatuses(linksToCheck)
@@ -2000,6 +2048,9 @@ async function scanUrl(targetUrl, options = {}) {
     linkAuditMeta: linkAuditResult.meta,
     clickActionSummary,
     landingAuditResult: safeLandingAuditResult,
+    formAuditResult: safeFormAuditResult,
+    hoverAuditResult: safeHoverAuditResult,
+    modalAuditResult: safeModalAuditResult,
   })
 
   return {
@@ -2019,6 +2070,12 @@ async function scanUrl(targetUrl, options = {}) {
     clickActions: clickActionAuditResult.items,
     clickActionAudit: clickActionSummary.meta,
     landingAudit: safeLandingAuditResult.meta,
+    formInteractions: safeFormAuditResult.items,
+    formAudit: safeFormAuditResult.meta,
+    hoverInteractions: safeHoverAuditResult.items,
+    hoverAudit: safeHoverAuditResult.meta,
+    modalInteractions: safeModalAuditResult.items,
+    modalAudit: safeModalAuditResult.meta,
     images,
     designElements: snapshot.designElements,
     webCtaHints: snapshot.webCtaHints || [],
@@ -3474,6 +3531,9 @@ function buildChecks({
   linkAuditMeta = {},
   clickActionSummary = { status: 'ok', value: '정상', items: [], meta: {} },
   landingAuditResult = { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, redirectCount: 0, newWindowCount: 0, noTarget: true } },
+  formAuditResult = { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } },
+  hoverAuditResult = { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } },
+  modalAuditResult = { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } },
 }) {
   const httpStatus = mainResponse?.status() ?? null
   const brokenImages = images.filter((image) => image.status === 'error')
@@ -3484,6 +3544,12 @@ function buildChecks({
   const landingMeta = landingAuditResult.meta || {}
   const landingErrors = landingItems.filter((item) => item.status === 'error')
   const landingWarnings = landingItems.filter((item) => item.status === 'warn')
+  const formItems = Array.isArray(formAuditResult.items) ? formAuditResult.items : []
+  const formMeta = formAuditResult.meta || {}
+  const hoverItems = Array.isArray(hoverAuditResult.items) ? hoverAuditResult.items : []
+  const hoverMeta = hoverAuditResult.meta || {}
+  const modalItems = Array.isArray(modalAuditResult.items) ? modalAuditResult.items : []
+  const modalMeta = modalAuditResult.meta || {}
   const missingMetaFields = getMissingMetaFields(metaInfo)
   const formMissingLabels = Array.isArray(formInfo.missingLabels) ? formInfo.missingLabels : []
   const headingItems = createHeadingIssueItems(headingInfo)
@@ -3661,6 +3727,39 @@ function buildChecks({
         : `대상 ${Number(landingMeta.candidateCount || landingItems.length)}개 중 중복을 정리한 최종 ${landingItems.length}개 랜딩 페이지를 확인했습니다.`,
       items: landingItems,
       meta: landingMeta,
+    },
+    {
+      id: 'form-interaction',
+      title: 'Form QA',
+      status: Number(formMeta.errorCount || 0) > 0 ? 'error' : Number(formMeta.warningCount || 0) > 0 ? 'warn' : 'ok',
+      value: formMeta.noTarget ? '검사 대상 없음' : `오류 ${Number(formMeta.errorCount || 0)}개 / 확인 필요 ${Number(formMeta.warningCount || 0)}개`,
+      detail: formMeta.noTarget
+        ? 'input, textarea, select 등 검사 대상 입력 폼이 없어 Form QA를 생략했습니다.'
+        : `대상 ${Number(formMeta.candidateCount || formItems.length)}개 중 ${formItems.length}개를 점검했습니다. 참고 ${Number(formMeta.skippedCount || 0)}개는 안전 정책에 따라 생략했습니다.`,
+      items: formItems,
+      meta: formMeta,
+    },
+    {
+      id: 'hover-interaction',
+      title: 'Hover / Dropdown QA',
+      status: Number(hoverMeta.errorCount || 0) > 0 ? 'error' : Number(hoverMeta.warningCount || 0) > 0 ? 'warn' : 'ok',
+      value: hoverMeta.noTarget ? '검사 대상 없음' : `오류 ${Number(hoverMeta.errorCount || 0)}개 / 확인 필요 ${Number(hoverMeta.warningCount || 0)}개`,
+      detail: hoverMeta.noTarget
+        ? 'Hover 또는 드롭다운 근거가 있는 검사 대상이 없어 Hover / Dropdown QA를 생략했습니다.'
+        : `대상 ${Number(hoverMeta.candidateCount || hoverItems.length)}개 중 ${hoverItems.length}개를 Hover 조작으로 점검했습니다.`,
+      items: hoverItems,
+      meta: hoverMeta,
+    },
+    {
+      id: 'modal-interaction',
+      title: 'Modal QA',
+      status: Number(modalMeta.errorCount || 0) > 0 ? 'error' : Number(modalMeta.warningCount || 0) > 0 ? 'warn' : 'ok',
+      value: modalMeta.noTarget ? '검사 대상 없음' : `오류 ${Number(modalMeta.errorCount || 0)}개 / 확인 필요 ${Number(modalMeta.warningCount || 0)}개`,
+      detail: modalMeta.noTarget
+        ? '안전하게 열 수 있는 모달 트리거가 없어 Modal QA를 생략했습니다.'
+        : `대상 ${Number(modalMeta.candidateCount || modalItems.length)}개 중 ${modalItems.length}개를 점검했습니다.`,
+      items: modalItems,
+      meta: modalMeta,
     },
     {
       id: 'unlabeled-clickables',

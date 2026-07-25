@@ -251,6 +251,32 @@ test('tech qa click action section uses compact tables and collapsed non-issue g
   assert.equal(css.includes('.tech-click-more'), true)
 })
 
+test('tech qa includes new Form Hover Modal sections without restoring priority summary', () => {
+  const source = fs.readFileSync('src/components/TechQaPanel.jsx', 'utf8')
+  const utilSource = fs.readFileSync('src/utils/techQa.js', 'utf8')
+  const panelViewSource = fs.readFileSync('src/utils/techQaPanelView.js', 'utf8')
+  const landingIndex = source.indexOf('<LandingPageSection groups={view.landingPageGroups} rows={display.detailRows.landingRows} />')
+  const formIndex = source.indexOf('title="Form QA"')
+  const hoverIndex = source.indexOf('title="Hover / Dropdown QA"')
+  const modalIndex = source.indexOf('title="Modal QA"')
+  const markupIndex = source.indexOf('<MarkupAccessibilitySection items={markupItems} />')
+
+  assert.equal(source.includes('title="Form QA"'), true)
+  assert.equal(source.includes('title="Hover / Dropdown QA"'), true)
+  assert.equal(source.includes('title="Modal QA"'), true)
+  assert.equal(source.includes('검사할 입력 폼이 없습니다.'), true)
+  assert.equal(source.includes('검사할 Hover 또는 드롭다운 요소가 없습니다.'), true)
+  assert.equal(source.includes('검사할 모달 트리거가 없습니다.'), true)
+  assert.equal(source.includes('우선 확인 결과'), false)
+  assert.equal(utilSource.includes("'form-interaction'"), true)
+  assert.equal(utilSource.includes("'hover-interaction'"), true)
+  assert.equal(utilSource.includes("'modal-interaction'"), true)
+  assert.equal(panelViewSource.includes('formRows'), true)
+  assert.equal(panelViewSource.includes('hoverRows'), true)
+  assert.equal(panelViewSource.includes('modalRows'), true)
+  assert.equal(landingIndex > -1 && formIndex > landingIndex && hoverIndex > formIndex && modalIndex > hoverIndex && markupIndex > modalIndex, true)
+})
+
 test('empty state uses different scanning stages for tech-only and integrated runs', () => {
   const source = fs.readFileSync('src/components/EmptyState.jsx', 'utf8')
   const css = fs.readFileSync('src/App.css', 'utf8')

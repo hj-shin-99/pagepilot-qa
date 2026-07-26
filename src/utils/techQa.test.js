@@ -225,6 +225,7 @@ test('compact Tech QA summary cards use four meaningful KPI values', () => {
 test('Tech QA panel display replaces top KPI cards with completion meta from existing data', () => {
   const base = result({
     durationMs: 18234,
+    scanOptions: { url: true, click: true, landing: true, form: true, hover: true, modal: true, markup: true, scroll: true, responsive: true, download: true },
     linkAudit: { playwrightRunCount: 1, uniqueRequestUrlCount: 98 },
     images: Array.from({ length: 25 }, () => ({ status: 'ok' })),
   })
@@ -236,7 +237,7 @@ test('Tech QA panel display replaces top KPI cards with completion meta from exi
   assert.equal(display.completion.steps.includes('페이지 기본 검사 완료'), true)
   assert.equal(display.completion.steps.includes('Desktop + Mobile 검사 완료'), true)
   assert.equal(display.completion.steps.includes('선택한 Tech QA 검사 완료'), true)
-  assert.equal(display.completion.steps.includes('Tech QA 처리시간 18.2초'), true)
+  assert.equal(display.completion.steps.includes('Tech QA 처리시간 18.2초'), false)
   assert.equal(meta['검사 엔진'], 'Playwright')
   assert.equal(meta['검사 환경'], 'Desktop + Mobile')
   assert.equal(meta['링크 검사'], '98개')
@@ -246,7 +247,7 @@ test('Tech QA panel display replaces top KPI cards with completion meta from exi
 
 test('Tech QA completion copy does not claim unselected checks were completed', () => {
   const base = result({
-    scanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, markup: false },
+    scanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, markup: false, scroll: false, responsive: false, download: false },
     checks: [check({ id: 'access', status: 'ok' })],
   })
   const view = createTechQaViewModel(base)
@@ -358,7 +359,11 @@ test('compact Tech QA source keeps table UI and closed detail policy', () => {
   assert.equal(source.includes('입력 요소의 레이블, 필수값 및 기본 검증 동작을 확인합니다.'), true)
   assert.equal(source.includes('Hover, Dropdown 및 Tooltip 요소의 표시와 복원 동작을 확인합니다.'), true)
   assert.equal(source.includes('Modal의 열기, 닫기, 포커스 및 스크롤 동작을 확인합니다.'), true)
+  assert.equal(source.includes('Scroll QA'), true)
+  assert.equal(source.includes('Responsive QA'), true)
+  assert.equal(source.includes('Download QA'), true)
   assert.equal(source.includes('Meta, 이미지 alt, 입력 레이블 등 기본 마크업과 접근성을 확인합니다.'), true)
+  assert.equal(source.includes('Tech QA 처리시간 ${durationText}'), false)
   assert.equal(source.includes('고유 요소 오류'), false)
   assert.equal(source.includes('검사 근거 오류'), false)
   assert.equal(source.includes('쉬운 설명'), false)
@@ -551,6 +556,9 @@ test('new interaction detail rows are created for form hover and modal sections'
       check({ id: 'form-interaction', status: 'warn', items: [{ auditId: 'form-1', label: 'Email', status: 'warn', inputType: 'email', note: 'autocomplete 설정이 없습니다.' }], meta: { candidateCount: 1, inspectedCount: 1, noTarget: false } }),
       check({ id: 'hover-interaction', status: 'ok', items: [{ auditId: 'hover-1', label: 'Menu', status: 'ok', category: 'menu', note: 'Hover 후 메뉴 노출 확인' }], meta: { candidateCount: 1, inspectedCount: 1, noTarget: false } }),
       check({ id: 'modal-interaction', status: 'warn', items: [{ auditId: 'modal-1', label: 'Open modal', status: 'warn', category: 'needs-review', note: '닫기 버튼 확인 필요' }], meta: { candidateCount: 1, inspectedCount: 1, noTarget: false } }),
+      check({ id: 'scroll-interaction', status: 'warn', items: [{ auditId: 'scroll-1', label: '페이지 스크롤', status: 'warn', category: 'scroll', note: '하단 접근 불명확' }], meta: { candidateCount: 4, inspectedCount: 4, noTarget: false } }),
+      check({ id: 'responsive-layout', status: 'warn', items: [{ auditId: 'responsive-1', label: 'Mobile', status: 'warn', category: 'viewport', type: '390x844', note: 'overflow 감지' }], meta: { candidateCount: 3, inspectedCount: 3, noTarget: false } }),
+      check({ id: 'download-resource', status: 'warn', items: [{ auditId: 'download-1', label: 'PDF', status: 'warn', category: 'pdf', note: 'HEAD fallback 사용' }], meta: { candidateCount: 1, inspectedCount: 1, noTarget: false } }),
     ],
   }))
   const display = createTechPanelDisplayModel(result(), view)
@@ -558,9 +566,26 @@ test('new interaction detail rows are created for form hover and modal sections'
   assert.equal(display.detailRows.formRows.length, 1)
   assert.equal(display.detailRows.hoverRows.length, 1)
   assert.equal(display.detailRows.modalRows.length, 1)
+  assert.equal(display.detailRows.scrollRows.length, 1)
+  assert.equal(display.detailRows.responsiveRows.length, 1)
+  assert.equal(display.detailRows.downloadRows.length, 1)
   assert.equal(display.detailRows.formRows[0].rowId.startsWith('tech-form-'), true)
   assert.equal(display.detailRows.hoverRows[0].rowId.startsWith('tech-hover-'), true)
   assert.equal(display.detailRows.modalRows[0].rowId.startsWith('tech-modal-'), true)
+  assert.equal(display.detailRows.scrollRows[0].rowId.startsWith('tech-scroll-'), true)
+  assert.equal(display.detailRows.responsiveRows[0].rowId.startsWith('tech-responsive-'), true)
+  assert.equal(display.detailRows.downloadRows[0].rowId.startsWith('tech-download-'), true)
+})
+
+test('tech qa panel source keeps new section order between modal and markup', () => {
+  const source = fs.readFileSync('src/components/TechQaPanel.jsx', 'utf8')
+  const modalIndex = source.indexOf('title="Modal QA"')
+  const scrollIndex = source.indexOf('title="Scroll QA"')
+  const responsiveIndex = source.indexOf('title="Responsive QA"')
+  const downloadIndex = source.indexOf('title="Download QA"')
+  const markupIndex = source.indexOf('title="마크업 및 접근성 검사"')
+
+  assert.equal(modalIndex > -1 && scrollIndex > modalIndex && responsiveIndex > scrollIndex && downloadIndex > responsiveIndex && markupIndex > downloadIndex, true)
 })
 
 test('click display fixture keeps only actual errors and actionable warnings in body counts', () => {

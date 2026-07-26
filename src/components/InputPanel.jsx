@@ -97,7 +97,8 @@ function InputPanel({
                 <span>Tech QA 옵션</span>
               </summary>
               <div className="tech-scan-options-body">
-                <label className="tech-scan-option-row" htmlFor="tech-scan-option-all">
+                <label className="tech-scan-option-row tech-scan-option-toggle-row" htmlFor="tech-scan-option-all">
+                  <span>모두 선택</span>
                   <input
                     id="tech-scan-option-all"
                     type="checkbox"
@@ -105,7 +106,16 @@ function InputPanel({
                     disabled={isScanning}
                     onChange={(event) => handleToggleAll(event.target.checked)}
                   />
-                  <span>전체 선택</span>
+                </label>
+                <label className="tech-scan-option-row is-disabled" htmlFor="tech-scan-option-basic">
+                  <input
+                    id="tech-scan-option-basic"
+                    type="checkbox"
+                    checked
+                    disabled
+                    readOnly
+                  />
+                  <span>주요 검사</span>
                 </label>
                 {TECH_SCAN_OPTION_DEFINITIONS.map((option) => (
                   <label className="tech-scan-option-row" htmlFor={`tech-scan-option-${option.key}`} key={option.key}>

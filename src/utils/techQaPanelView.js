@@ -19,6 +19,9 @@ export function createTechDetailRows(view = {}) {
   const formRows = createInteractionDetailRows(view.formInteractionGroups, 'tech-form')
   const hoverRows = createInteractionDetailRows(view.hoverInteractionGroups, 'tech-hover')
   const modalRows = createInteractionDetailRows(view.modalInteractionGroups, 'tech-modal')
+  const scrollRows = createInteractionDetailRows(view.scrollInteractionGroups, 'tech-scroll')
+  const responsiveRows = createInteractionDetailRows(view.responsiveLayoutGroups, 'tech-responsive')
+  const downloadRows = createInteractionDetailRows(view.downloadResourceGroups, 'tech-download')
   const markupRows = createMarkupDetailRows(view.checkItems)
 
   return {
@@ -29,6 +32,9 @@ export function createTechDetailRows(view = {}) {
     formRows,
     hoverRows,
     modalRows,
+    scrollRows,
+    responsiveRows,
+    downloadRows,
     markupRows,
   }
 }
@@ -137,12 +143,10 @@ function createCompletionScopeText(scanOptions = {}) {
 
 function createCompletionSteps(result = {}, view = {}) {
   const steps = []
-  const durationText = formatTechQaDuration(result.durationMs)
 
   if (result.accessible !== undefined || Array.isArray(view.checkItems) && view.checkItems.length > 0) steps.push('페이지 기본 검사 완료')
   if (getEnvironmentLabel(result)) steps.push(`${getEnvironmentLabel(result)} 검사 완료`)
   if (hasSelectedTechChecks(view.scanOptions)) steps.push('선택한 Tech QA 검사 완료')
-  if (durationText) steps.push(`Tech QA 처리시간 ${durationText}`)
 
   return steps.length > 0 ? steps : ['Tech QA 결과 수집 완료']
 }
@@ -155,7 +159,10 @@ function hasSelectedTechChecks(scanOptions = {}) {
     || scanOptions.form
     || scanOptions.hover
     || scanOptions.modal
-    || scanOptions.markup,
+    || scanOptions.markup
+    || scanOptions.scroll
+    || scanOptions.responsive
+    || scanOptions.download
   )
 }
 

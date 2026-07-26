@@ -6,7 +6,7 @@ import { buildAiReviewPayloadFromSession, sanitizeAiReviewResponse } from './uti
 import { isValidHttpUrl } from './utils/scanSession'
 import { countIssueCards, createCompactVisualResult, createVisualIssueCards, createVisualSummary } from './utils/visualQa'
 import { createTechQaViewModel } from './utils/techQa'
-import { createDefaultTechScanOptions, normalizeTechScanOptions } from '../shared/techScanOptions.js'
+import { createDefaultTechScanOptions, normalizeStoredTechScanOptions, normalizeTechScanOptions } from '../shared/techScanOptions.js'
 import EmptyState from './components/EmptyState'
 import HistoryPanel from './components/HistoryPanel'
 import InputPanel from './components/InputPanel'
@@ -481,12 +481,18 @@ function createCompactTechResult(result) {
     scanOptions: normalizeTechScanOptions(result.scanOptions),
     clickActions: Array.isArray(result.clickActions) ? result.clickActions : [],
     clickActionAudit: result.clickActionAudit || {},
+    scrollInteractions: Array.isArray(result.scrollInteractions) ? result.scrollInteractions : [],
+    scrollAudit: result.scrollAudit || {},
+    responsiveLayouts: Array.isArray(result.responsiveLayouts) ? result.responsiveLayouts : [],
+    responsiveAudit: result.responsiveAudit || {},
+    downloadResources: Array.isArray(result.downloadResources) ? result.downloadResources : [],
+    downloadAudit: result.downloadAudit || {},
     uiControlWithoutUrlCount: result.uiControlWithoutUrlCount || 0,
   }
 }
 
 function resolveHistoryScanOptions(result) {
-  return normalizeTechScanOptions(result?.scanOptions)
+  return normalizeStoredTechScanOptions(result?.scanOptions, result)
 }
 
 export default App

@@ -47,14 +47,20 @@ export async function runOptionalTechAudits({
   auditForms,
   auditHoverInteractions,
   auditModalInteractions,
+  auditScrollInteractions,
+  auditResponsiveLayouts,
+  auditDownloadResources,
 }) {
   const normalizedOptions = normalizeTechScanOptions(techScanOptions)
-  const safeSnapshot = snapshot && typeof snapshot === 'object' ? snapshot : { clickableCandidates: [], interactionTargets: [] }
+  const safeSnapshot = snapshot && typeof snapshot === 'object' ? snapshot : { clickableCandidates: [], interactionTargets: [], links: [] }
   let clickActionAuditResult = createSkippedClickAuditResult()
   let landingAuditResult = createSkippedLandingAuditResult()
   let formAuditResult = createSkippedInteractionAuditResult()
   let hoverAuditResult = createSkippedInteractionAuditResult()
   let modalAuditResult = createSkippedInteractionAuditResult()
+  let scrollAuditResult = createSkippedInteractionAuditResult()
+  let responsiveAuditResult = createSkippedInteractionAuditResult()
+  let downloadAuditResult = createSkippedInteractionAuditResult()
 
   if (normalizedOptions.click) {
     clickActionAuditResult = await auditClickableActions(browser, targetUrl, safeSnapshot.clickableCandidates || [], instrumentation).catch((error) => ({
@@ -130,6 +136,54 @@ export async function runOptionalTechAudits({
     }))
   }
 
+  if (normalizedOptions.scroll) {
+    scrollAuditResult = await auditScrollInteractions(browser, targetUrl, instrumentation).catch((error) => ({
+      items: [],
+      meta: {
+        candidateCount: 0,
+        inspectedCount: 0,
+        okCount: 0,
+        warningCount: 0,
+        errorCount: 1,
+        skippedCount: 0,
+        noTarget: true,
+        error: error instanceof Error ? error.message : 'scroll audit failed',
+      },
+    }))
+  }
+
+  if (normalizedOptions.responsive) {
+    responsiveAuditResult = await auditResponsiveLayouts(browser, targetUrl, instrumentation).catch((error) => ({
+      items: [],
+      meta: {
+        candidateCount: 0,
+        inspectedCount: 0,
+        okCount: 0,
+        warningCount: 0,
+        errorCount: 1,
+        skippedCount: 0,
+        noTarget: true,
+        error: error instanceof Error ? error.message : 'responsive audit failed',
+      },
+    }))
+  }
+
+  if (normalizedOptions.download) {
+    downloadAuditResult = await auditDownloadResources(targetUrl, safeSnapshot.links || [], instrumentation).catch((error) => ({
+      items: [],
+      meta: {
+        candidateCount: 0,
+        inspectedCount: 0,
+        okCount: 0,
+        warningCount: 0,
+        errorCount: 1,
+        skippedCount: 0,
+        noTarget: true,
+        error: error instanceof Error ? error.message : 'download audit failed',
+      },
+    }))
+  }
+
   return {
     techScanOptions: normalizedOptions,
     clickActionAuditResult,
@@ -137,6 +191,9 @@ export async function runOptionalTechAudits({
     formAuditResult,
     hoverAuditResult,
     modalAuditResult,
+    scrollAuditResult,
+    responsiveAuditResult,
+    downloadAuditResult,
   }
 }
 

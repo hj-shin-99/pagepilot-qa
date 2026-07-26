@@ -99,6 +99,42 @@ function TechQaPanel({ result }) {
         />
       ) : null}
 
+      {scanOptions.scroll ? (
+        <InteractionAuditSection
+          id="tech-scroll-section"
+          title="Scroll QA"
+          ariaLabel="Scroll QA"
+          note="페이지 스크롤, 하단 도달, 지연 로딩 및 고정 요소의 동작을 확인합니다."
+          emptyMessage="검사할 스크롤 결과가 없습니다."
+          groups={view.scrollInteractionGroups}
+          rows={display.detailRows.scrollRows}
+        />
+      ) : null}
+
+      {scanOptions.responsive ? (
+        <InteractionAuditSection
+          id="tech-responsive-section"
+          title="Responsive QA"
+          ariaLabel="Responsive QA"
+          note="Desktop, Tablet, Mobile 화면에서 레이아웃과 가로 넘침 여부를 확인합니다."
+          emptyMessage="검사할 반응형 viewport 결과가 없습니다."
+          groups={view.responsiveLayoutGroups}
+          rows={display.detailRows.responsiveRows}
+        />
+      ) : null}
+
+      {scanOptions.download ? (
+        <InteractionAuditSection
+          id="tech-download-section"
+          title="Download QA"
+          ariaLabel="Download QA"
+          note="다운로드 링크의 응답 상태, 파일 형식 및 주요 헤더를 확인합니다."
+          emptyMessage="검사 대상 다운로드 링크가 없습니다."
+          groups={view.downloadResourceGroups}
+          rows={display.detailRows.downloadRows}
+        />
+      ) : null}
+
       {scanOptions.markup ? <MarkupAccessibilitySection items={markupItems} /> : null}
 
       <details className="detail-card tech-detail-accordion">
@@ -557,6 +593,22 @@ function InteractionAuditDetails({ item }) {
         <Meta label="submit attempted" value={formatBoolean(item.submitAttempted)} />
         <Meta label="submit blocked" value={formatBoolean(item.submitBlocked)} />
         <Meta label="request methods" value={formatRequestMethods(item.requestMethods)} />
+        <Meta label="viewport" value={item.type} />
+        <Meta label="overflow amount" value={item.overflowAmount} />
+        <Meta label="status code" value={item.statusCode} />
+        <Meta label="final URL" value={item.finalUrl} />
+        <Meta label="content-type" value={item.contentType} />
+        <Meta label="content-length" value={item.contentLength} />
+        <Meta label="content-disposition" value={item.contentDisposition} />
+        <Meta label="filename" value={item.filename} />
+        <Meta label="source count" value={item.sourceCount} />
+        <Meta label="near bottom" value={formatBoolean(item.nearBottom)} />
+        <Meta label="overflow hidden" value={formatBoolean(item.overflowHidden)} />
+        <Meta label="lazy images" value={item.lazyImageCount} />
+        <Meta label="unresolved lazy images" value={item.unresolvedLazyImageCount} />
+        <Meta label="broken lazy images" value={item.brokenLazyImageCount} />
+        <Meta label="fixed elements" value={item.fixedElementCount} />
+        <Meta label="blocking fixed elements" value={item.blockingFixedElementCount} />
         <Meta label="panel selector" value={item.panelSelector || item.dialogSelector} />
         <Meta label="aria-haspopup" value={item.ariaHaspopup} />
         <Meta label="aria-expanded" value={item.ariaExpanded} />
@@ -1104,6 +1156,27 @@ function DeveloperInfo({ view, result, scanOptions }) {
     )
   }
 
+  if (scanOptions.scroll) {
+    metaItems.push(
+      { label: 'scroll candidates', value: view.scrollInteractionGroups?.meta?.candidateCount },
+      { label: 'scroll audited', value: view.scrollInteractionGroups?.meta?.inspectedCount },
+    )
+  }
+
+  if (scanOptions.responsive) {
+    metaItems.push(
+      { label: 'responsive candidates', value: view.responsiveLayoutGroups?.meta?.candidateCount },
+      { label: 'responsive audited', value: view.responsiveLayoutGroups?.meta?.inspectedCount },
+    )
+  }
+
+  if (scanOptions.download) {
+    metaItems.push(
+      { label: 'download candidates', value: view.downloadResourceGroups?.meta?.candidateCount },
+      { label: 'download audited', value: view.downloadResourceGroups?.meta?.inspectedCount },
+    )
+  }
+
   return (
     <div className="developer-info-grid">
       {metaItems.map((item) => <Meta label={item.label} value={item.value} key={item.label} />)}
@@ -1125,6 +1198,12 @@ function RawDetails({ view, result, scanOptions }) {
   const hoverItems = Array.isArray(result.hoverInteractions) ? result.hoverInteractions : Array.isArray(hoverCheck?.items) ? hoverCheck.items : []
   const modalCheck = Array.isArray(result.checks) ? result.checks.find((check) => check.id === 'modal-interaction') : null
   const modalItems = Array.isArray(result.modalInteractions) ? result.modalInteractions : Array.isArray(modalCheck?.items) ? modalCheck.items : []
+  const scrollCheck = Array.isArray(result.checks) ? result.checks.find((check) => check.id === 'scroll-interaction') : null
+  const scrollItems = Array.isArray(result.scrollInteractions) ? result.scrollInteractions : Array.isArray(scrollCheck?.items) ? scrollCheck.items : []
+  const responsiveCheck = Array.isArray(result.checks) ? result.checks.find((check) => check.id === 'responsive-layout') : null
+  const responsiveItems = Array.isArray(result.responsiveLayouts) ? result.responsiveLayouts : Array.isArray(responsiveCheck?.items) ? responsiveCheck.items : []
+  const downloadCheck = Array.isArray(result.checks) ? result.checks.find((check) => check.id === 'download-resource') : null
+  const downloadItems = Array.isArray(result.downloadResources) ? result.downloadResources : Array.isArray(downloadCheck?.items) ? downloadCheck.items : []
   return (
     <div className="tech-raw-grid">
       <CountBreakdown items={view.issueCounts.checkBreakdown || []} />
@@ -1134,6 +1213,9 @@ function RawDetails({ view, result, scanOptions }) {
       {scanOptions.form ? <RawList title="Raw form audits" items={formItems} /> : null}
       {scanOptions.hover ? <RawList title="Raw hover audits" items={hoverItems} /> : null}
       {scanOptions.modal ? <RawList title="Raw modal audits" items={modalItems} /> : null}
+      {scanOptions.scroll ? <RawList title="Raw scroll audits" items={scrollItems} /> : null}
+      {scanOptions.responsive ? <RawList title="Raw responsive audits" items={responsiveItems} /> : null}
+      {scanOptions.download ? <RawList title="Raw download audits" items={downloadItems} /> : null}
       {scanOptions.landing ? <RawList title="Raw landing audits" items={landingItems} /> : null}
       {scanOptions.click ? <RawList title="Raw click candidates" items={clickItems} /> : null}
       <RawList title="Raw console" items={consoleItems} />

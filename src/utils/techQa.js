@@ -1,4 +1,4 @@
-import { isTechCheckEnabled, normalizeTechScanOptions } from '../../shared/techScanOptions.js'
+import { isTechCheckEnabled, normalizeStoredTechScanOptions } from '../../shared/techScanOptions.js'
 
 export const TECH_STATUS_LABELS = {
   ok: '정상',
@@ -56,6 +56,9 @@ const CHECK_DEFINITIONS = {
   'form-interaction': { section: 'frontend', owner: 'UID팀', label: 'Form QA', description: '페이지의 입력 필드와 선택 요소를 분석하여 필수값, 라벨 연결, 입력 형식 및 유효성 검사 상태를 확인합니다. 실제 데이터 전송 없이 사용자 입력 과정에서 발생하는 검증 반응을 검사합니다.' },
   'hover-interaction': { section: 'frontend', owner: 'UID팀', label: 'Hover / Dropdown QA', description: '메뉴, 툴팁, 드롭다운 등 마우스 오버로 반응하는 UI 요소를 실제로 조작하여 노출 상태와 접근성 변화를 확인합니다. Hover 전후의 visibility, ARIA 상태 및 화면 이탈 여부를 검사합니다.' },
   'modal-interaction': { section: 'frontend', owner: 'UID팀', label: 'Modal QA', description: '버튼이나 링크로 열리는 모달 UI를 조작하여 열기·닫기 동작, 키보드 접근성 및 배경 화면 제어 상태를 확인합니다. ESC, 닫기 버튼, 포커스 이동과 스크롤 잠금 여부를 함께 검사합니다.' },
+  'scroll-interaction': { section: 'frontend', owner: 'UID팀', label: 'Scroll QA', description: '페이지 스크롤, 하단 도달, 지연 로딩 및 고정 요소의 동작을 확인합니다.' },
+  'responsive-layout': { section: 'frontend', owner: 'UID팀', label: 'Responsive QA', description: 'Desktop, Tablet, Mobile 화면에서 레이아웃과 가로 넘침 여부를 확인합니다.' },
+  'download-resource': { section: 'link', owner: 'UID팀', label: 'Download QA', description: '다운로드 링크의 응답 상태, 파일 형식 및 주요 헤더를 확인합니다.' },
   'unlabeled-clickables': { section: 'planning', owner: 'UID팀', label: '클릭 가능한 요소 이름', description: '버튼과 링크에 사용자용 이름이 있는지 확인합니다.' },
 }
 
@@ -68,7 +71,7 @@ const SECTION_TITLES = {
 }
 
 export function createTechQaViewModel(result = {}) {
-  const scanOptions = normalizeTechScanOptions(result.scanOptions)
+  const scanOptions = normalizeStoredTechScanOptions(result.scanOptions, result)
   const checks = arrayOfObjects(result.checks).filter((check) => isTechCheckEnabled(check.id, scanOptions))
   const filteredResult = createFilteredTechResult(result, scanOptions, checks)
   const clickActionGroups = createClickActionGroups(filteredResult)
@@ -76,6 +79,9 @@ export function createTechQaViewModel(result = {}) {
   const formInteractionGroups = createInteractionGroups(filteredResult, 'form-interaction', 'formInteractions', 'formAudit')
   const hoverInteractionGroups = createInteractionGroups(filteredResult, 'hover-interaction', 'hoverInteractions', 'hoverAudit')
   const modalInteractionGroups = createInteractionGroups(filteredResult, 'modal-interaction', 'modalInteractions', 'modalAudit')
+  const scrollInteractionGroups = createInteractionGroups(filteredResult, 'scroll-interaction', 'scrollInteractions', 'scrollAudit')
+  const responsiveLayoutGroups = createInteractionGroups(filteredResult, 'responsive-layout', 'responsiveLayouts', 'responsiveAudit')
+  const downloadResourceGroups = createInteractionGroups(filteredResult, 'download-resource', 'downloadResources', 'downloadAudit')
   const links = createLinkItems(filteredResult.links)
   const linkSummary = createLinkSummary(links, filteredResult.linkAudit)
   const checkItems = checks.map((check) => createCheckItem(check, clickActionGroups, { result: filteredResult, linkSummary }))
@@ -111,13 +117,16 @@ export function createTechQaViewModel(result = {}) {
     formInteractionGroups,
     hoverInteractionGroups,
     modalInteractionGroups,
+    scrollInteractionGroups,
+    responsiveLayoutGroups,
+    downloadResourceGroups,
     links,
     allItems: allItems.sort(comparePriorityItems),
     developer: createDeveloperInfo(filteredResult, linkSummary),
   }
 }
 
-function createFilteredTechResult(result = {}, scanOptions = normalizeTechScanOptions(), checks = []) {
+function createFilteredTechResult(result = {}, scanOptions = normalizeStoredTechScanOptions(result?.scanOptions, result), checks = []) {
   return {
     ...result,
     scanOptions,
@@ -128,6 +137,9 @@ function createFilteredTechResult(result = {}, scanOptions = normalizeTechScanOp
     formInteractions: scanOptions.form ? arrayOfObjects(result.formInteractions) : [],
     hoverInteractions: scanOptions.hover ? arrayOfObjects(result.hoverInteractions) : [],
     modalInteractions: scanOptions.modal ? arrayOfObjects(result.modalInteractions) : [],
+    scrollInteractions: scanOptions.scroll ? arrayOfObjects(result.scrollInteractions) : [],
+    responsiveLayouts: scanOptions.responsive ? arrayOfObjects(result.responsiveLayouts) : [],
+    downloadResources: scanOptions.download ? arrayOfObjects(result.downloadResources) : [],
   }
 }
 
@@ -453,6 +465,9 @@ function getObjectiveCheckValue(check = {}, context = {}, problemItems = []) {
   if (check.id === 'meta') return `총 ${getGenericTotal(check, problemCount)}개 항목 확인 필요`
   if (check.id === 'image-alt') return `총 ${getImageTotal(check, result, items)}개 · alt 확인 필요 ${problemCount}개`
   if (check.id === 'external-links') return `총 ${getGenericTotal(check, problemCount)}개 · rel 확인 필요 ${problemCount}개`
+  if (check.id === 'scroll-interaction') return check.meta?.noTarget ? '검사 대상 없음' : `오류 ${Number(check.meta?.errorCount || 0)}개 · 확인 필요 ${Number(check.meta?.warningCount || 0)}개`
+  if (check.id === 'responsive-layout') return check.meta?.noTarget ? '검사 대상 없음' : `오류 ${Number(check.meta?.errorCount || 0)}개 · 확인 필요 ${Number(check.meta?.warningCount || 0)}개`
+  if (check.id === 'download-resource') return check.meta?.noTarget ? '검사 대상 없음' : `오류 ${Number(check.meta?.errorCount || 0)}개 · 확인 필요 ${Number(check.meta?.warningCount || 0)}개`
   return ''
 }
 
@@ -728,6 +743,9 @@ function getCheckPriority(check = {}) {
   if (check.id === 'landing-pages') return 5
   if (check.id === 'console-errors') return 6
   if (check.id === 'network-failures') return 6
+  if (check.id === 'responsive-layout') return 7
+  if (check.id === 'scroll-interaction') return 8
+  if (check.id === 'download-resource') return 8
   if (check.id === 'images') return 7
   if (check.id === 'meta' || check.id === 'title') return 9
   return 12

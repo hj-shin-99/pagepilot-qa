@@ -21,6 +21,9 @@ import { auditForms } from './techFormAudit.js'
 import { auditHoverInteractions } from './techHoverAudit.js'
 import { auditLandingPages } from './techLandingAudit.js'
 import { auditModalInteractions } from './techModalAudit.js'
+import { auditResponsiveLayouts } from './techResponsiveAudit.js'
+import { auditScrollInteractions } from './techScrollAudit.js'
+import { auditDownloadResources } from './techDownloadAudit.js'
 import { classifyConsoleMessages } from './techConsoleAudit.js'
 import { runOptionalTechAudits, runUrlAudit } from './techScanOrchestration.js'
 import { buildVisualQaPayloadArtifacts } from './visualQaPayload.js'
@@ -1912,6 +1915,9 @@ async function scanUrl(targetUrl, options = {}) {
   let formAuditResult
   let hoverAuditResult
   let modalAuditResult
+  let scrollAuditResult
+  let responsiveAuditResult
+  let downloadAuditResult
 
   try {
     const context = await browser.newContext({
@@ -1951,7 +1957,7 @@ async function scanUrl(targetUrl, options = {}) {
     }
     mobileResult = scanOptions.includeMobile ? await scanMobile(browser, targetUrl, scanOptions.instrumentation) : createMobileFallback()
     await context.close()
-    ;({ clickActionAuditResult, landingAuditResult, formAuditResult, hoverAuditResult, modalAuditResult } = await runOptionalTechAudits({
+    ;({ clickActionAuditResult, landingAuditResult, formAuditResult, hoverAuditResult, modalAuditResult, scrollAuditResult, responsiveAuditResult, downloadAuditResult } = await runOptionalTechAudits({
       browser,
       targetUrl,
       snapshot: domSnapshot,
@@ -1962,6 +1968,9 @@ async function scanUrl(targetUrl, options = {}) {
       auditForms,
       auditHoverInteractions,
       auditModalInteractions,
+      auditScrollInteractions,
+      auditResponsiveLayouts,
+      auditDownloadResources,
     }))
   } finally {
     await browser.close()
@@ -1974,6 +1983,9 @@ async function scanUrl(targetUrl, options = {}) {
   const safeFormAuditResult = formAuditResult || { items: [], meta: {} }
   const safeHoverAuditResult = hoverAuditResult || { items: [], meta: {} }
   const safeModalAuditResult = modalAuditResult || { items: [], meta: {} }
+  const safeScrollAuditResult = scrollAuditResult || { items: [], meta: {} }
+  const safeResponsiveAuditResult = responsiveAuditResult || { items: [], meta: {} }
+  const safeDownloadAuditResult = downloadAuditResult || { items: [], meta: {} }
   const urlAuditResult = await runUrlAudit({
     enabled: scanOptions.techScanOptions.url,
     targetUrl,
@@ -2018,6 +2030,9 @@ async function scanUrl(targetUrl, options = {}) {
     formAuditResult: safeFormAuditResult,
     hoverAuditResult: safeHoverAuditResult,
     modalAuditResult: safeModalAuditResult,
+    scrollAuditResult: safeScrollAuditResult,
+    responsiveAuditResult: safeResponsiveAuditResult,
+    downloadAuditResult: safeDownloadAuditResult,
     techScanOptions: scanOptions.techScanOptions,
   })
 
@@ -2046,6 +2061,12 @@ async function scanUrl(targetUrl, options = {}) {
     hoverAudit: safeHoverAuditResult.meta,
     modalInteractions: safeModalAuditResult.items,
     modalAudit: safeModalAuditResult.meta,
+    scrollInteractions: safeScrollAuditResult.items,
+    scrollAudit: safeScrollAuditResult.meta,
+    responsiveLayouts: safeResponsiveAuditResult.items,
+    responsiveAudit: safeResponsiveAuditResult.meta,
+    downloadResources: safeDownloadAuditResult.items,
+    downloadAudit: safeDownloadAuditResult.meta,
     images,
     designElements: snapshot.designElements,
     webCtaHints: snapshot.webCtaHints || [],
@@ -2457,6 +2478,7 @@ async function safeDomSnapshot(page, targetUrl, options = {}) {
           type: anchor.getAttribute('type') || '',
           target: anchor.getAttribute('target') || '',
           rel: anchor.getAttribute('rel') || '',
+          download: anchor.getAttribute('download') || '',
           ariaControls: anchor.getAttribute('aria-controls') || '',
           ariaExpanded: anchor.getAttribute('aria-expanded') || '',
           dataTarget: anchor.getAttribute('data-target') || anchor.getAttribute('data-bs-target') || '',
@@ -3510,6 +3532,9 @@ function buildChecks({
   formAuditResult = { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } },
   hoverAuditResult = { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } },
   modalAuditResult = { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } },
+  scrollAuditResult = { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } },
+  responsiveAuditResult = { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } },
+  downloadAuditResult = { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } },
   techScanOptions = normalizeTechScanOptions(),
 }) {
   const httpStatus = mainResponse?.status() ?? null
@@ -3527,6 +3552,12 @@ function buildChecks({
   const hoverMeta = hoverAuditResult.meta || {}
   const modalItems = Array.isArray(modalAuditResult.items) ? modalAuditResult.items : []
   const modalMeta = modalAuditResult.meta || {}
+  const scrollItems = Array.isArray(scrollAuditResult.items) ? scrollAuditResult.items : []
+  const scrollMeta = scrollAuditResult.meta || {}
+  const responsiveItems = Array.isArray(responsiveAuditResult.items) ? responsiveAuditResult.items : []
+  const responsiveMeta = responsiveAuditResult.meta || {}
+  const downloadItems = Array.isArray(downloadAuditResult.items) ? downloadAuditResult.items : []
+  const downloadMeta = downloadAuditResult.meta || {}
   const missingMetaFields = getMissingMetaFields(metaInfo)
   const formMissingLabels = Array.isArray(formInfo.missingLabels) ? formInfo.missingLabels : []
   const headingItems = createHeadingIssueItems(headingInfo)
@@ -3770,6 +3801,48 @@ function buildChecks({
         : `대상 ${Number(modalMeta.candidateCount || modalItems.length)}개 중 ${modalItems.length}개를 점검했습니다.`,
       items: modalItems,
       meta: modalMeta,
+    })
+  }
+
+  if (techScanOptions.scroll) {
+    checks.push({
+      id: 'scroll-interaction',
+      title: 'Scroll QA',
+      status: Number(scrollMeta.errorCount || 0) > 0 ? 'error' : Number(scrollMeta.warningCount || 0) > 0 ? 'warn' : 'ok',
+      value: scrollMeta.noTarget ? '검사 대상 없음' : `오류 ${Number(scrollMeta.errorCount || 0)}개 / 확인 필요 ${Number(scrollMeta.warningCount || 0)}개`,
+      detail: scrollMeta.noTarget
+        ? '검사할 스크롤 대상이 없어 Scroll QA를 생략했습니다.'
+        : `페이지 스크롤, 하단 도달, 지연 로딩 및 고정 요소 동작을 확인했습니다. 총 ${scrollItems.length}개 항목을 기록했습니다.`,
+      items: scrollItems,
+      meta: scrollMeta,
+    })
+  }
+
+  if (techScanOptions.responsive) {
+    checks.push({
+      id: 'responsive-layout',
+      title: 'Responsive QA',
+      status: Number(responsiveMeta.errorCount || 0) > 0 ? 'error' : Number(responsiveMeta.warningCount || 0) > 0 ? 'warn' : 'ok',
+      value: responsiveMeta.noTarget ? '검사 대상 없음' : `오류 ${Number(responsiveMeta.errorCount || 0)}개 / 확인 필요 ${Number(responsiveMeta.warningCount || 0)}개`,
+      detail: responsiveMeta.noTarget
+        ? '검사할 viewport 결과가 없어 Responsive QA를 생략했습니다.'
+        : `Desktop, Tablet, Mobile viewport ${responsiveItems.length}개 결과를 수집했습니다.`,
+      items: responsiveItems,
+      meta: responsiveMeta,
+    })
+  }
+
+  if (techScanOptions.download) {
+    checks.push({
+      id: 'download-resource',
+      title: 'Download QA',
+      status: Number(downloadMeta.errorCount || 0) > 0 ? 'error' : Number(downloadMeta.warningCount || 0) > 0 ? 'warn' : 'ok',
+      value: downloadMeta.noTarget ? '검사 대상 없음' : `오류 ${Number(downloadMeta.errorCount || 0)}개 / 확인 필요 ${Number(downloadMeta.warningCount || 0)}개`,
+      detail: downloadMeta.noTarget
+        ? '정적 HTTP 검사로 확인할 다운로드 링크가 없어 Download QA를 생략했습니다.'
+        : `다운로드 후보 ${Number(downloadMeta.candidateCount || downloadItems.length)}개 중 ${downloadItems.length}개를 점검했습니다.`,
+      items: downloadItems,
+      meta: downloadMeta,
     })
   }
 

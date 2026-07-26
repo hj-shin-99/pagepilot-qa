@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createTechQaViewModel } from './techQa.js'
-import { areAllTechScanOptionsSelected, createDefaultTechScanOptions, normalizeTechScanOptions } from '../../shared/techScanOptions.js'
+import { areAllTechScanOptionsSelected, createDefaultTechScanOptions, normalizeStoredTechScanOptions, normalizeTechScanOptions } from '../../shared/techScanOptions.js'
 
 test('tech scan options default to all selected and normalize invalid values safely', () => {
   assert.deepEqual(createDefaultTechScanOptions(), {
@@ -12,6 +12,9 @@ test('tech scan options default to all selected and normalize invalid values saf
     hover: true,
     modal: true,
     markup: true,
+    scroll: true,
+    responsive: true,
+    download: true,
   })
   assert.deepEqual(normalizeTechScanOptions(null), createDefaultTechScanOptions())
   assert.deepEqual(normalizeTechScanOptions({ url: false, click: 'nope', unknown: false }), {
@@ -22,16 +25,47 @@ test('tech scan options default to all selected and normalize invalid values saf
     hover: true,
     modal: true,
     markup: true,
+    scroll: true,
+    responsive: true,
+    download: true,
   })
   assert.equal(areAllTechScanOptionsSelected({ url: false }), false)
   assert.equal(areAllTechScanOptionsSelected(createDefaultTechScanOptions()), true)
+})
+
+test('stored tech scan options keep legacy history from showing newly added sections', () => {
+  assert.deepEqual(normalizeStoredTechScanOptions(null, { checks: [{ id: 'links' }, { id: 'click-actions' }] }), {
+    url: true,
+    click: true,
+    landing: true,
+    form: true,
+    hover: true,
+    modal: true,
+    markup: true,
+    scroll: false,
+    responsive: false,
+    download: false,
+  })
+
+  assert.deepEqual(normalizeStoredTechScanOptions({ url: true, click: true, landing: true, form: true, hover: true, modal: true, markup: true }, {}), {
+    url: true,
+    click: true,
+    landing: true,
+    form: true,
+    hover: true,
+    modal: true,
+    markup: true,
+    scroll: false,
+    responsive: false,
+    download: false,
+  })
 })
 
 test('tech qa view model excludes unselected option checks and counts while keeping common checks', () => {
   const view = createTechQaViewModel({
     targetUrl: 'https://example.com',
     pageTitle: 'Example',
-    scanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, markup: false },
+    scanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, markup: false, scroll: false, responsive: false, download: false },
     checks: [
       { id: 'access', status: 'ok', title: '접속', value: '가능' },
       { id: 'links', status: 'warn', title: '링크 목록 수집', value: '2개' },
@@ -53,6 +87,9 @@ test('tech qa view model excludes unselected option checks and counts while keep
     hover: false,
     modal: false,
     markup: false,
+    scroll: false,
+    responsive: false,
+    download: false,
   })
   assert.equal(view.checkItems.some((item) => item.id === 'links'), false)
   assert.equal(view.checkItems.some((item) => item.id === 'meta'), false)
@@ -62,4 +99,22 @@ test('tech qa view model excludes unselected option checks and counts while keep
   assert.equal(view.issueCounts.warningElementCount, 0)
   assert.equal(view.basicCheckItems.some((item) => item.id === 'access'), true)
   assert.equal(view.basicCheckItems.some((item) => item.id === 'network-failures'), true)
+})
+
+test('legacy results without stored options keep existing sections and hide new ones', () => {
+  const view = createTechQaViewModel({
+    targetUrl: 'https://example.com',
+    pageTitle: 'Example',
+    checks: [
+      { id: 'links', status: 'ok', title: '링크 목록 수집', value: '1개', items: [] },
+      { id: 'click-actions', status: 'ok', title: '클릭 동작 검사', value: '정상', items: [] },
+    ],
+    links: [{ label: 'Link', url: 'https://example.com/a', status: 'ok', statusCode: 200, category: 'http-ok' }],
+  })
+
+  assert.equal(view.scanOptions.url, true)
+  assert.equal(view.scanOptions.click, true)
+  assert.equal(view.scanOptions.scroll, false)
+  assert.equal(view.scanOptions.responsive, false)
+  assert.equal(view.scanOptions.download, false)
 })

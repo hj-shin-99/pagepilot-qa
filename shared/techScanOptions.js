@@ -10,6 +10,8 @@ export const TECH_SCAN_OPTION_DEFINITIONS = Object.freeze([
   { key: 'download', label: 'Download QA', checkIds: ['download-resource'] },
   { key: 'cookie', label: 'Cookie QA', checkIds: ['cookie-security'] },
   { key: 'image', label: 'Image QA', checkIds: ['image-rendering'] },
+  { key: 'performance', label: 'Performance QA', checkIds: ['performance-resource'] },
+  { key: 'seo', label: 'SEO QA', checkIds: ['seo-readiness'] },
   { key: 'markup', label: '마크업 및 접근성 검사', checkIds: ['meta', 'image-alt', 'forms', 'external-links', 'duplicate-ids', 'headings', 'unlabeled-clickables'] },
 ])
 
@@ -27,6 +29,8 @@ export const DEFAULT_TECH_SCAN_OPTIONS = Object.freeze({
   download: true,
   cookie: true,
   image: true,
+  performance: true,
+  seo: true,
   markup: true,
 })
 
@@ -43,6 +47,8 @@ const OPTION_RESULT_FIELDS = Object.freeze({
   download: ['downloadResources', 'downloadAudit'],
   cookie: ['cookieItems', 'cookieAudit'],
   image: ['imageItems', 'imageAudit'],
+  performance: ['performanceItems', 'performanceAudit'],
+  seo: ['seoItems', 'seoAudit'],
 })
 
 const CHECK_ID_TO_OPTION_KEY = Object.freeze(TECH_SCAN_OPTION_DEFINITIONS.reduce((map, definition) => {

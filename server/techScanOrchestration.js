@@ -40,6 +40,7 @@ export async function runOptionalTechAudits({
   browser,
   targetUrl,
   snapshot,
+  resourceResponses,
   techScanOptions,
   instrumentation,
   auditClickableActions,
@@ -52,6 +53,8 @@ export async function runOptionalTechAudits({
   auditDownloadResources,
   auditCookies,
   auditImages,
+  auditPerformanceResources,
+  auditSeoReadiness,
 }) {
   const normalizedOptions = normalizeTechScanOptions(techScanOptions)
   const safeSnapshot = snapshot && typeof snapshot === 'object' ? snapshot : { clickableCandidates: [], interactionTargets: [], links: [] }
@@ -65,6 +68,8 @@ export async function runOptionalTechAudits({
   let downloadAuditResult = createSkippedInteractionAuditResult()
   let cookieAuditResult = createSkippedInteractionAuditResult()
   let imageAuditResult = createSkippedInteractionAuditResult()
+  let performanceAuditResult = createSkippedInteractionAuditResult()
+  let seoAuditResult = createSkippedInteractionAuditResult()
 
   if (normalizedOptions.click) {
     clickActionAuditResult = await auditClickableActions(browser, targetUrl, safeSnapshot.clickableCandidates || [], instrumentation).catch((error) => ({
@@ -220,6 +225,42 @@ export async function runOptionalTechAudits({
     }))
   }
 
+  if (normalizedOptions.performance && typeof auditPerformanceResources === 'function') {
+    performanceAuditResult = await Promise.resolve()
+      .then(() => auditPerformanceResources(targetUrl, safeSnapshot, resourceResponses || []))
+      .catch((error) => ({
+      items: [],
+      meta: {
+        candidateCount: 0,
+        inspectedCount: 0,
+        okCount: 0,
+        warningCount: 0,
+        errorCount: 1,
+        skippedCount: 0,
+        noTarget: true,
+        error: error instanceof Error ? error.message : 'performance audit failed',
+      },
+      }))
+  }
+
+  if (normalizedOptions.seo && typeof auditSeoReadiness === 'function') {
+    seoAuditResult = await Promise.resolve()
+      .then(() => auditSeoReadiness(targetUrl, safeSnapshot, resourceResponses || [], instrumentation))
+      .catch((error) => ({
+      items: [],
+      meta: {
+        candidateCount: 0,
+        inspectedCount: 0,
+        okCount: 0,
+        warningCount: 0,
+        errorCount: 1,
+        skippedCount: 0,
+        noTarget: true,
+        error: error instanceof Error ? error.message : 'seo audit failed',
+      },
+      }))
+  }
+
   return {
     techScanOptions: normalizedOptions,
     clickActionAuditResult,
@@ -232,6 +273,8 @@ export async function runOptionalTechAudits({
     downloadAuditResult,
     cookieAuditResult,
     imageAuditResult,
+    performanceAuditResult,
+    seoAuditResult,
   }
 }
 

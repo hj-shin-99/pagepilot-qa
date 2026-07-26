@@ -16,6 +16,8 @@ test('tech scan options default to all selected and normalize invalid values saf
     download: true,
     cookie: true,
     image: true,
+    performance: true,
+    seo: true,
     markup: true,
   })
   assert.deepEqual(normalizeTechScanOptions(null), createDefaultTechScanOptions())
@@ -31,6 +33,8 @@ test('tech scan options default to all selected and normalize invalid values saf
     download: true,
     cookie: true,
     image: true,
+    performance: true,
+    seo: true,
     markup: true,
   })
   assert.equal(areAllTechScanOptionsSelected({ url: false }), false)
@@ -50,6 +54,8 @@ test('stored tech scan options keep legacy history from showing newly added sect
       download: false,
       cookie: false,
       image: false,
+      performance: false,
+      seo: false,
       markup: true,
     })
 
@@ -65,6 +71,8 @@ test('stored tech scan options keep legacy history from showing newly added sect
       download: false,
       cookie: false,
       image: false,
+      performance: false,
+      seo: false,
       markup: true,
     })
 })
@@ -73,7 +81,7 @@ test('tech qa view model excludes unselected option checks and counts while keep
   const view = createTechQaViewModel({
     targetUrl: 'https://example.com',
     pageTitle: 'Example',
-    scanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, markup: false },
+    scanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, performance: false, seo: false, markup: false },
     checks: [
       { id: 'access', status: 'ok', title: '접속', value: '가능' },
       { id: 'links', status: 'warn', title: '링크 목록 수집', value: '2개' },
@@ -99,6 +107,8 @@ test('tech qa view model excludes unselected option checks and counts while keep
     download: false,
     cookie: false,
     image: false,
+    performance: false,
+    seo: false,
     markup: false,
   })
   assert.equal(view.checkItems.some((item) => item.id === 'links'), false)
@@ -129,4 +139,6 @@ test('legacy results without stored options keep existing sections and hide new 
   assert.equal(view.scanOptions.download, false)
   assert.equal(view.scanOptions.cookie, false)
   assert.equal(view.scanOptions.image, false)
+  assert.equal(view.scanOptions.performance, false)
+  assert.equal(view.scanOptions.seo, false)
 })

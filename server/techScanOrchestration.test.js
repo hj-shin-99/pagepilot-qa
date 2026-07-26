@@ -2,6 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { createLandingAuditSourceItems, runOptionalTechAudits, runUrlAudit } from './techScanOrchestration.js'
+import { auditPerformanceResources } from './techPerformanceAudit.js'
+import { auditSeoReadiness } from './techSeoAudit.js'
 
 test('optional tech audit orchestration skips unselected audit functions and supports modal-only execution', async () => {
   const calls = []
@@ -30,7 +32,7 @@ test('optional tech audit orchestration skips unselected audit functions and sup
     browser: {},
     targetUrl: 'https://example.com',
     snapshot: { clickableCandidates: [{ selector: '#cta' }], interactionTargets: [{ label: 'CTA', url: 'https://example.com/next' }] },
-    techScanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: true, scroll: false, responsive: false, download: false, cookie: false, image: false, markup: false },
+    techScanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: true, scroll: false, responsive: false, download: false, cookie: false, image: false, performance: false, seo: false, markup: false },
     instrumentation: {},
     auditClickableActions,
     auditLandingPages,
@@ -57,6 +59,14 @@ test('optional tech audit orchestration skips unselected audit functions and sup
       calls.push('image')
       return { items: [], meta: { candidateCount: 0, noTarget: true } }
     },
+    auditPerformanceResources: async () => {
+      calls.push('performance')
+      return { items: [], meta: { candidateCount: 0, noTarget: true } }
+    },
+    auditSeoReadiness: async () => {
+      calls.push('seo')
+      return { items: [], meta: { candidateCount: 0, noTarget: true } }
+    },
   })
 
   assert.deepEqual(calls, ['modal:0'])
@@ -68,7 +78,7 @@ test('optional tech audit orchestration runs landing without click audit by usin
     browser: {},
     targetUrl: 'https://example.com',
     snapshot: { clickableCandidates: [{ selector: '#cta' }], interactionTargets: [{ label: 'CTA', url: 'https://example.com/next', target: '_blank', selector: '#cta', section: 'hero' }] },
-    techScanOptions: { url: false, click: false, landing: true, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, markup: false },
+    techScanOptions: { url: false, click: false, landing: true, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, performance: false, seo: false, markup: false },
     instrumentation: {},
     auditClickableActions: async () => {
       calls.push('click')
@@ -86,6 +96,8 @@ test('optional tech audit orchestration runs landing without click audit by usin
     auditDownloadResources: async () => ({ items: [], meta: {} }),
     auditCookies: async () => ({ items: [], meta: {} }),
     auditImages: async () => ({ items: [], meta: {} }),
+    auditPerformanceResources: async () => ({ items: [], meta: {} }),
+    auditSeoReadiness: async () => ({ items: [], meta: {} }),
   })
 
   assert.deepEqual(calls, ['new-window'])
@@ -125,7 +137,7 @@ test('optional tech audit orchestration runs only scroll responsive and download
     browser: {},
     targetUrl: 'https://example.com',
     snapshot: { links: [{ href: '/file.pdf', url: 'https://example.com/file.pdf', label: 'PDF' }], clickableCandidates: [], interactionTargets: [] },
-    techScanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: true, responsive: true, download: true, cookie: false, image: false, markup: false },
+    techScanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: true, responsive: true, download: true, cookie: false, image: false, performance: false, seo: false, markup: false },
     instrumentation: {},
     auditClickableActions: async () => {
       calls.push('click')
@@ -167,6 +179,14 @@ test('optional tech audit orchestration runs only scroll responsive and download
       calls.push('image')
       return { items: [{ label: 'hero.webp' }], meta: { candidateCount: 1 } }
     },
+    auditPerformanceResources: async () => {
+      calls.push('performance')
+      return { items: [{ label: 'large resource' }], meta: { candidateCount: 6 } }
+    },
+    auditSeoReadiness: async () => {
+      calls.push('seo')
+      return { items: [{ label: 'canonical' }], meta: { candidateCount: 8 } }
+    },
   })
 
   assert.deepEqual(calls, ['scroll', 'responsive', 'download'])
@@ -180,7 +200,7 @@ test('optional tech audit orchestration isolates failures in new audits', async 
     browser: {},
     targetUrl: 'https://example.com',
     snapshot: { links: [{ href: '/file.pdf', url: 'https://example.com/file.pdf', label: 'PDF' }], clickableCandidates: [], interactionTargets: [] },
-    techScanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: true, responsive: true, download: true, cookie: false, image: false, markup: false },
+    techScanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: true, responsive: true, download: true, cookie: false, image: false, performance: false, seo: false, markup: false },
     instrumentation: {},
     auditClickableActions: async () => ({ items: [], meta: {} }),
     auditLandingPages: async () => ({ items: [], meta: {} }),
@@ -194,6 +214,8 @@ test('optional tech audit orchestration isolates failures in new audits', async 
     auditDownloadResources: async () => ({ items: [{ auditId: 'download-1' }], meta: { candidateCount: 1 } }),
     auditCookies: async () => ({ items: [], meta: {} }),
     auditImages: async () => ({ items: [], meta: {} }),
+    auditPerformanceResources: async () => ({ items: [], meta: {} }),
+    auditSeoReadiness: async () => ({ items: [], meta: {} }),
   })
 
   assert.equal(result.scrollAuditResult.meta.error.includes('scroll failed'), true)
@@ -207,7 +229,7 @@ test('optional tech audit orchestration runs cookie and image independently and 
     browser: {},
     targetUrl: 'https://example.com',
     snapshot: { links: [], clickableCandidates: [], interactionTargets: [] },
-    techScanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: true, image: false, markup: false },
+    techScanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: true, image: false, performance: false, seo: false, markup: false },
     instrumentation: {},
     auditClickableActions: async () => ({ items: [], meta: {} }),
     auditLandingPages: async () => ({ items: [], meta: {} }),
@@ -224,6 +246,14 @@ test('optional tech audit orchestration runs cookie and image independently and 
     auditImages: async () => {
       calls.push('image')
       return { items: [{ label: 'hero.webp' }], meta: { candidateCount: 1 } }
+    },
+    auditPerformanceResources: async () => {
+      calls.push('performance')
+      return { items: [{ label: 'large resource' }], meta: { candidateCount: 6 } }
+    },
+    auditSeoReadiness: async () => {
+      calls.push('seo')
+      return { items: [{ label: 'canonical' }], meta: { candidateCount: 8 } }
     },
   })
 
@@ -231,7 +261,7 @@ test('optional tech audit orchestration runs cookie and image independently and 
     browser: {},
     targetUrl: 'https://example.com',
     snapshot: { links: [], clickableCandidates: [], interactionTargets: [] },
-    techScanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: true, markup: false },
+    techScanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: true, performance: false, seo: false, markup: false },
     instrumentation: {},
     auditClickableActions: async () => ({ items: [], meta: {} }),
     auditLandingPages: async () => ({ items: [], meta: {} }),
@@ -248,6 +278,14 @@ test('optional tech audit orchestration runs cookie and image independently and 
     auditImages: async () => {
       calls.push('image')
       return { items: [{ label: 'hero.webp' }], meta: { candidateCount: 1 } }
+    },
+    auditPerformanceResources: async () => {
+      calls.push('performance')
+      return { items: [{ label: 'large resource' }], meta: { candidateCount: 6 } }
+    },
+    auditSeoReadiness: async () => {
+      calls.push('seo')
+      return { items: [{ label: 'canonical' }], meta: { candidateCount: 8 } }
     },
   })
 
@@ -263,7 +301,7 @@ test('optional tech audit orchestration isolates failures in cookie and image au
     browser: {},
     targetUrl: 'https://example.com',
     snapshot: { links: [], clickableCandidates: [], interactionTargets: [] },
-    techScanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: true, image: true, markup: false },
+    techScanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: true, image: true, performance: false, seo: false, markup: false },
     instrumentation: {},
     auditClickableActions: async () => ({ items: [], meta: {} }),
     auditLandingPages: async () => ({ items: [], meta: {} }),
@@ -277,10 +315,311 @@ test('optional tech audit orchestration isolates failures in cookie and image au
       throw new Error('cookie failed')
     },
     auditImages: async () => ({ items: [{ label: 'hero.webp' }], meta: { candidateCount: 1 } }),
+    auditPerformanceResources: async () => ({ items: [], meta: {} }),
+    auditSeoReadiness: async () => ({ items: [], meta: {} }),
   })
 
   assert.equal(result.cookieAuditResult.meta.error.includes('cookie failed'), true)
   assert.equal(result.imageAuditResult.items.length, 1)
+})
+
+test('optional tech audit orchestration runs performance and seo independently', async () => {
+  const calls = []
+  const performanceOnly = await runOptionalTechAudits({
+    browser: {},
+    targetUrl: 'https://example.com',
+    snapshot: { performanceInfo: { resources: [] }, seoInfo: {} },
+    resourceResponses: [],
+    techScanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, performance: true, seo: false, markup: false },
+    instrumentation: {},
+    auditClickableActions: async () => ({ items: [], meta: {} }),
+    auditLandingPages: async () => ({ items: [], meta: {} }),
+    auditForms: async () => ({ items: [], meta: {} }),
+    auditHoverInteractions: async () => ({ items: [], meta: {} }),
+    auditModalInteractions: async () => ({ items: [], meta: {} }),
+    auditScrollInteractions: async () => ({ items: [], meta: {} }),
+    auditResponsiveLayouts: async () => ({ items: [], meta: {} }),
+    auditDownloadResources: async () => ({ items: [], meta: {} }),
+    auditCookies: async () => ({ items: [], meta: {} }),
+    auditImages: async () => ({ items: [], meta: {} }),
+    auditPerformanceResources: async () => {
+      calls.push('performance')
+      return { items: [{ label: 'large resource' }], meta: { candidateCount: 6 } }
+    },
+    auditSeoReadiness: async () => {
+      calls.push('seo')
+      return { items: [{ label: 'canonical' }], meta: { candidateCount: 8 } }
+    },
+  })
+
+  const seoOnly = await runOptionalTechAudits({
+    browser: {},
+    targetUrl: 'https://example.com',
+    snapshot: { performanceInfo: { resources: [] }, seoInfo: {} },
+    resourceResponses: [],
+    techScanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, performance: false, seo: true, markup: false },
+    instrumentation: {},
+    auditClickableActions: async () => ({ items: [], meta: {} }),
+    auditLandingPages: async () => ({ items: [], meta: {} }),
+    auditForms: async () => ({ items: [], meta: {} }),
+    auditHoverInteractions: async () => ({ items: [], meta: {} }),
+    auditModalInteractions: async () => ({ items: [], meta: {} }),
+    auditScrollInteractions: async () => ({ items: [], meta: {} }),
+    auditResponsiveLayouts: async () => ({ items: [], meta: {} }),
+    auditDownloadResources: async () => ({ items: [], meta: {} }),
+    auditCookies: async () => ({ items: [], meta: {} }),
+    auditImages: async () => ({ items: [], meta: {} }),
+    auditPerformanceResources: async () => {
+      calls.push('performance')
+      return { items: [{ label: 'large resource' }], meta: { candidateCount: 6 } }
+    },
+    auditSeoReadiness: async () => {
+      calls.push('seo')
+      return { items: [{ label: 'canonical' }], meta: { candidateCount: 8 } }
+    },
+  })
+
+  assert.deepEqual(calls, ['performance', 'seo'])
+  assert.equal(performanceOnly.performanceAuditResult.items.length, 1)
+  assert.equal(performanceOnly.seoAuditResult.items.length, 0)
+  assert.equal(seoOnly.performanceAuditResult.items.length, 0)
+  assert.equal(seoOnly.seoAuditResult.items.length, 1)
+})
+
+test('optional tech audit orchestration isolates failures in performance and seo audits', async () => {
+  const result = await runOptionalTechAudits({
+    browser: {},
+    targetUrl: 'https://example.com',
+    snapshot: { performanceInfo: { resources: [] }, seoInfo: {} },
+    resourceResponses: [],
+    techScanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, performance: true, seo: true, markup: false },
+    instrumentation: {},
+    auditClickableActions: async () => ({ items: [], meta: {} }),
+    auditLandingPages: async () => ({ items: [], meta: {} }),
+    auditForms: async () => ({ items: [], meta: {} }),
+    auditHoverInteractions: async () => ({ items: [], meta: {} }),
+    auditModalInteractions: async () => ({ items: [], meta: {} }),
+    auditScrollInteractions: async () => ({ items: [], meta: {} }),
+    auditResponsiveLayouts: async () => ({ items: [], meta: {} }),
+    auditDownloadResources: async () => ({ items: [], meta: {} }),
+    auditCookies: async () => ({ items: [], meta: {} }),
+    auditImages: async () => ({ items: [], meta: {} }),
+    auditPerformanceResources: async () => {
+      throw new Error('performance failed')
+    },
+    auditSeoReadiness: async () => ({ items: [{ label: 'canonical' }], meta: { candidateCount: 8 } }),
+  })
+
+  assert.equal(result.performanceAuditResult.meta.error.includes('performance failed'), true)
+  assert.equal(result.seoAuditResult.items.length, 1)
+})
+
+test('optional tech audit orchestration accepts synchronous performance audit return objects', async () => {
+  const result = await runOptionalTechAudits({
+    browser: {},
+    targetUrl: 'https://example.com',
+    snapshot: { performanceInfo: { resources: [] }, seoInfo: {} },
+    resourceResponses: [],
+    techScanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, performance: true, seo: true, markup: false },
+    instrumentation: {},
+    auditClickableActions: async () => ({ items: [], meta: {} }),
+    auditLandingPages: async () => ({ items: [], meta: {} }),
+    auditForms: async () => ({ items: [], meta: {} }),
+    auditHoverInteractions: async () => ({ items: [], meta: {} }),
+    auditModalInteractions: async () => ({ items: [], meta: {} }),
+    auditScrollInteractions: async () => ({ items: [], meta: {} }),
+    auditResponsiveLayouts: async () => ({ items: [], meta: {} }),
+    auditDownloadResources: async () => ({ items: [], meta: {} }),
+    auditCookies: async () => ({ items: [], meta: {} }),
+    auditImages: async () => ({ items: [], meta: {} }),
+    auditPerformanceResources() {
+      return { items: [{ label: 'sync performance' }], meta: { candidateCount: 1 } }
+    },
+    auditSeoReadiness: async () => ({ items: [], meta: {} }),
+  })
+
+  assert.equal(result.performanceAuditResult.items[0].label, 'sync performance')
+})
+
+test('optional tech audit orchestration accepts promised performance audit results', async () => {
+  const result = await runOptionalTechAudits({
+    browser: {},
+    targetUrl: 'https://example.com',
+    snapshot: { performanceInfo: { resources: [] }, seoInfo: {} },
+    resourceResponses: [],
+    techScanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, performance: true, seo: true, markup: false },
+    instrumentation: {},
+    auditClickableActions: async () => ({ items: [], meta: {} }),
+    auditLandingPages: async () => ({ items: [], meta: {} }),
+    auditForms: async () => ({ items: [], meta: {} }),
+    auditHoverInteractions: async () => ({ items: [], meta: {} }),
+    auditModalInteractions: async () => ({ items: [], meta: {} }),
+    auditScrollInteractions: async () => ({ items: [], meta: {} }),
+    auditResponsiveLayouts: async () => ({ items: [], meta: {} }),
+    auditDownloadResources: async () => ({ items: [], meta: {} }),
+    auditCookies: async () => ({ items: [], meta: {} }),
+    auditImages: async () => ({ items: [], meta: {} }),
+    auditPerformanceResources: async () => ({ items: [{ label: 'async performance' }], meta: { candidateCount: 1 } }),
+    auditSeoReadiness: async () => ({ items: [], meta: {} }),
+  })
+
+  assert.equal(result.performanceAuditResult.items[0].label, 'async performance')
+})
+
+test('optional tech audit orchestration isolates synchronous performance throws and rejected performance promises', async () => {
+  const syncThrow = await runOptionalTechAudits({
+    browser: {},
+    targetUrl: 'https://example.com',
+    snapshot: { performanceInfo: { resources: [] }, seoInfo: {} },
+    resourceResponses: [],
+    techScanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, performance: true, seo: true, markup: false },
+    instrumentation: {},
+    auditClickableActions: async () => ({ items: [], meta: {} }),
+    auditLandingPages: async () => ({ items: [], meta: {} }),
+    auditForms: async () => ({ items: [], meta: {} }),
+    auditHoverInteractions: async () => ({ items: [], meta: {} }),
+    auditModalInteractions: async () => ({ items: [], meta: {} }),
+    auditScrollInteractions: async () => ({ items: [], meta: {} }),
+    auditResponsiveLayouts: async () => ({ items: [], meta: {} }),
+    auditDownloadResources: async () => ({ items: [], meta: {} }),
+    auditCookies: async () => ({ items: [], meta: {} }),
+    auditImages: async () => ({ items: [], meta: {} }),
+    auditPerformanceResources() {
+      throw new Error('sync performance throw')
+    },
+    auditSeoReadiness: async () => ({ items: [{ label: 'seo survived' }], meta: { candidateCount: 1 } }),
+  })
+  const rejected = await runOptionalTechAudits({
+    browser: {},
+    targetUrl: 'https://example.com',
+    snapshot: { performanceInfo: { resources: [] }, seoInfo: {} },
+    resourceResponses: [],
+    techScanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, performance: true, seo: false, markup: false },
+    instrumentation: {},
+    auditClickableActions: async () => ({ items: [], meta: {} }),
+    auditLandingPages: async () => ({ items: [], meta: {} }),
+    auditForms: async () => ({ items: [], meta: {} }),
+    auditHoverInteractions: async () => ({ items: [], meta: {} }),
+    auditModalInteractions: async () => ({ items: [], meta: {} }),
+    auditScrollInteractions: async () => ({ items: [], meta: {} }),
+    auditResponsiveLayouts: async () => ({ items: [], meta: {} }),
+    auditDownloadResources: async () => ({ items: [], meta: {} }),
+    auditCookies: async () => ({ items: [], meta: {} }),
+    auditImages: async () => ({ items: [], meta: {} }),
+    auditPerformanceResources: async () => Promise.reject(new Error('rejected performance')),
+    auditSeoReadiness: async () => ({ items: [{ label: 'seo survived' }], meta: { candidateCount: 1 } }),
+  })
+
+  assert.equal(syncThrow.performanceAuditResult.meta.error.includes('sync performance throw'), true)
+  assert.equal(syncThrow.seoAuditResult.items[0].label, 'seo survived')
+  assert.equal(rejected.performanceAuditResult.meta.error.includes('rejected performance'), true)
+})
+
+test('optional tech audit orchestration accepts synchronous seo return objects and isolates synchronous seo throws', async () => {
+  const syncSeo = await runOptionalTechAudits({
+    browser: {},
+    targetUrl: 'https://example.com',
+    snapshot: { performanceInfo: { resources: [] }, seoInfo: {} },
+    resourceResponses: [],
+    techScanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, performance: false, seo: true, markup: false },
+    instrumentation: {},
+    auditClickableActions: async () => ({ items: [], meta: {} }),
+    auditLandingPages: async () => ({ items: [], meta: {} }),
+    auditForms: async () => ({ items: [], meta: {} }),
+    auditHoverInteractions: async () => ({ items: [], meta: {} }),
+    auditModalInteractions: async () => ({ items: [], meta: {} }),
+    auditScrollInteractions: async () => ({ items: [], meta: {} }),
+    auditResponsiveLayouts: async () => ({ items: [], meta: {} }),
+    auditDownloadResources: async () => ({ items: [], meta: {} }),
+    auditCookies: async () => ({ items: [], meta: {} }),
+    auditImages: async () => ({ items: [], meta: {} }),
+    auditPerformanceResources: async () => ({ items: [], meta: {} }),
+    auditSeoReadiness() {
+      return { items: [{ label: 'sync seo' }], meta: { candidateCount: 1 } }
+    },
+  })
+  const thrownSeo = await runOptionalTechAudits({
+    browser: {},
+    targetUrl: 'https://example.com',
+    snapshot: { performanceInfo: { resources: [] }, seoInfo: {} },
+    resourceResponses: [],
+    techScanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, performance: true, seo: true, markup: false },
+    instrumentation: {},
+    auditClickableActions: async () => ({ items: [], meta: {} }),
+    auditLandingPages: async () => ({ items: [], meta: {} }),
+    auditForms: async () => ({ items: [], meta: {} }),
+    auditHoverInteractions: async () => ({ items: [], meta: {} }),
+    auditModalInteractions: async () => ({ items: [], meta: {} }),
+    auditScrollInteractions: async () => ({ items: [], meta: {} }),
+    auditResponsiveLayouts: async () => ({ items: [], meta: {} }),
+    auditDownloadResources: async () => ({ items: [], meta: {} }),
+    auditCookies: async () => ({ items: [], meta: {} }),
+    auditImages: async () => ({ items: [], meta: {} }),
+    auditPerformanceResources() {
+      return { items: [{ label: 'sync performance' }], meta: { candidateCount: 1 } }
+    },
+    auditSeoReadiness() {
+      throw new Error('sync seo throw')
+    },
+  })
+
+  assert.equal(syncSeo.seoAuditResult.items[0].label, 'sync seo')
+  assert.equal(thrownSeo.performanceAuditResult.items[0].label, 'sync performance')
+  assert.equal(thrownSeo.seoAuditResult.meta.error.includes('sync seo throw'), true)
+})
+
+test('optional tech audit orchestration accepts synchronous performance and production-style seo together', async () => {
+  const result = await runOptionalTechAudits({
+    browser: {},
+    targetUrl: 'https://example.com',
+    snapshot: {
+      performanceInfo: {
+        resources: [{ url: 'https://example.com/app.js', resourceType: 'script', transferSize: 10000, encodedBodySize: 9000, decodedBodySize: 10000, duration: 120 }],
+        renderBlockingCandidates: [],
+      },
+      seoInfo: {
+        titleText: 'Example Title',
+        titleCount: 1,
+        metaDescriptions: ['Example description for search previews and results.'],
+        canonicalLinks: ['https://example.com/'],
+        robotsMetas: [],
+        htmlLang: 'en',
+        og: {},
+        twitter: {},
+        hreflangs: [],
+        jsonLdScripts: [],
+        h1Texts: ['Example Title'],
+      },
+    },
+    resourceResponses: [{ url: 'https://example.com/', resourceType: 'document', method: 'GET', statusCode: 200 }],
+    techScanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, performance: true, seo: true, markup: false },
+    instrumentation: {},
+    auditClickableActions: async () => ({ items: [], meta: {} }),
+    auditLandingPages: async () => ({ items: [], meta: {} }),
+    auditForms: async () => ({ items: [], meta: {} }),
+    auditHoverInteractions: async () => ({ items: [], meta: {} }),
+    auditModalInteractions: async () => ({ items: [], meta: {} }),
+    auditScrollInteractions: async () => ({ items: [], meta: {} }),
+    auditResponsiveLayouts: async () => ({ items: [], meta: {} }),
+    auditDownloadResources: async () => ({ items: [], meta: {} }),
+    auditCookies: async () => ({ items: [], meta: {} }),
+    auditImages: async () => ({ items: [], meta: {} }),
+    auditPerformanceResources,
+    auditSeoReadiness: (...args) => auditSeoReadiness(...args, null, async () => ({
+      async fetch(url) {
+        return {
+          status() { return /robots\.txt$/i.test(url) ? 404 : 404 },
+          headers() { return { 'content-type': 'text/plain' } },
+          async text() { return '' },
+          async dispose() {},
+        }
+      },
+      async dispose() {},
+    })),
+  })
+
+  assert.equal(Array.isArray(result.performanceAuditResult.items), true)
+  assert.equal(Array.isArray(result.seoAuditResult.items), true)
 })
 
 test('tech scan option orchestration sources do not hardcode specific sites or hostnames', () => {

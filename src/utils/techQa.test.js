@@ -225,7 +225,7 @@ test('compact Tech QA summary cards use four meaningful KPI values', () => {
 test('Tech QA panel display replaces top KPI cards with completion meta from existing data', () => {
   const base = result({
     durationMs: 18234,
-    scanOptions: { url: true, click: true, landing: true, form: true, hover: true, modal: true, scroll: true, responsive: true, download: true, cookie: true, image: true, markup: true },
+    scanOptions: { url: true, click: true, landing: true, form: true, hover: true, modal: true, scroll: true, responsive: true, download: true, cookie: true, image: true, performance: true, seo: true, markup: true },
     linkAudit: { playwrightRunCount: 1, uniqueRequestUrlCount: 98 },
     images: Array.from({ length: 25 }, () => ({ status: 'ok' })),
   })
@@ -247,7 +247,7 @@ test('Tech QA panel display replaces top KPI cards with completion meta from exi
 
 test('Tech QA completion copy does not claim unselected checks were completed', () => {
   const base = result({
-    scanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, markup: false },
+    scanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, performance: false, seo: false, markup: false },
     checks: [check({ id: 'access', status: 'ok' })],
   })
   const view = createTechQaViewModel(base)
@@ -364,6 +364,8 @@ test('compact Tech QA source keeps table UI and closed detail policy', () => {
   assert.equal(source.includes('Download QA'), true)
   assert.equal(source.includes('Cookie QA'), true)
   assert.equal(source.includes('Image QA'), true)
+  assert.equal(source.includes('Performance QA'), true)
+  assert.equal(source.includes('SEO QA'), true)
   assert.equal(source.includes('Meta, 이미지 alt, 입력 레이블 등 기본 마크업과 접근성을 확인합니다.'), true)
   assert.equal(source.includes('Tech QA 처리시간 ${durationText}'), false)
   assert.equal(source.includes('고유 요소 오류'), false)
@@ -563,6 +565,8 @@ test('new interaction detail rows are created for form hover and modal sections'
       check({ id: 'download-resource', status: 'warn', items: [{ auditId: 'download-1', label: 'PDF', status: 'warn', category: 'pdf', note: 'HEAD fallback 사용' }], meta: { candidateCount: 1, inspectedCount: 1, noTarget: false } }),
       check({ id: 'cookie-security', status: 'warn', items: [{ label: 'sid', status: 'warn', category: 'first-party', note: 'HttpOnly 설정 확인 필요' }], meta: { candidateCount: 1, inspectedCount: 1, noTarget: false } }),
       check({ id: 'image-rendering', status: 'warn', items: [{ label: 'hero.webp', status: 'warn', category: 'img', note: '원본 해상도에 비해 확대되었습니다.' }], meta: { candidateCount: 1, inspectedCount: 1, noTarget: false } }),
+      check({ id: 'performance-resource', status: 'warn', items: [{ label: '대형 리소스', status: 'warn', category: 'large-resource', note: '큰 script가 있습니다.' }], meta: { candidateCount: 8, inspectedCount: 8, noTarget: false } }),
+      check({ id: 'seo-readiness', status: 'warn', items: [{ label: 'Canonical', status: 'warn', category: 'canonical', note: 'canonical 확인 필요' }], meta: { candidateCount: 8, inspectedCount: 8, noTarget: false } }),
     ],
   }))
   const display = createTechPanelDisplayModel(result(), view)
@@ -575,6 +579,8 @@ test('new interaction detail rows are created for form hover and modal sections'
   assert.equal(display.detailRows.downloadRows.length, 1)
   assert.equal(display.detailRows.cookieRows.length, 1)
   assert.equal(display.detailRows.imageRows.length, 1)
+  assert.equal(display.detailRows.performanceRows.length, 1)
+  assert.equal(display.detailRows.seoRows.length, 1)
   assert.equal(display.detailRows.formRows[0].rowId.startsWith('tech-form-'), true)
   assert.equal(display.detailRows.hoverRows[0].rowId.startsWith('tech-hover-'), true)
   assert.equal(display.detailRows.modalRows[0].rowId.startsWith('tech-modal-'), true)
@@ -583,6 +589,8 @@ test('new interaction detail rows are created for form hover and modal sections'
   assert.equal(display.detailRows.downloadRows[0].rowId.startsWith('tech-download-'), true)
   assert.equal(display.detailRows.cookieRows[0].rowId.startsWith('tech-cookie-'), true)
   assert.equal(display.detailRows.imageRows[0].rowId.startsWith('tech-image-'), true)
+  assert.equal(display.detailRows.performanceRows[0].rowId.startsWith('tech-performance-'), true)
+  assert.equal(display.detailRows.seoRows[0].rowId.startsWith('tech-seo-'), true)
 })
 
 test('tech qa panel source keeps new section order between modal and markup', () => {
@@ -593,9 +601,11 @@ test('tech qa panel source keeps new section order between modal and markup', ()
   const downloadIndex = source.indexOf('title="Download QA"')
   const cookieIndex = source.indexOf('title="Cookie QA"')
   const imageIndex = source.indexOf('title="Image QA"')
+  const performanceIndex = source.indexOf('title="Performance QA"')
+  const seoIndex = source.indexOf('title="SEO QA"')
   const markupIndex = source.indexOf('title="마크업 및 접근성 검사"')
 
-  assert.equal(modalIndex > -1 && scrollIndex > modalIndex && responsiveIndex > scrollIndex && downloadIndex > responsiveIndex && cookieIndex > downloadIndex && imageIndex > cookieIndex && markupIndex > imageIndex, true)
+  assert.equal(modalIndex > -1 && scrollIndex > modalIndex && responsiveIndex > scrollIndex && downloadIndex > responsiveIndex && cookieIndex > downloadIndex && imageIndex > cookieIndex && performanceIndex > imageIndex && seoIndex > performanceIndex && markupIndex > seoIndex, true)
 })
 
 test('click display fixture keeps only actual errors and actionable warnings in body counts', () => {

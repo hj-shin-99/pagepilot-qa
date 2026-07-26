@@ -159,6 +159,30 @@ function TechQaPanel({ result }) {
         />
       ) : null}
 
+      {scanOptions.performance ? (
+        <InteractionAuditSection
+          id="tech-performance-section"
+          title="Performance QA"
+          ariaLabel="Performance QA"
+          note="페이지 리소스의 전송량, 요청 시간, 압축 및 캐시 상태를 확인합니다."
+          emptyMessage="검사할 성능 리소스가 없습니다."
+          groups={view.performanceGroups}
+          rows={display.detailRows.performanceRows}
+        />
+      ) : null}
+
+      {scanOptions.seo ? (
+        <InteractionAuditSection
+          id="tech-seo-section"
+          title="SEO QA"
+          ariaLabel="SEO QA"
+          note="검색 노출을 위한 문서 메타, 인덱싱 지시 및 구조화 데이터를 확인합니다."
+          emptyMessage="검사할 SEO 대상이 없습니다."
+          groups={view.seoGroups}
+          rows={display.detailRows.seoRows}
+        />
+      ) : null}
+
       {scanOptions.markup ? <MarkupAccessibilitySection items={markupItems} /> : null}
 
       <details className="detail-card tech-detail-accordion">
@@ -623,9 +647,30 @@ function InteractionAuditDetails({ item }) {
         <Meta label="final URL" value={item.finalUrl} />
         <Meta label="content-type" value={item.contentType} />
         <Meta label="content-length" value={item.contentLength} />
+        <Meta label="transfer size" value={item.transferSize} />
+        <Meta label="encoded size" value={item.encodedSize} />
+        <Meta label="duration ms" value={item.requestDurationMs || item.durationMs} />
+        <Meta label="cache-control" value={item.cacheControl} />
+        <Meta label="etag" value={item.etag} />
+        <Meta label="last-modified" value={item.lastModified} />
+        <Meta label="request count" value={item.requestCount} />
         <Meta label="content-disposition" value={item.contentDisposition} />
         <Meta label="filename" value={item.filename} />
         <Meta label="source count" value={item.sourceCount} />
+        <Meta label="title length" value={item.titleLength} />
+        <Meta label="description length" value={item.descriptionLength} />
+        <Meta label="title text" value={item.titleText} />
+        <Meta label="meta description" value={item.metaDescription} />
+        <Meta label="H1 text" value={item.h1Text} />
+        <Meta label="canonical URL" value={item.canonicalUrl} />
+        <Meta label="robots meta" value={item.robotsMeta} />
+        <Meta label="X-Robots-Tag" value={item.xRobotsTag} />
+        <Meta label="html lang" value={item.htmlLang} />
+        <Meta label="og:title" value={item.ogTitle} />
+        <Meta label="og:description" value={item.ogDescription} />
+        <Meta label="og:image" value={item.ogImage} />
+        <Meta label="twitter:card" value={item.twitterCard} />
+        <Meta label="preview" value={item.preview} />
         <Meta label="cookie domain" value={item.domain} />
         <Meta label="cookie path" value={item.path} />
         <Meta label="sameSite" value={item.sameSite} />
@@ -1052,6 +1097,16 @@ function formatTechnicalEvidence(raw = {}) {
     raw?.path ? `path: ${raw.path}` : '',
     raw?.sameSite ? `sameSite: ${raw.sameSite}` : '',
     raw?.contentType ? `content-type: ${raw.contentType}` : '',
+    raw?.contentEncoding ? `content-encoding: ${raw.contentEncoding}` : '',
+    raw?.cacheControl ? `cache-control: ${raw.cacheControl}` : '',
+    raw?.etag ? `etag: ${raw.etag}` : '',
+    raw?.lastModified ? `last-modified: ${raw.lastModified}` : '',
+    raw?.requestCount ? `request-count: ${raw.requestCount}` : '',
+    raw?.durationMs ? `duration-ms: ${raw.durationMs}` : '',
+    raw?.canonicalUrl ? `canonical: ${raw.canonicalUrl}` : '',
+    raw?.htmlLang ? `html-lang: ${raw.htmlLang}` : '',
+    raw?.xRobotsTag ? `x-robots-tag: ${raw.xRobotsTag}` : '',
+    raw?.robotsMeta ? `robots-meta: ${raw.robotsMeta}` : '',
     raw?.objectFit ? `object-fit: ${raw.objectFit}` : '',
     raw?.redirected !== undefined ? `redirected: ${raw.redirected}` : '',
     raw?.requestUrl ? `request URL: ${raw.requestUrl}` : '',
@@ -1249,6 +1304,20 @@ function DeveloperInfo({ view, result, scanOptions }) {
     )
   }
 
+  if (scanOptions.performance) {
+    metaItems.push(
+      { label: 'performance candidates', value: view.performanceGroups?.meta?.candidateCount },
+      { label: 'performance audited', value: view.performanceGroups?.meta?.inspectedCount },
+    )
+  }
+
+  if (scanOptions.seo) {
+    metaItems.push(
+      { label: 'seo candidates', value: view.seoGroups?.meta?.candidateCount },
+      { label: 'seo audited', value: view.seoGroups?.meta?.inspectedCount },
+    )
+  }
+
   return (
     <div className="developer-info-grid">
       {metaItems.map((item) => <Meta label={item.label} value={item.value} key={item.label} />)}
@@ -1280,6 +1349,10 @@ function RawDetails({ view, result, scanOptions }) {
   const cookieItems = Array.isArray(result.cookieItems) ? result.cookieItems : Array.isArray(cookieCheck?.items) ? cookieCheck.items : []
   const imageCheck = Array.isArray(result.checks) ? result.checks.find((check) => check.id === 'image-rendering') : null
   const imageItems = Array.isArray(result.imageItems) ? result.imageItems : Array.isArray(imageCheck?.items) ? imageCheck.items : []
+  const performanceCheck = Array.isArray(result.checks) ? result.checks.find((check) => check.id === 'performance-resource') : null
+  const performanceItems = Array.isArray(result.performanceItems) ? result.performanceItems : Array.isArray(performanceCheck?.items) ? performanceCheck.items : []
+  const seoCheck = Array.isArray(result.checks) ? result.checks.find((check) => check.id === 'seo-readiness') : null
+  const seoItems = Array.isArray(result.seoItems) ? result.seoItems : Array.isArray(seoCheck?.items) ? seoCheck.items : []
   return (
     <div className="tech-raw-grid">
       <CountBreakdown items={view.issueCounts.checkBreakdown || []} />
@@ -1294,6 +1367,8 @@ function RawDetails({ view, result, scanOptions }) {
       {scanOptions.download ? <RawList title="Raw download audits" items={downloadItems} /> : null}
       {scanOptions.cookie ? <RawList title="Raw cookie audits" items={cookieItems} /> : null}
       {scanOptions.image ? <RawList title="Raw image audits" items={imageItems} /> : null}
+      {scanOptions.performance ? <RawList title="Raw performance audits" items={performanceItems} /> : null}
+      {scanOptions.seo ? <RawList title="Raw SEO audits" items={seoItems} /> : null}
       {scanOptions.landing ? <RawList title="Raw landing audits" items={landingItems} /> : null}
       {scanOptions.click ? <RawList title="Raw click candidates" items={clickItems} /> : null}
       <RawList title="Raw console" items={consoleItems} />

@@ -66,7 +66,7 @@ test('history stores and restores combined sessions', () => {
       },
     },
     visual: { status: 'success', summary: 'Visual ok', compactResult: { meta: { webUrl: 'https://example.com' } } },
-    tech: { status: 'error', summary: 'Tech failed', compactResult: null, scanOptions: { url: false, click: true, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, markup: true }, error: 'failed' },
+    tech: { status: 'error', summary: 'Tech failed', compactResult: null, scanOptions: { url: false, click: true, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, performance: false, seo: false, markup: true }, error: 'failed' },
   })
 
   const [item] = loadHistoryItems()
@@ -107,7 +107,7 @@ test('history keeps tech scan options when stored and defaults legacy results to
     topIssueSummaries: ['Tech'],
     result: {
       targetUrl: 'https://example.com',
-        scanOptions: { url: true, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, markup: true },
+        scanOptions: { url: true, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, performance: false, seo: false, markup: true },
       },
     })
   localStorage.setItem('pagepilot-qa-history-v3', JSON.stringify([
@@ -131,14 +131,19 @@ test('history preserves new tech result fields without storing raw cookie values
     topIssueSummaries: ['Tech'],
     result: {
       targetUrl: 'https://example.com',
-      scanOptions: { url: true, click: true, landing: true, form: true, hover: true, modal: true, scroll: true, responsive: true, download: true, cookie: true, image: true, markup: true },
+      scanOptions: { url: true, click: true, landing: true, form: true, hover: true, modal: true, scroll: true, responsive: true, download: true, cookie: true, image: true, performance: true, seo: true, markup: true },
       cookieItems: [{ label: 'sid', valueLength: 32 }],
       imageItems: [{ label: 'hero.webp', sourceCount: 2 }],
+      performanceItems: [{ label: '대형 리소스', sourceCount: 3 }],
+      seoItems: [{ label: 'robots.txt', preview: 'User-agent: * | Allow: /' }],
     },
   })
 
   const stored = localStorage.getItem('pagepilot-qa-history-v3')
   assert.equal(stored.includes('cookieItems'), true)
   assert.equal(stored.includes('imageItems'), true)
+  assert.equal(stored.includes('performanceItems'), true)
+  assert.equal(stored.includes('seoItems'), true)
   assert.equal(stored.includes('SECRET_TOKEN_VALUE_123'), false)
+  assert.equal(stored.includes('<urlset>'), false)
 })

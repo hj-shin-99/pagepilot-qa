@@ -24,6 +24,8 @@ export function createTechDetailRows(view = {}) {
   const downloadRows = createInteractionDetailRows(view.downloadResourceGroups, 'tech-download')
   const cookieRows = createInteractionDetailRows(view.cookieGroups, 'tech-cookie')
   const imageRows = createInteractionDetailRows(view.imageGroups, 'tech-image')
+  const performanceRows = createInteractionDetailRows(view.performanceGroups, 'tech-performance')
+  const seoRows = createInteractionDetailRows(view.seoGroups, 'tech-seo')
   const markupRows = createMarkupDetailRows(view.checkItems)
 
   return {
@@ -39,6 +41,8 @@ export function createTechDetailRows(view = {}) {
     downloadRows,
     cookieRows,
     imageRows,
+    performanceRows,
+    seoRows,
     markupRows,
   }
 }
@@ -169,6 +173,8 @@ function hasSelectedTechChecks(scanOptions = {}) {
     || scanOptions.download
     || scanOptions.cookie
     || scanOptions.image
+    || scanOptions.performance
+    || scanOptions.seo
   )
 }
 
@@ -228,6 +234,8 @@ function hasTechQaScanEvidence(result = {}, view = {}) {
   if (Array.isArray(result.clickActions) && result.clickActions.length > 0) return true
   if (Array.isArray(result.cookieItems) && result.cookieItems.length > 0) return true
   if (Array.isArray(result.imageItems) && result.imageItems.length > 0) return true
+  if (Array.isArray(result.performanceItems) && result.performanceItems.length > 0) return true
+  if (Array.isArray(result.seoItems) && result.seoItems.length > 0) return true
   if (Array.isArray(result.consoleMessages) && result.consoleMessages.length > 0) return true
   if (result.mobile && typeof result.mobile === 'object') return true
   if (hasObjectKeys(result.linkAudit)) return true
@@ -235,6 +243,8 @@ function hasTechQaScanEvidence(result = {}, view = {}) {
   if (hasObjectKeys(result.consoleAudit)) return true
   if (hasObjectKeys(result.cookieAudit)) return true
   if (hasObjectKeys(result.imageAudit)) return true
+  if (hasObjectKeys(result.performanceAudit)) return true
+  if (hasObjectKeys(result.seoAudit)) return true
   if (Array.isArray(view.checkItems) && view.checkItems.length > 0) return true
   if (Array.isArray(view.links) && view.links.length > 0) return true
   return false

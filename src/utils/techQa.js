@@ -61,6 +61,8 @@ const CHECK_DEFINITIONS = {
   'download-resource': { section: 'link', owner: 'UID팀', label: 'Download QA', description: '다운로드 링크의 응답 상태, 파일 형식 및 주요 헤더를 확인합니다.' },
   'cookie-security': { section: 'frontend', owner: '개발팀', label: '쿠키 보안', description: '페이지에서 생성된 쿠키의 출처와 기본 보안 속성을 확인합니다.' },
   'image-rendering': { section: 'frontend', owner: 'UID팀', label: '이미지 렌더링', description: '이미지 리소스의 로딩 상태와 실제 해상도 및 렌더링 상태를 확인합니다.' },
+  'performance-resource': { section: 'frontend', owner: '개발팀', label: '리소스 성능', description: '페이지 리소스의 전송량, 요청 시간, 압축 및 캐시 상태를 확인합니다.' },
+  'seo-readiness': { section: 'seo', owner: 'UID팀', label: '검색 노출 설정', description: '검색 노출을 위한 문서 메타, 인덱싱 지시 및 구조화 데이터를 확인합니다.' },
   'unlabeled-clickables': { section: 'planning', owner: 'UID팀', label: '클릭 가능한 요소 이름', description: '버튼과 링크에 사용자용 이름이 있는지 확인합니다.' },
 }
 
@@ -86,6 +88,8 @@ export function createTechQaViewModel(result = {}) {
   const downloadResourceGroups = createInteractionGroups(filteredResult, 'download-resource', 'downloadResources', 'downloadAudit')
   const cookieGroups = createInteractionGroups(filteredResult, 'cookie-security', 'cookieItems', 'cookieAudit')
   const imageGroups = createInteractionGroups(filteredResult, 'image-rendering', 'imageItems', 'imageAudit')
+  const performanceGroups = createInteractionGroups(filteredResult, 'performance-resource', 'performanceItems', 'performanceAudit')
+  const seoGroups = createInteractionGroups(filteredResult, 'seo-readiness', 'seoItems', 'seoAudit')
   const links = createLinkItems(filteredResult.links)
   const linkSummary = createLinkSummary(links, filteredResult.linkAudit)
   const checkItems = checks.map((check) => createCheckItem(check, clickActionGroups, { result: filteredResult, linkSummary }))
@@ -126,6 +130,8 @@ export function createTechQaViewModel(result = {}) {
     downloadResourceGroups,
     cookieGroups,
     imageGroups,
+    performanceGroups,
+    seoGroups,
     links,
     allItems: allItems.sort(comparePriorityItems),
     developer: createDeveloperInfo(filteredResult, linkSummary),
@@ -148,6 +154,8 @@ function createFilteredTechResult(result = {}, scanOptions = normalizeStoredTech
     downloadResources: scanOptions.download ? arrayOfObjects(result.downloadResources) : [],
     cookieItems: scanOptions.cookie ? arrayOfObjects(result.cookieItems) : [],
     imageItems: scanOptions.image ? arrayOfObjects(result.imageItems) : [],
+    performanceItems: scanOptions.performance ? arrayOfObjects(result.performanceItems) : [],
+    seoItems: scanOptions.seo ? arrayOfObjects(result.seoItems) : [],
   }
 }
 
@@ -478,6 +486,8 @@ function getObjectiveCheckValue(check = {}, context = {}, problemItems = []) {
   if (check.id === 'download-resource') return check.meta?.noTarget ? '검사 대상 없음' : `오류 ${Number(check.meta?.errorCount || 0)}개 · 확인 필요 ${Number(check.meta?.warningCount || 0)}개`
   if (check.id === 'cookie-security') return check.meta?.noTarget ? '검사 대상 없음' : `오류 ${Number(check.meta?.errorCount || 0)}개 · 확인 필요 ${Number(check.meta?.warningCount || 0)}개`
   if (check.id === 'image-rendering') return check.meta?.noTarget ? '검사 대상 없음' : `오류 ${Number(check.meta?.errorCount || 0)}개 · 확인 필요 ${Number(check.meta?.warningCount || 0)}개`
+  if (check.id === 'performance-resource') return check.meta?.noTarget ? '검사 대상 없음' : `오류 ${Number(check.meta?.errorCount || 0)}개 · 확인 필요 ${Number(check.meta?.warningCount || 0)}개`
+  if (check.id === 'seo-readiness') return check.meta?.noTarget ? '검사 대상 없음' : `오류 ${Number(check.meta?.errorCount || 0)}개 · 확인 필요 ${Number(check.meta?.warningCount || 0)}개`
   return ''
 }
 
@@ -758,6 +768,8 @@ function getCheckPriority(check = {}) {
   if (check.id === 'download-resource') return 8
   if (check.id === 'cookie-security') return 8
   if (check.id === 'image-rendering') return 8
+  if (check.id === 'performance-resource') return 8
+  if (check.id === 'seo-readiness') return 9
   if (check.id === 'images') return 7
   if (check.id === 'meta' || check.id === 'title') return 9
   return 12

@@ -85,6 +85,8 @@ test('/api/qa/run builder calls scanUrl once and reuses scanResult for visual', 
     download: true,
     cookie: true,
     image: true,
+    performance: true,
+    seo: true,
     markup: true,
   })
   assert.equal(calls.visual, 1)
@@ -126,6 +128,8 @@ test('/api/qa/run builder defaults missing or invalid scan options to full selec
     download: true,
     cookie: true,
     image: true,
+    performance: true,
+    seo: true,
     markup: true,
   })
 })

@@ -26,6 +26,8 @@ import { auditScrollInteractions } from './techScrollAudit.js'
 import { auditDownloadResources } from './techDownloadAudit.js'
 import { auditCookies } from './techCookieAudit.js'
 import { auditImages } from './techImageAudit.js'
+import { auditPerformanceResources } from './techPerformanceAudit.js'
+import { auditSeoReadiness } from './techSeoAudit.js'
 import { classifyConsoleMessages } from './techConsoleAudit.js'
 import { runOptionalTechAudits, runUrlAudit } from './techScanOrchestration.js'
 import { buildVisualQaPayloadArtifacts } from './visualQaPayload.js'
@@ -1904,6 +1906,7 @@ async function scanUrl(targetUrl, options = {}) {
   const failedImageRequests = new Map()
   const failedResourceRequests = []
   const badResourceResponses = []
+  const resourceResponses = []
   let mainResponse = null
   let mainError = ''
   let loadWarning = ''
@@ -1922,6 +1925,8 @@ async function scanUrl(targetUrl, options = {}) {
   let downloadAuditResult
   let cookieAuditResult
   let imageAuditResult
+  let performanceAuditResult
+  let seoAuditResult
 
   try {
     const context = await browser.newContext({
@@ -1936,7 +1941,7 @@ async function scanUrl(targetUrl, options = {}) {
     const page = await context.newPage()
     incrementInstrumentationCount(scanOptions.instrumentation, 'desktopPageCount')
     incrementPlaywrightRunCount(scanOptions.instrumentation)
-    attachCollectors(page, consoleMessages, failedImageRequests, failedResourceRequests, badResourceResponses)
+    attachCollectors(page, consoleMessages, failedImageRequests, failedResourceRequests, badResourceResponses, (scanOptions.techScanOptions.performance || scanOptions.techScanOptions.seo) ? resourceResponses : null)
 
     try {
       mainResponse = await page.goto(targetUrl, {
@@ -1954,6 +1959,8 @@ async function scanUrl(targetUrl, options = {}) {
     domSnapshot = await safeDomSnapshot(page, targetUrl, {
       includeMarkupData: scanOptions.techScanOptions.markup,
       includeClickableCandidates: scanOptions.techScanOptions.click,
+      includePerformanceData: scanOptions.techScanOptions.performance,
+      includeSeoData: scanOptions.techScanOptions.seo,
     })
     webScreenshot = await safeWebScreenshot(page)
     if (scanOptions.includeVisualPayloadData) {
@@ -1961,10 +1968,11 @@ async function scanUrl(targetUrl, options = {}) {
     }
     mobileResult = scanOptions.includeMobile ? await scanMobile(browser, targetUrl, scanOptions.instrumentation) : createMobileFallback()
     await context.close()
-    ;({ clickActionAuditResult, landingAuditResult, formAuditResult, hoverAuditResult, modalAuditResult, scrollAuditResult, responsiveAuditResult, downloadAuditResult, cookieAuditResult, imageAuditResult } = await runOptionalTechAudits({
+    ;({ clickActionAuditResult, landingAuditResult, formAuditResult, hoverAuditResult, modalAuditResult, scrollAuditResult, responsiveAuditResult, downloadAuditResult, cookieAuditResult, imageAuditResult, performanceAuditResult, seoAuditResult } = await runOptionalTechAudits({
       browser,
       targetUrl,
       snapshot: domSnapshot,
+      resourceResponses,
       techScanOptions: scanOptions.techScanOptions,
       instrumentation: scanOptions.instrumentation,
       auditClickableActions,
@@ -1977,6 +1985,8 @@ async function scanUrl(targetUrl, options = {}) {
       auditDownloadResources,
       auditCookies,
       auditImages,
+      auditPerformanceResources,
+      auditSeoReadiness,
     }))
   } finally {
     await browser.close()
@@ -1994,6 +2004,8 @@ async function scanUrl(targetUrl, options = {}) {
   const safeDownloadAuditResult = downloadAuditResult || { items: [], meta: {} }
   const safeCookieAuditResult = cookieAuditResult || { items: [], meta: {} }
   const safeImageAuditResult = imageAuditResult || { items: [], meta: {} }
+  const safePerformanceAuditResult = performanceAuditResult || { items: [], meta: {} }
+  const safeSeoAuditResult = seoAuditResult || { items: [], meta: {} }
   const urlAuditResult = await runUrlAudit({
     enabled: scanOptions.techScanOptions.url,
     targetUrl,
@@ -2043,6 +2055,8 @@ async function scanUrl(targetUrl, options = {}) {
     downloadAuditResult: safeDownloadAuditResult,
     cookieAuditResult: safeCookieAuditResult,
     imageAuditResult: safeImageAuditResult,
+    performanceAuditResult: safePerformanceAuditResult,
+    seoAuditResult: safeSeoAuditResult,
     techScanOptions: scanOptions.techScanOptions,
   })
 
@@ -2079,6 +2093,8 @@ async function scanUrl(targetUrl, options = {}) {
     downloadAudit: safeDownloadAuditResult.meta,
     ...(scanOptions.techScanOptions.cookie ? { cookieItems: safeCookieAuditResult.items, cookieAudit: safeCookieAuditResult.meta } : {}),
     ...(scanOptions.techScanOptions.image ? { imageItems: safeImageAuditResult.items, imageAudit: safeImageAuditResult.meta } : {}),
+    ...(scanOptions.techScanOptions.performance ? { performanceItems: safePerformanceAuditResult.items, performanceAudit: safePerformanceAuditResult.meta } : {}),
+    ...(scanOptions.techScanOptions.seo ? { seoItems: safeSeoAuditResult.items, seoAudit: safeSeoAuditResult.meta } : {}),
     images,
     designElements: snapshot.designElements,
     webCtaHints: snapshot.webCtaHints || [],
@@ -2401,7 +2417,7 @@ async function blockPostRequests(context) {
   })
 }
 
-function attachCollectors(page, consoleMessages, failedImageRequests, failedResourceRequests = [], badResourceResponses = []) {
+function attachCollectors(page, consoleMessages, failedImageRequests, failedResourceRequests = [], badResourceResponses = [], resourceResponses = null) {
   page.on('console', (message) => {
     const level = message.type()
     if (!['error', 'warning', 'info'].includes(level)) return
@@ -2442,13 +2458,39 @@ function attachCollectors(page, consoleMessages, failedImageRequests, failedReso
       method: request.method(),
       message: failureText,
     })
+
+    if (Array.isArray(resourceResponses) && resourceResponses.length < 250) {
+      resourceResponses.push({
+        url: request.url(),
+        resourceType: request.resourceType(),
+        method: request.method(),
+        statusCode: 0,
+        failureMessage: failureText,
+      })
+    }
   })
 
   page.on('response', (response) => {
     const statusCode = response.status()
-    if (statusCode < 400 || badResourceResponses.length >= 30) return
-
     const request = response.request()
+    if (Array.isArray(resourceResponses) && resourceResponses.length < 250) {
+      const headers = response.headers()
+      resourceResponses.push({
+        url: response.url(),
+        resourceType: request.resourceType(),
+        method: request.method(),
+        statusCode,
+        contentType: headers['content-type'] || headers['Content-Type'] || '',
+        contentLength: Number(headers['content-length'] || headers['Content-Length'] || 0) || null,
+        contentEncoding: headers['content-encoding'] || headers['Content-Encoding'] || '',
+        cacheControl: headers['cache-control'] || headers['Cache-Control'] || '',
+        expires: headers.expires || headers.Expires || '',
+        etag: headers.etag || headers.ETag || '',
+        lastModified: headers['last-modified'] || headers['Last-Modified'] || '',
+      })
+    }
+
+    if (statusCode < 400 || badResourceResponses.length >= 30) return
     if (request.resourceType() === 'document') return
 
     badResourceResponses.push({
@@ -2471,7 +2513,7 @@ async function safeTitle(page) {
 
 async function safeDomSnapshot(page, targetUrl, options = {}) {
   try {
-    const snapshot = await page.evaluate(({ baseUrl, maxDesignElements, includeMarkupData, includeClickableCandidates }) => {
+    const snapshot = await page.evaluate(({ baseUrl, maxDesignElements, includeMarkupData, includeClickableCandidates, includePerformanceData, includeSeoData }) => {
       const documentHeight = getDocumentHeight()
       const links = Array.from(document.querySelectorAll('a')).map((anchor, index) => {
         const href = anchor.getAttribute('href')?.trim() || ''
@@ -2578,6 +2620,8 @@ async function safeDomSnapshot(page, targetUrl, options = {}) {
       const duplicateIds = includeMarkupData ? collectDuplicateIds() : []
       const headingInfo = includeMarkupData ? collectHeadingInfo() : { h1Count: 0, headings: [], skipped: [] }
       const largeResources = collectLargeResources()
+      const performanceInfo = includePerformanceData ? collectPerformanceInfo() : { resources: [], renderBlockingCandidates: [] }
+      const seoInfo = includeSeoData ? collectSeoInfo() : { titleText: '', titleCount: 0, metaDescriptions: [], canonicalLinks: [], robotsMetas: [], htmlLang: '', og: {}, twitter: {}, hreflangs: [], jsonLdScripts: [], h1Texts: [] }
       const unlabeledClickables = includeMarkupData ? collectUnlabeledClickables().slice(0, 30) : []
       const clickableCandidates = includeClickableCandidates ? collectClickableCandidates().slice(0, 80) : []
 
@@ -2595,6 +2639,8 @@ async function safeDomSnapshot(page, targetUrl, options = {}) {
         duplicateIds,
         headingInfo,
         largeResources,
+        performanceInfo,
+        seoInfo,
         unlabeledClickables,
         clickableCandidates,
         counts: {
@@ -2737,6 +2783,95 @@ async function safeDomSnapshot(page, targetUrl, options = {}) {
             sizeBytes,
           }
         }).filter((entry) => entry.sizeBytes >= 1024 * 1024).slice(0, 30)
+      }
+
+      function collectPerformanceInfo() {
+        const resourceEntries = typeof performance?.getEntriesByType === 'function' ? performance.getEntriesByType('resource') : []
+        const navigationEntry = typeof performance?.getEntriesByType === 'function' ? performance.getEntriesByType('navigation')[0] : null
+        const resources = resourceEntries.map((entry) => ({
+          url: entry.name || '',
+          initiatorType: entry.initiatorType || 'other',
+          resourceType: entry.initiatorType || 'other',
+          transferSize: Number(entry.transferSize || 0),
+          encodedBodySize: Number(entry.encodedBodySize || 0),
+          decodedBodySize: Number(entry.decodedBodySize || 0),
+          duration: Number(entry.duration || 0),
+          renderBlockingStatus: entry.renderBlockingStatus || '',
+        })).slice(0, 250)
+
+        if (navigationEntry) {
+          resources.unshift({
+            url: location.href,
+            initiatorType: 'navigation',
+            resourceType: 'document',
+            transferSize: Number(navigationEntry.transferSize || 0),
+            encodedBodySize: Number(navigationEntry.encodedBodySize || 0),
+            decodedBodySize: Number(navigationEntry.decodedBodySize || 0),
+            duration: Number(navigationEntry.duration || 0),
+            renderBlockingStatus: 'blocking',
+          })
+        }
+
+        const renderBlockingCandidates = []
+        Array.from(document.querySelectorAll('head script[src]')).forEach((script) => {
+          const src = resolveInspectableUrl(script.getAttribute('src') || '', baseUrl)
+          if (!src) return
+          renderBlockingCandidates.push({
+            kind: 'script',
+            url: src,
+            async: script.async === true,
+            defer: script.defer === true,
+            blocking: script.async !== true && script.defer !== true && String(script.getAttribute('type') || '').toLowerCase() !== 'module',
+          })
+        })
+        Array.from(document.querySelectorAll('head link[rel]')).forEach((link) => {
+          const rel = String(link.getAttribute('rel') || '').toLowerCase()
+          if (!/\bstylesheet\b/.test(rel)) return
+          const href = resolveInspectableUrl(link.getAttribute('href') || '', baseUrl)
+          if (!href) return
+          renderBlockingCandidates.push({ kind: 'stylesheet', url: href, blocking: true })
+        })
+
+        return {
+          resources,
+          renderBlockingCandidates: renderBlockingCandidates.slice(0, 80),
+        }
+      }
+
+      function collectSeoInfo() {
+        return {
+          titleText: normalizeText(document.title),
+          titleCount: document.head.querySelectorAll('title').length,
+          metaDescriptions: Array.from(document.querySelectorAll('meta[name="description"]')).map((meta) => normalizeText(meta.getAttribute('content') || '')).filter(Boolean).slice(0, 3),
+          canonicalLinks: Array.from(document.querySelectorAll('link[rel~="canonical"]')).map((link) => normalizeText(link.getAttribute('href') || '')).filter(Boolean).slice(0, 3),
+          robotsMetas: Array.from(document.querySelectorAll('meta[name], meta[property]')).map((meta) => ({
+            name: String(meta.getAttribute('name') || meta.getAttribute('property') || '').trim().toLowerCase(),
+            content: normalizeText(meta.getAttribute('content') || ''),
+          })).filter((meta) => /^(robots|googlebot|bingbot)$/.test(meta.name) && meta.content).slice(0, 6),
+          htmlLang: normalizeText(document.documentElement.getAttribute('lang') || ''),
+          og: collectMetaPropertyGroup('og:'),
+          twitter: collectMetaPropertyGroup('twitter:'),
+          hreflangs: Array.from(document.querySelectorAll('link[rel~="alternate"][hreflang]')).map((link) => ({
+            hreflang: normalizeText(link.getAttribute('hreflang') || ''),
+            href: normalizeText(link.getAttribute('href') || ''),
+          })).slice(0, 20),
+          jsonLdScripts: Array.from(document.querySelectorAll('script[type="application/ld+json"]')).map((script) => String(script.textContent || '').trim()).filter(Boolean).slice(0, 10),
+          h1Texts: Array.from(document.querySelectorAll('h1')).map((heading) => normalizeText(heading.innerText || heading.textContent || '')).filter(Boolean).slice(0, 6),
+        }
+      }
+
+      function collectMetaPropertyGroup(prefix) {
+        const group = {}
+        Array.from(document.querySelectorAll('meta[property], meta[name]')).forEach((meta) => {
+          const key = String(meta.getAttribute('property') || meta.getAttribute('name') || '').trim().toLowerCase()
+          if (!key.startsWith(prefix)) return
+          const normalizedKey = key.slice(prefix.length)
+          const value = normalizeText(meta.getAttribute('content') || '')
+          if (!value) return
+          group[normalizedKey] = group[normalizedKey] || []
+          group[normalizedKey].push(value)
+        })
+        return group
       }
 
       function collectUnlabeledClickables() {
@@ -3330,6 +3465,8 @@ async function safeDomSnapshot(page, targetUrl, options = {}) {
       maxDesignElements: MAX_DESIGN_ELEMENTS,
       includeMarkupData: options.includeMarkupData === true,
       includeClickableCandidates: options.includeClickableCandidates === true,
+      includePerformanceData: options.includePerformanceData === true,
+      includeSeoData: options.includeSeoData === true,
     })
     return applyImageAltClassifications(snapshot)
   } catch {
@@ -3549,6 +3686,8 @@ function buildChecks({
   downloadAuditResult = { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } },
   cookieAuditResult = { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } },
   imageAuditResult = { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } },
+  performanceAuditResult = { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } },
+  seoAuditResult = { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } },
   techScanOptions = normalizeTechScanOptions(),
 }) {
   const httpStatus = mainResponse?.status() ?? null
@@ -3576,6 +3715,10 @@ function buildChecks({
   const cookieMeta = cookieAuditResult.meta || {}
   const imageItems = Array.isArray(imageAuditResult.items) ? imageAuditResult.items : []
   const imageMeta = imageAuditResult.meta || {}
+  const performanceItems = Array.isArray(performanceAuditResult.items) ? performanceAuditResult.items : []
+  const performanceMeta = performanceAuditResult.meta || {}
+  const seoItems = Array.isArray(seoAuditResult.items) ? seoAuditResult.items : []
+  const seoMeta = seoAuditResult.meta || {}
   const missingMetaFields = getMissingMetaFields(metaInfo)
   const formMissingLabels = Array.isArray(formInfo.missingLabels) ? formInfo.missingLabels : []
   const headingItems = createHeadingIssueItems(headingInfo)
@@ -3892,6 +4035,34 @@ function buildChecks({
     })
   }
 
+  if (techScanOptions.performance) {
+    checks.push({
+      id: 'performance-resource',
+      title: '리소스 성능',
+      status: Number(performanceMeta.errorCount || 0) > 0 ? 'error' : Number(performanceMeta.warningCount || 0) > 0 ? 'warn' : 'ok',
+      value: performanceMeta.noTarget ? '검사 대상 없음' : `오류 ${Number(performanceMeta.errorCount || 0)}개 / 확인 필요 ${Number(performanceMeta.warningCount || 0)}개`,
+      detail: performanceMeta.noTarget
+        ? '성능 분석에 사용할 리소스 evidence가 없어 Performance QA를 생략했습니다.'
+        : `성능 evidence ${Number(performanceMeta.candidateCount || performanceItems.length)}개를 바탕으로 ${performanceItems.length}개 성능 항목을 점검했습니다.`,
+      items: performanceItems,
+      meta: performanceMeta,
+    })
+  }
+
+  if (techScanOptions.seo) {
+    checks.push({
+      id: 'seo-readiness',
+      title: '검색 노출 설정',
+      status: Number(seoMeta.errorCount || 0) > 0 ? 'error' : Number(seoMeta.warningCount || 0) > 0 ? 'warn' : 'ok',
+      value: seoMeta.noTarget ? '검사 대상 없음' : `오류 ${Number(seoMeta.errorCount || 0)}개 / 확인 필요 ${Number(seoMeta.warningCount || 0)}개`,
+      detail: seoMeta.noTarget
+        ? 'SEO 분석에 사용할 문서 메타 evidence가 없어 SEO QA를 생략했습니다.'
+        : `SEO evidence ${Number(seoMeta.candidateCount || seoItems.length)}개를 바탕으로 ${seoItems.length}개 검색 노출 항목을 점검했습니다.`,
+      items: seoItems,
+      meta: seoMeta,
+    })
+  }
+
   return checks
 }
 
@@ -3949,6 +4120,8 @@ function createEmptyDomSnapshot() {
     duplicateIds: [],
     headingInfo: { h1Count: 0, headings: [], skipped: [] },
     largeResources: [],
+    performanceInfo: { resources: [], renderBlockingCandidates: [] },
+    seoInfo: { titleText: '', titleCount: 0, metaDescriptions: [], canonicalLinks: [], robotsMetas: [], htmlLang: '', og: {}, twitter: {}, hreflangs: [], jsonLdScripts: [], h1Texts: [] },
     unlabeledClickables: [],
     clickableCandidates: [],
     counts: { anchors: 0, buttons: 0, missingHrefs: 0 },

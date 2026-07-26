@@ -13,6 +13,7 @@ function TechQaPanel({ result }) {
   const linkGroups = getVisibleLinkGroups(display.detailRows.linkRows)
   const markupItems = createMarkupAccessibilityItems(display.detailRows.markupRows)
   const techTitle = createTechQaTitle(view.title)
+  const scanOptions = view.scanOptions
 
   return (
     <section className="section-stack tech-qa-panel tech-qa-compact">
@@ -38,57 +39,67 @@ function TechQaPanel({ result }) {
         <TechCompactTable items={display.detailRows.basicRows} mode="basic" />
       </section>
 
-      <section className="detail-card tech-compact-card" id="tech-links-section" aria-label="URL 검사">
-        <SectionHead
-          title="URL 검사"
-          meta={`전체 ${view.linkSummary.total} · 오류 ${view.linkSummary.error} · 확인 필요 ${view.linkSummary.warn} · 정상 ${view.linkSummary.ok}`}
-          note="1단계 · 페이지 HTML에 연결된 모든 링크(URL)를 수집하여 응답 상태와 링크 유형을 확인합니다. 실제 클릭이 아닌 href 기준으로 정상 연결, 리다이렉트 및 특수 링크 여부를 검사합니다."
+      {scanOptions.url ? (
+        <section className="detail-card tech-compact-card" id="tech-links-section" aria-label="URL 검사">
+          <SectionHead
+            title="URL 검사"
+            meta={`전체 ${view.linkSummary.total} · 오류 ${view.linkSummary.error} · 확인 필요 ${view.linkSummary.warn} · 정상 ${view.linkSummary.ok}`}
+            note="페이지에서 수집한 링크와 이동 URL의 상태를 확인합니다. 실제 클릭이 아닌 href 기준으로 정상 연결, 리다이렉트 및 특수 링크 여부를 검사합니다."
+          />
+          <LinkTable groups={linkGroups} />
+        </section>
+      ) : null}
+
+      {scanOptions.click ? (
+        <section className="detail-card tech-compact-card" id="tech-click-section" aria-label="클릭 동작 검사">
+          <SectionHead
+            title="클릭 동작 검사"
+            meta={`오류 ${view.clickActionGroups.actualErrors.length} · 확인 필요 ${view.clickActionGroups.warnings.length} · 정상 ${getNormalClickCount(view.clickActionGroups)}`}
+            note="버튼과 링크 등 클릭 가능한 요소의 실제 동작을 확인합니다. URL 이동뿐 아니라 새 창, 탭, 아코디언, 모달 등 클릭 전후의 상태 변화를 검사합니다."
+          />
+          <ClickActionIssueTable rows={display.detailRows.clickRows} />
+        </section>
+      ) : null}
+
+      {scanOptions.landing ? <LandingPageSection groups={view.landingPageGroups} rows={display.detailRows.landingRows} /> : null}
+
+      {scanOptions.form ? (
+        <InteractionAuditSection
+          id="tech-form-section"
+          title="Form QA"
+          ariaLabel="Form QA"
+          note="입력 요소의 레이블, 필수값 및 기본 검증 동작을 확인합니다. 실제 데이터 전송 없이 사용자 입력 과정에서 발생하는 검증 반응을 검사합니다."
+          emptyMessage="검사할 입력 폼이 없습니다."
+          groups={view.formInteractionGroups}
+          rows={display.detailRows.formRows}
         />
-        <LinkTable groups={linkGroups} />
-      </section>
+      ) : null}
 
-      <section className="detail-card tech-compact-card" id="tech-click-section" aria-label="클릭 동작 검사">
-        <SectionHead
-          title="클릭 동작 검사"
-          meta={`오류 ${view.clickActionGroups.actualErrors.length} · 확인 필요 ${view.clickActionGroups.warnings.length} · 정상 ${getNormalClickCount(view.clickActionGroups)}`}
-          note="2단계 · Playwright가 버튼, 메뉴, 링크 등 클릭 가능한 UI 요소를 실제로 조작하여 화면 반응을 확인합니다. URL 이동뿐 아니라 새 창, 탭, 아코디언, 모달 등 클릭 전후의 상태 변화를 검사합니다."
+      {scanOptions.hover ? (
+        <InteractionAuditSection
+          id="tech-hover-section"
+          title="Hover / Dropdown QA"
+          ariaLabel="Hover / Dropdown QA"
+          note="Hover, Dropdown 및 Tooltip 요소의 표시와 복원 동작을 확인합니다. Hover 전후의 visibility, ARIA 상태 및 화면 이탈 여부를 검사합니다."
+          emptyMessage="검사할 Hover 또는 드롭다운 요소가 없습니다."
+          groups={view.hoverInteractionGroups}
+          rows={display.detailRows.hoverRows}
         />
-        <ClickActionIssueTable rows={display.detailRows.clickRows} />
-      </section>
+      ) : null}
 
-      <LandingPageSection groups={view.landingPageGroups} rows={display.detailRows.landingRows} />
+      {scanOptions.modal ? (
+        <InteractionAuditSection
+          id="tech-modal-section"
+          title="Modal QA"
+          ariaLabel="Modal QA"
+          note="Modal의 열기, 닫기, 포커스 및 스크롤 동작을 확인합니다. ESC, 닫기 버튼, 포커스 이동과 스크롤 잠금 여부를 함께 검사합니다."
+          emptyMessage="검사할 모달 트리거가 없습니다."
+          groups={view.modalInteractionGroups}
+          rows={display.detailRows.modalRows}
+        />
+      ) : null}
 
-      <InteractionAuditSection
-        id="tech-form-section"
-        title="Form QA"
-        ariaLabel="Form QA"
-        note="4단계 · 페이지의 입력 필드와 선택 요소를 분석하여 필수값, 라벨 연결, 입력 형식 및 유효성 검사 상태를 확인합니다. 실제 데이터 전송 없이 사용자 입력 과정에서 발생하는 검증 반응을 검사합니다."
-        emptyMessage="검사할 입력 폼이 없습니다."
-        groups={view.formInteractionGroups}
-        rows={display.detailRows.formRows}
-      />
-
-      <InteractionAuditSection
-        id="tech-hover-section"
-        title="Hover / Dropdown QA"
-        ariaLabel="Hover / Dropdown QA"
-        note="5단계 · 메뉴, 툴팁, 드롭다운 등 마우스 오버로 반응하는 UI 요소를 실제로 조작하여 노출 상태와 접근성 변화를 확인합니다. Hover 전후의 visibility, ARIA 상태 및 화면 이탈 여부를 검사합니다."
-        emptyMessage="검사할 Hover 또는 드롭다운 요소가 없습니다."
-        groups={view.hoverInteractionGroups}
-        rows={display.detailRows.hoverRows}
-      />
-
-      <InteractionAuditSection
-        id="tech-modal-section"
-        title="Modal QA"
-        ariaLabel="Modal QA"
-        note="6단계 · 버튼이나 링크로 열리는 모달 UI를 조작하여 열기·닫기 동작, 키보드 접근성 및 배경 화면 제어 상태를 확인합니다. ESC, 닫기 버튼, 포커스 이동과 스크롤 잠금 여부를 함께 검사합니다."
-        emptyMessage="검사할 모달 트리거가 없습니다."
-        groups={view.modalInteractionGroups}
-        rows={display.detailRows.modalRows}
-      />
-
-      <MarkupAccessibilitySection items={markupItems} />
+      {scanOptions.markup ? <MarkupAccessibilitySection items={markupItems} /> : null}
 
       <details className="detail-card tech-detail-accordion">
         <summary>
@@ -96,8 +107,8 @@ function TechQaPanel({ result }) {
           <strong>raw selector, request, count</strong>
         </summary>
         <div className="tech-accordion-body">
-          <DeveloperInfo view={view} result={result} />
-          <RawDetails view={view} result={result} />
+          <DeveloperInfo view={view} result={result} scanOptions={scanOptions} />
+          <RawDetails view={view} result={result} scanOptions={scanOptions} />
         </div>
       </details>
     </section>
@@ -179,11 +190,11 @@ function MarkupAccessibilitySection({ items }) {
 
   return (
     <section className="detail-card tech-compact-card" id="tech-markup-accessibility-section" aria-label="마크업 및 접근성 검사">
-      <SectionHead
-        title="마크업 및 접근성 검사"
-        meta={`오류 검사 ${errorCount} · 확인 필요 검사 ${warningCount} · 정상 검사 ${normalItems.length}`}
-        note="Meta, 이미지 alt, 외부 링크 rel 등 검색엔진과 접근성에 필요한 마크업을 확인합니다."
-      />
+        <SectionHead
+          title="마크업 및 접근성 검사"
+          meta={`오류 검사 ${errorCount} · 확인 필요 검사 ${warningCount} · 정상 검사 ${normalItems.length}`}
+          note="Meta, 이미지 alt, 입력 레이블 등 기본 마크업과 접근성을 확인합니다."
+        />
       {problemItems.length > 0 ? (
         <div className="tech-markup-check-list">
           <div className="tech-markup-head">
@@ -364,7 +375,7 @@ function LandingPageSection({ groups, rows }) {
       <SectionHead
         title="랜딩 페이지 검사"
         meta={meta}
-        note="3단계 · 클릭 후 이동한 최종 페이지가 정상적으로 열리는지 확인합니다. 응답 상태, 최종 URL, 페이지 콘텐츠 및 주요 오류 여부를 함께 검사하여 실제 랜딩 상태를 검증합니다."
+        note="수집된 이동 대상 페이지의 응답 상태와 기본 콘텐츠를 확인합니다. 최종 URL, 페이지 콘텐츠 및 주요 오류 여부를 함께 검사합니다."
       />
       {groups?.hasTargets ? (
         <>
@@ -1028,45 +1039,79 @@ function formatTeamCheck(entry = {}) {
   return '해당 항목의 수집 결과와 실제 화면 상태를 확인해 주세요.'
 }
 
-function DeveloperInfo({ view, result }) {
+function DeveloperInfo({ view, result, scanOptions }) {
+  const metaItems = [
+    { label: 'Target URL', value: view.developer.targetUrl },
+    { label: 'Final URL', value: result.finalUrl || result.targetUrl },
+    { label: 'Playwright run count', value: view.developer.playwrightRunCount || '-' },
+    { label: 'console raw', value: view.developer.rawConsoleCount },
+    { label: 'network raw', value: getCheckItemCount(result, 'network-failures') },
+    { label: 'errorCheckCount', value: view.issueCounts.errorCheckCount },
+    { label: 'errorEvidenceCount', value: view.issueCounts.errorEvidenceCount },
+    { label: 'errorUniqueElementCount', value: view.issueCounts.errorUniqueElementCount },
+    { label: 'warningCheckCount', value: view.issueCounts.warningCheckCount },
+    { label: 'warningEvidenceCount', value: view.issueCounts.warningEvidenceCount },
+    { label: 'warningUniqueElementCount', value: view.issueCounts.warningUniqueElementCount },
+    { label: 'duplicateEvidenceMergedCount', value: view.issueCounts.duplicateEvidenceMergedCount },
+  ]
+
+  if (scanOptions.url) {
+    metaItems.splice(3, 0,
+      { label: '발견 링크 수', value: view.linkSummary.discovered },
+      { label: 'unique URL 수', value: view.linkSummary.uniqueRequestUrlCount },
+      { label: '실제 HTTP 요청 수', value: view.linkSummary.actualHttpRequestCount },
+      { label: 'dedupe 수', value: view.linkSummary.dedupedLinkCount },
+      { label: 'redirect 수', value: view.linkSummary.redirectCount },
+      { label: '4xx', value: view.linkSummary.status4xxCount },
+      { label: '5xx', value: view.linkSummary.status5xxCount },
+      { label: 'timeout', value: view.linkSummary.timeoutCount },
+    )
+  }
+
+  if (scanOptions.click) {
+    metaItems.splice(5, 0,
+      { label: 'click candidates', value: result.clickActionAudit?.candidateCount },
+      { label: 'safe click count', value: result.clickActionAudit?.safeClickAttemptCount },
+    )
+  }
+
+  if (scanOptions.landing) {
+    metaItems.push(
+      { label: 'landing targets', value: view.landingPageGroups?.meta?.candidateCount },
+      { label: 'landing audited', value: view.landingPageGroups?.meta?.inspectedCount },
+      { label: 'landing redirects', value: view.landingPageGroups?.meta?.redirectCount },
+    )
+  }
+
+  if (scanOptions.form) {
+    metaItems.push(
+      { label: 'form candidates', value: view.formInteractionGroups?.meta?.candidateCount },
+      { label: 'form audited', value: view.formInteractionGroups?.meta?.inspectedCount },
+    )
+  }
+
+  if (scanOptions.hover) {
+    metaItems.push(
+      { label: 'hover candidates', value: view.hoverInteractionGroups?.meta?.candidateCount },
+      { label: 'hover audited', value: view.hoverInteractionGroups?.meta?.inspectedCount },
+    )
+  }
+
+  if (scanOptions.modal) {
+    metaItems.push(
+      { label: 'modal candidates', value: view.modalInteractionGroups?.meta?.candidateCount },
+      { label: 'modal audited', value: view.modalInteractionGroups?.meta?.inspectedCount },
+    )
+  }
+
   return (
     <div className="developer-info-grid">
-      <Meta label="Target URL" value={view.developer.targetUrl} />
-      <Meta label="Final URL" value={result.finalUrl || result.targetUrl} />
-      <Meta label="Playwright run count" value={view.developer.playwrightRunCount || '-'} />
-      <Meta label="발견 링크 수" value={view.linkSummary.discovered} />
-      <Meta label="unique URL 수" value={view.linkSummary.uniqueRequestUrlCount} />
-      <Meta label="실제 HTTP 요청 수" value={view.linkSummary.actualHttpRequestCount} />
-      <Meta label="dedupe 수" value={view.linkSummary.dedupedLinkCount} />
-      <Meta label="redirect 수" value={view.linkSummary.redirectCount} />
-      <Meta label="4xx" value={view.linkSummary.status4xxCount} />
-      <Meta label="5xx" value={view.linkSummary.status5xxCount} />
-      <Meta label="timeout" value={view.linkSummary.timeoutCount} />
-      <Meta label="console raw" value={view.developer.rawConsoleCount} />
-      <Meta label="network raw" value={getCheckItemCount(result, 'network-failures')} />
-      <Meta label="click candidates" value={result.clickActionAudit?.candidateCount} />
-      <Meta label="safe click count" value={result.clickActionAudit?.safeClickAttemptCount} />
-      <Meta label="landing targets" value={view.landingPageGroups?.meta?.candidateCount} />
-      <Meta label="landing audited" value={view.landingPageGroups?.meta?.inspectedCount} />
-      <Meta label="landing redirects" value={view.landingPageGroups?.meta?.redirectCount} />
-      <Meta label="form candidates" value={view.formInteractionGroups?.meta?.candidateCount} />
-      <Meta label="form audited" value={view.formInteractionGroups?.meta?.inspectedCount} />
-      <Meta label="hover candidates" value={view.hoverInteractionGroups?.meta?.candidateCount} />
-      <Meta label="hover audited" value={view.hoverInteractionGroups?.meta?.inspectedCount} />
-      <Meta label="modal candidates" value={view.modalInteractionGroups?.meta?.candidateCount} />
-      <Meta label="modal audited" value={view.modalInteractionGroups?.meta?.inspectedCount} />
-      <Meta label="errorCheckCount" value={view.issueCounts.errorCheckCount} />
-      <Meta label="errorEvidenceCount" value={view.issueCounts.errorEvidenceCount} />
-      <Meta label="errorUniqueElementCount" value={view.issueCounts.errorUniqueElementCount} />
-      <Meta label="warningCheckCount" value={view.issueCounts.warningCheckCount} />
-      <Meta label="warningEvidenceCount" value={view.issueCounts.warningEvidenceCount} />
-      <Meta label="warningUniqueElementCount" value={view.issueCounts.warningUniqueElementCount} />
-      <Meta label="duplicateEvidenceMergedCount" value={view.issueCounts.duplicateEvidenceMergedCount} />
+      {metaItems.map((item) => <Meta label={item.label} value={item.value} key={item.label} />)}
     </div>
   )
 }
 
-function RawDetails({ view, result }) {
+function RawDetails({ view, result, scanOptions }) {
   const consoleItems = Array.isArray(result.consoleMessages) ? result.consoleMessages : []
   const networkCheck = Array.isArray(result.checks) ? result.checks.find((check) => check.id === 'network-failures') : null
   const clickCheck = Array.isArray(result.checks) ? result.checks.find((check) => check.id === 'click-actions') : null
@@ -1083,14 +1128,14 @@ function RawDetails({ view, result }) {
   return (
     <div className="tech-raw-grid">
       <CountBreakdown items={view.issueCounts.checkBreakdown || []} />
-      <RawList title="안전상 클릭 생략 전체" items={view.clickActionGroups.safeSkipped} />
-      <RawList title="URL 불필요 UI 제어 전체" items={view.clickActionGroups.uiControls} />
-      <RawList title="정상 클릭 검증 전체" items={view.clickActionGroups.verified} />
-      <RawList title="Raw form audits" items={formItems} />
-      <RawList title="Raw hover audits" items={hoverItems} />
-      <RawList title="Raw modal audits" items={modalItems} />
-      <RawList title="Raw landing audits" items={landingItems} />
-      <RawList title="Raw click candidates" items={clickItems} />
+      {scanOptions.click ? <RawList title="안전상 클릭 생략 전체" items={view.clickActionGroups.safeSkipped} /> : null}
+      {scanOptions.click ? <RawList title="URL 불필요 UI 제어 전체" items={view.clickActionGroups.uiControls} /> : null}
+      {scanOptions.click ? <RawList title="정상 클릭 검증 전체" items={view.clickActionGroups.verified} /> : null}
+      {scanOptions.form ? <RawList title="Raw form audits" items={formItems} /> : null}
+      {scanOptions.hover ? <RawList title="Raw hover audits" items={hoverItems} /> : null}
+      {scanOptions.modal ? <RawList title="Raw modal audits" items={modalItems} /> : null}
+      {scanOptions.landing ? <RawList title="Raw landing audits" items={landingItems} /> : null}
+      {scanOptions.click ? <RawList title="Raw click candidates" items={clickItems} /> : null}
       <RawList title="Raw console" items={consoleItems} />
       <RawList title="Raw network" items={networkItems} />
     </div>

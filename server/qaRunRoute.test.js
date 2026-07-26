@@ -42,6 +42,7 @@ function createDependencies(overrides = {}) {
         options.instrumentation.mobilePageCount = options.includeMobile ? 1 : 0
       }
       if (overrides.scanThrows) throw new Error('scan failed')
+      scanResult.scanOptions = options.techScanOptions
       return scanResult
     },
     isWebScanNavigationFailure(result) {
@@ -67,14 +68,24 @@ function createDependencies(overrides = {}) {
 
 test('/api/qa/run builder calls scanUrl once and reuses scanResult for visual', async () => {
   const { calls, dependencies, scanResult } = createDependencies()
-  const result = await buildQaRunResponse({ webUrl: 'https://example.com', figmaUrl: 'https://www.figma.com/design/a?node-id=1-2' }, dependencies)
+  const result = await buildQaRunResponse({ webUrl: 'https://example.com', figmaUrl: 'https://www.figma.com/design/a?node-id=1-2', scanOptions: { url: false, click: true } }, dependencies)
 
   assert.equal(calls.scanUrl, 1)
   assert.equal(calls.scanArgs.options.includeVisualPayloadData, true)
   assert.equal(calls.scanArgs.options.includeMobile, true)
+  assert.deepEqual(calls.scanArgs.options.techScanOptions, {
+    url: false,
+    click: true,
+    landing: true,
+    form: true,
+    hover: true,
+    modal: true,
+    markup: true,
+  })
   assert.equal(calls.visual, 1)
   assert.equal(calls.visualScanResult, scanResult)
   assert.equal(result.tech.status, 'success')
+  assert.equal(result.tech.result.scanOptions.url, false)
   assert.equal(result.visual.status, 'success')
   assert.equal(result.meta.webScanInvocationCount, 1)
   assert.equal(result.meta.browserLaunchCount, 1)
@@ -92,6 +103,21 @@ test('/api/qa/run builder skips visual when figmaUrl is empty', async () => {
   assert.equal(calls.visual, 0)
   assert.equal(result.tech.status, 'success')
   assert.equal(result.visual.status, 'skipped')
+})
+
+test('/api/qa/run builder defaults missing or invalid scan options to full selection', async () => {
+  const { calls, dependencies } = createDependencies()
+  await buildQaRunResponse({ webUrl: 'https://example.com', figmaUrl: '', scanOptions: { url: false, click: 'nope', unknown: false } }, dependencies)
+
+  assert.deepEqual(calls.scanArgs.options.techScanOptions, {
+    url: false,
+    click: true,
+    landing: true,
+    form: true,
+    hover: true,
+    modal: true,
+    markup: true,
+  })
 })
 
 test('/api/qa/run builder marks tech and visual error when navigation failed', async () => {

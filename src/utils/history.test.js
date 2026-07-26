@@ -23,10 +23,11 @@ function installLocalStorage() {
 test('history stores visual and tech type separately', () => {
   installLocalStorage()
   saveHistoryItem({ type: 'visual', id: 'v1', url: 'https://example.com', figmaUrl: 'https://figma.com/design/a', scannedAt: '2026-01-01T00:00:00.000Z', counts: { total: 1, high: 1 }, topIssueSummaries: ['Visual'], result: { meta: { webUrl: 'https://example.com' } } })
-  saveHistoryItem({ type: 'tech', id: 't1', url: 'https://example.com', scannedAt: '2026-01-02T00:00:00.000Z', counts: { total: 2, high: 0 }, topIssueSummaries: ['Tech'], result: { targetUrl: 'https://example.com' } })
+  saveHistoryItem({ type: 'tech', id: 't1', url: 'https://example.com', scannedAt: '2026-01-02T00:00:00.000Z', counts: { total: 2, high: 0 }, topIssueSummaries: ['Tech'], result: { targetUrl: 'https://example.com', durationMs: 18234 } })
 
   const items = loadHistoryItems()
   assert.deepEqual(items.map((item) => item.type), ['tech', 'visual'])
+  assert.equal(items[0].result.durationMs, 18234)
   assert.equal(items[1].figmaUrl, 'https://figma.com/design/a')
 })
 
@@ -65,7 +66,7 @@ test('history stores and restores combined sessions', () => {
       },
     },
     visual: { status: 'success', summary: 'Visual ok', compactResult: { meta: { webUrl: 'https://example.com' } } },
-    tech: { status: 'error', summary: 'Tech failed', compactResult: null, error: 'failed' },
+    tech: { status: 'error', summary: 'Tech failed', compactResult: null, scanOptions: { url: false, click: true, landing: false, form: false, hover: false, modal: false, markup: true }, error: 'failed' },
   })
 
   const [item] = loadHistoryItems()
@@ -74,6 +75,7 @@ test('history stores and restores combined sessions', () => {
   assert.equal(item.visual.status, 'success')
   assert.equal(item.tech.status, 'error')
   assert.equal(item.tech.error, 'failed')
+  assert.equal(item.tech.scanOptions.url, false)
   assert.equal(item.aiReview.meta.openAiCalled, true)
   assert.equal(item.aiReview.meta.model, 'gpt-4.1-mini')
   assert.equal(item.aiReview.review.releaseDecision, 'caution')
@@ -92,4 +94,28 @@ test('history deletes one item without changing stored item schema', () => {
   assert.equal(remaining[0].id, 't1')
   assert.deepEqual(Object.keys(remaining[0]), ['type', 'id', 'url', 'webUrl', 'figmaUrl', 'scannedAt', 'createdAt', 'summary', 'totalIssueCount', 'counts', 'topIssueSummaries', 'designImageFilenames', 'result', 'visual', 'tech', 'aiReview'])
   assert.equal(loadHistoryItems()[0].id, 't1')
+})
+
+test('history keeps tech scan options when stored and defaults legacy results to full selection', () => {
+  installLocalStorage()
+  saveHistoryItem({
+    type: 'tech',
+    id: 't2',
+    url: 'https://example.com',
+    scannedAt: '2026-01-04T00:00:00.000Z',
+    counts: { total: 1, high: 0 },
+    topIssueSummaries: ['Tech'],
+    result: {
+      targetUrl: 'https://example.com',
+      scanOptions: { url: true, click: false, landing: false, form: false, hover: false, modal: false, markup: true },
+    },
+  })
+  localStorage.setItem('pagepilot-qa-history-v3', JSON.stringify([
+    ...loadHistoryItems(),
+    { id: 'legacy-tech-options', url: 'https://legacy.example', scannedAt: '2026-01-05T00:00:00.000Z', counts: { total: 0 }, topIssueSummaries: ['Legacy'], result: { targetUrl: 'https://legacy.example' } },
+  ]))
+
+  const items = loadHistoryItems()
+  assert.equal(items[0].result.scanOptions.click, false)
+  assert.equal(items[1].result.scanOptions, undefined)
 })

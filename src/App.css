@@ -159,6 +159,67 @@
   line-height: 1.5;
 }
 
+.tech-scan-options {
+  margin-top: -2px;
+  color: var(--panel-muted);
+}
+
+.tech-scan-options > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px;
+  color: var(--panel-muted);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  list-style: none;
+}
+
+.tech-scan-options > summary::-webkit-details-marker {
+  display: none;
+}
+
+.tech-scan-options > summary::before {
+  content: '▸';
+  color: #94a3b8;
+  font-size: 11px;
+  transition: transform 150ms ease;
+}
+
+.tech-scan-options[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.tech-scan-options-body {
+  display: grid;
+  gap: 4px;
+  padding: 6px 0 0;
+}
+
+.tech-scan-option-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #e2e8f0;
+  min-height: 30px;
+  padding: 2px 0;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.35;
+}
+
+.tech-scan-option-row input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent-strong);
+}
+
+.tech-scan-option-row input:disabled {
+  cursor: not-allowed;
+}
+
 .primary-button,
 .secondary-button {
   border: 0;

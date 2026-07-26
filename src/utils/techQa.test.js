@@ -224,6 +224,7 @@ test('compact Tech QA summary cards use four meaningful KPI values', () => {
 
 test('Tech QA panel display replaces top KPI cards with completion meta from existing data', () => {
   const base = result({
+    durationMs: 18234,
     linkAudit: { playwrightRunCount: 1, uniqueRequestUrlCount: 98 },
     images: Array.from({ length: 25 }, () => ({ status: 'ok' })),
   })
@@ -232,11 +233,30 @@ test('Tech QA panel display replaces top KPI cards with completion meta from exi
   const meta = Object.fromEntries(display.completion.meta.map((item) => [item.label, item.value]))
 
   assert.equal(display.completion.title, 'Tech QA 검사 완료')
+  assert.equal(display.completion.steps.includes('페이지 기본 검사 완료'), true)
+  assert.equal(display.completion.steps.includes('Desktop + Mobile 검사 완료'), true)
+  assert.equal(display.completion.steps.includes('선택한 Tech QA 검사 완료'), true)
+  assert.equal(display.completion.steps.includes('Tech QA 처리시간 18.2초'), true)
   assert.equal(meta['검사 엔진'], 'Playwright')
   assert.equal(meta['검사 환경'], 'Desktop + Mobile')
   assert.equal(meta['링크 검사'], '98개')
   assert.equal(meta['이미지 검사'], '25개')
-  assert.equal('처리 시간' in meta, false)
+  assert.equal(meta['처리시간'], '18.2초')
+})
+
+test('Tech QA completion copy does not claim unselected checks were completed', () => {
+  const base = result({
+    scanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, markup: false },
+    checks: [check({ id: 'access', status: 'ok' })],
+  })
+  const view = createTechQaViewModel(base)
+  const display = createTechPanelDisplayModel(base, view)
+
+  assert.equal(display.completion.description.includes('링크 검사'), false)
+  assert.equal(display.completion.description.includes('클릭 동작 검사'), false)
+  assert.equal(display.completion.description.includes('마크업 및 접근성 검사'), false)
+  assert.equal(display.completion.steps.includes('선택한 Tech QA 검사 완료'), false)
+  assert.equal(display.completion.steps.includes('페이지 기본 검사 완료'), true)
 })
 
 test('Tech QA panel display resolves Playwright engine from Tech QA evidence without run count', () => {
@@ -278,7 +298,7 @@ test('Tech QA panel display hides unavailable completion meta for history fallba
   const values = display.completion.meta.map((item) => item.value).join(' ')
 
   assert.equal(labels.includes('검사 엔진'), false)
-  assert.equal(labels.includes('처리 시간'), false)
+  assert.equal(labels.includes('처리시간'), false)
   assert.equal(values.includes('undefined'), false)
   assert.equal(values.includes('NaN'), false)
 })
@@ -326,9 +346,19 @@ test('compact Tech QA source keeps table UI and closed detail policy', () => {
   assert.equal(source.includes('기술 정보 보기'), true)
   assert.equal(source.includes('판정 결과'), true)
   assert.equal(source.includes('확인 이유'), true)
-  assert.equal(source.includes('1단계 · 페이지 HTML에 연결된 모든 링크(URL)를 수집하여 응답 상태와 링크 유형을 확인합니다.'), true)
-  assert.equal(source.includes('2단계 · Playwright가 버튼, 메뉴, 링크 등 클릭 가능한 UI 요소를 실제로 조작하여 화면 반응을 확인합니다.'), true)
-  assert.equal(source.includes('3단계 · 클릭 후 이동한 최종 페이지가 정상적으로 열리는지 확인합니다.'), true)
+  assert.equal(source.includes('1단계 ·'), false)
+  assert.equal(source.includes('2단계 ·'), false)
+  assert.equal(source.includes('3단계 ·'), false)
+  assert.equal(source.includes('4단계 ·'), false)
+  assert.equal(source.includes('5단계 ·'), false)
+  assert.equal(source.includes('6단계 ·'), false)
+  assert.equal(source.includes('페이지에서 수집한 링크와 이동 URL의 상태를 확인합니다.'), true)
+  assert.equal(source.includes('버튼과 링크 등 클릭 가능한 요소의 실제 동작을 확인합니다.'), true)
+  assert.equal(source.includes('수집된 이동 대상 페이지의 응답 상태와 기본 콘텐츠를 확인합니다.'), true)
+  assert.equal(source.includes('입력 요소의 레이블, 필수값 및 기본 검증 동작을 확인합니다.'), true)
+  assert.equal(source.includes('Hover, Dropdown 및 Tooltip 요소의 표시와 복원 동작을 확인합니다.'), true)
+  assert.equal(source.includes('Modal의 열기, 닫기, 포커스 및 스크롤 동작을 확인합니다.'), true)
+  assert.equal(source.includes('Meta, 이미지 alt, 입력 레이블 등 기본 마크업과 접근성을 확인합니다.'), true)
   assert.equal(source.includes('고유 요소 오류'), false)
   assert.equal(source.includes('검사 근거 오류'), false)
   assert.equal(source.includes('쉬운 설명'), false)

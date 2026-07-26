@@ -1,3 +1,5 @@
+import { isTechCheckEnabled, normalizeTechScanOptions } from '../../shared/techScanOptions.js'
+
 export const TECH_STATUS_LABELS = {
   ok: '정상',
   warn: '확인 필요',
@@ -66,15 +68,17 @@ const SECTION_TITLES = {
 }
 
 export function createTechQaViewModel(result = {}) {
-  const checks = arrayOfObjects(result.checks)
-  const clickActionGroups = createClickActionGroups(result)
-  const landingPageGroups = createLandingPageGroups(result)
-  const formInteractionGroups = createInteractionGroups(result, 'form-interaction', 'formInteractions', 'formAudit')
-  const hoverInteractionGroups = createInteractionGroups(result, 'hover-interaction', 'hoverInteractions', 'hoverAudit')
-  const modalInteractionGroups = createInteractionGroups(result, 'modal-interaction', 'modalInteractions', 'modalAudit')
-  const links = createLinkItems(result.links)
-  const linkSummary = createLinkSummary(links, result.linkAudit)
-  const checkItems = checks.map((check) => createCheckItem(check, clickActionGroups, { result, linkSummary }))
+  const scanOptions = normalizeTechScanOptions(result.scanOptions)
+  const checks = arrayOfObjects(result.checks).filter((check) => isTechCheckEnabled(check.id, scanOptions))
+  const filteredResult = createFilteredTechResult(result, scanOptions, checks)
+  const clickActionGroups = createClickActionGroups(filteredResult)
+  const landingPageGroups = createLandingPageGroups(filteredResult)
+  const formInteractionGroups = createInteractionGroups(filteredResult, 'form-interaction', 'formInteractions', 'formAudit')
+  const hoverInteractionGroups = createInteractionGroups(filteredResult, 'hover-interaction', 'hoverInteractions', 'hoverAudit')
+  const modalInteractionGroups = createInteractionGroups(filteredResult, 'modal-interaction', 'modalInteractions', 'modalAudit')
+  const links = createLinkItems(filteredResult.links)
+  const linkSummary = createLinkSummary(links, filteredResult.linkAudit)
+  const checkItems = checks.map((check) => createCheckItem(check, clickActionGroups, { result: filteredResult, linkSummary }))
   const allItems = checkItems.concat(links)
   const rawPriorityItems = allItems.filter(isPriorityItem).sort(comparePriorityItems)
   const priorityItems = createVisiblePriorityItems(rawPriorityItems)
@@ -92,9 +96,10 @@ export function createTechQaViewModel(result = {}) {
     targetUrl: result.targetUrl || '',
     scannedAt: result.scannedAt || '',
     statusMessage,
+    scanOptions,
     counts,
     issueCounts,
-    summaryCards: createSummaryCards(result, issueCounts, linkSummary),
+    summaryCards: createSummaryCards(filteredResult, issueCounts, linkSummary),
     checkItems,
     basicCheckItems: createBasicCheckItems(checkItems),
     normalCheckItems,
@@ -108,7 +113,21 @@ export function createTechQaViewModel(result = {}) {
     modalInteractionGroups,
     links,
     allItems: allItems.sort(comparePriorityItems),
-    developer: createDeveloperInfo(result, linkSummary),
+    developer: createDeveloperInfo(filteredResult, linkSummary),
+  }
+}
+
+function createFilteredTechResult(result = {}, scanOptions = normalizeTechScanOptions(), checks = []) {
+  return {
+    ...result,
+    scanOptions,
+    checks,
+    links: scanOptions.url ? arrayOfObjects(result.links) : [],
+    clickActions: scanOptions.click ? arrayOfObjects(result.clickActions) : [],
+    landingPages: scanOptions.landing ? arrayOfObjects(result.landingPages) : [],
+    formInteractions: scanOptions.form ? arrayOfObjects(result.formInteractions) : [],
+    hoverInteractions: scanOptions.hover ? arrayOfObjects(result.hoverInteractions) : [],
+    modalInteractions: scanOptions.modal ? arrayOfObjects(result.modalInteractions) : [],
   }
 }
 

@@ -6,6 +6,7 @@ import { buildAiReviewPayloadFromSession, sanitizeAiReviewResponse } from './uti
 import { isValidHttpUrl } from './utils/scanSession'
 import { countIssueCards, createCompactVisualResult, createVisualIssueCards, createVisualSummary } from './utils/visualQa'
 import { createTechQaViewModel } from './utils/techQa'
+import { createDefaultTechScanOptions, normalizeTechScanOptions } from '../shared/techScanOptions.js'
 import EmptyState from './components/EmptyState'
 import HistoryPanel from './components/HistoryPanel'
 import InputPanel from './components/InputPanel'
@@ -31,6 +32,7 @@ function App() {
   const [historyItems, setHistoryItems] = useState(() => loadHistoryItems())
   const [selectedHistoryId, setSelectedHistoryId] = useState('')
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
+  const [techScanOptions, setTechScanOptions] = useState(() => createDefaultTechScanOptions())
 
   const isScanning = visualScanState === 'loading' || techScanState === 'loading' || aiReviewState === 'loading'
   const isVisualTabEnabled = Boolean(visualResult) || visualScanState === 'loading' || visualScanState === 'success' || visualScanState === 'error'
@@ -74,7 +76,7 @@ function App() {
 
     let session
     try {
-      session = await requestQaRun(webUrl, frameUrl)
+      session = await requestQaRun(webUrl, frameUrl, techScanOptions)
     } catch (error) {
       const message = error instanceof Error ? error.message : '통합 검사 요청에 실패했습니다.'
       session = {
@@ -135,6 +137,7 @@ function App() {
     if (item.type === 'combined') {
       setVisualResult(item.visual?.compactResult || null)
       setTechResult(item.tech?.compactResult || null)
+      setTechScanOptions(resolveHistoryScanOptions(item.tech?.compactResult || item.tech))
       setVisualScanState(item.visual?.status || 'skipped')
       setTechScanState(item.tech?.status || 'idle')
       setVisualScanError(item.visual?.error || '')
@@ -157,6 +160,7 @@ function App() {
     if (item.type === 'tech' || item.result?.targetUrl) {
       setVisualResult(null)
       setTechResult(item.result)
+      setTechScanOptions(resolveHistoryScanOptions(item.result))
       setVisualScanState('skipped')
       setTechScanState('success')
       setActiveTab('tech')
@@ -234,12 +238,14 @@ function App() {
         inputError={inputError}
         isCollapsed={isSidebarCollapsed}
         isScanning={isScanning}
+        techScanOptions={techScanOptions}
         url={url}
         onFigmaUrlChange={(value) => {
           setFigmaUrl(value)
           if (figmaError) setFigmaError('')
         }}
         onStartScan={handleStartScan}
+        onTechScanOptionsChange={setTechScanOptions}
         onToggleCollapsed={() => setIsSidebarCollapsed((value) => !value)}
         onUrlChange={(value) => {
           setUrl(value)
@@ -299,11 +305,11 @@ async function readJsonResponse(response) {
   }
 }
 
-async function requestQaRun(webUrl, figmaUrl) {
+async function requestQaRun(webUrl, figmaUrl, scanOptions) {
   const response = await fetch('/api/qa/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ webUrl, figmaUrl }),
+    body: JSON.stringify({ webUrl, figmaUrl, scanOptions }),
   })
   const payload = await readJsonResponse(response)
   if (!response.ok) throw new Error(payload?.message || `통합 검사 요청에 실패했습니다. (${response.status})`)
@@ -399,6 +405,7 @@ function createCombinedHistoryItem(session) {
       status: session.tech.status,
       summary: techSummary,
       compactResult: techResult ? createCompactTechResult(techResult) : null,
+      scanOptions: techResult ? normalizeTechScanOptions(techResult.scanOptions) : normalizeTechScanOptions(),
       error: session.tech.error || '',
     },
   }
@@ -456,6 +463,7 @@ function createCompactTechResult(result) {
   return {
     targetUrl: result.targetUrl,
     scannedAt: result.scannedAt,
+    durationMs: result.durationMs,
     pageTitle: result.pageTitle,
     httpStatus: result.httpStatus,
     accessible: result.accessible,
@@ -470,10 +478,15 @@ function createCompactTechResult(result) {
     counts: result.counts || {},
     mobile: result.mobile || { viewport: { width: 0, height: 0 }, statusCode: null, note: '' },
     linkAudit: result.linkAudit || {},
+    scanOptions: normalizeTechScanOptions(result.scanOptions),
     clickActions: Array.isArray(result.clickActions) ? result.clickActions : [],
     clickActionAudit: result.clickActionAudit || {},
     uiControlWithoutUrlCount: result.uiControlWithoutUrlCount || 0,
   }
+}
+
+function resolveHistoryScanOptions(result) {
+  return normalizeTechScanOptions(result?.scanOptions)
 }
 
 export default App

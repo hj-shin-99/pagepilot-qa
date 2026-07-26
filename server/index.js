@@ -22,12 +22,14 @@ import { auditHoverInteractions } from './techHoverAudit.js'
 import { auditLandingPages } from './techLandingAudit.js'
 import { auditModalInteractions } from './techModalAudit.js'
 import { classifyConsoleMessages } from './techConsoleAudit.js'
+import { runOptionalTechAudits, runUrlAudit } from './techScanOrchestration.js'
 import { buildVisualQaPayloadArtifacts } from './visualQaPayload.js'
 import { buildQaRunResponse, createQaRunHandler, isWebScanNavigationFailure } from './qaRunRoute.js'
 import { buildVisualPayloadFromScanResult, createVisualPayloadHandler } from './visualPayloadRoute.js'
 import { createVisualVisionService } from './visualVisionService.js'
 import { createWebVisualAnalysis } from './webVisualAnalysis.js'
 import { extractVisibleWebTextElements } from './webText.js'
+import { normalizeTechScanOptions } from '../shared/techScanOptions.js'
 
 const PORT = Number(process.env.PORT || 3001)
 const AI_QA_MODEL = getAiQaModel()
@@ -1889,6 +1891,7 @@ function limitText(value, maxLength) {
 }
 
 async function scanUrl(targetUrl, options = {}) {
+  const startedAtMs = Date.now()
   const scanOptions = normalizeScanUrlOptions(options)
   const browser = await chromium.launch({ headless: true })
   incrementInstrumentationCount(scanOptions.instrumentation, 'browserLaunchCount')
@@ -1938,69 +1941,27 @@ async function scanUrl(targetUrl, options = {}) {
     }
 
     pageTitle = await safeTitle(page)
-    domSnapshot = await safeDomSnapshot(page, targetUrl)
+    domSnapshot = await safeDomSnapshot(page, targetUrl, {
+      includeMarkupData: scanOptions.techScanOptions.markup,
+      includeClickableCandidates: scanOptions.techScanOptions.click,
+    })
     webScreenshot = await safeWebScreenshot(page)
     if (scanOptions.includeVisualPayloadData) {
       visualPayloadData = await safeVisualPayloadData(page, scanOptions.instrumentation)
     }
     mobileResult = scanOptions.includeMobile ? await scanMobile(browser, targetUrl, scanOptions.instrumentation) : createMobileFallback()
     await context.close()
-    clickActionAuditResult = await auditClickableActions(browser, targetUrl, domSnapshot?.clickableCandidates || [], scanOptions.instrumentation).catch((error) => ({
-      items: [],
-      meta: { candidateCount: domSnapshot?.clickableCandidates?.length || 0, safeClickAttemptCount: 0, safeClickLimit: 0, error: error instanceof Error ? error.message : 'click audit failed' },
-    }))
-    landingAuditResult = await auditLandingPages(browser, targetUrl, clickActionAuditResult.items, scanOptions.instrumentation).catch((error) => ({
-      items: [],
-      meta: {
-        candidateCount: 0,
-        inspectedCount: 0,
-        okCount: 0,
-        warningCount: 0,
-        errorCount: 1,
-        redirectCount: 0,
-        newWindowCount: 0,
-        noTarget: true,
-        error: error instanceof Error ? error.message : 'landing audit failed',
-      },
-    }))
-    formAuditResult = await auditForms(browser, targetUrl, scanOptions.instrumentation).catch((error) => ({
-      items: [],
-      meta: {
-        candidateCount: 0,
-        inspectedCount: 0,
-        okCount: 0,
-        warningCount: 0,
-        errorCount: 1,
-        skippedCount: 0,
-        noTarget: true,
-        error: error instanceof Error ? error.message : 'form audit failed',
-      },
-    }))
-    hoverAuditResult = await auditHoverInteractions(browser, targetUrl, scanOptions.instrumentation).catch((error) => ({
-      items: [],
-      meta: {
-        candidateCount: 0,
-        inspectedCount: 0,
-        okCount: 0,
-        warningCount: 0,
-        errorCount: 1,
-        skippedCount: 0,
-        noTarget: true,
-        error: error instanceof Error ? error.message : 'hover audit failed',
-      },
-    }))
-    modalAuditResult = await auditModalInteractions(browser, targetUrl, clickActionAuditResult.items, scanOptions.instrumentation).catch((error) => ({
-      items: [],
-      meta: {
-        candidateCount: 0,
-        inspectedCount: 0,
-        okCount: 0,
-        warningCount: 0,
-        errorCount: 1,
-        skippedCount: 0,
-        noTarget: true,
-        error: error instanceof Error ? error.message : 'modal audit failed',
-      },
+    ;({ clickActionAuditResult, landingAuditResult, formAuditResult, hoverAuditResult, modalAuditResult } = await runOptionalTechAudits({
+      browser,
+      targetUrl,
+      snapshot: domSnapshot,
+      techScanOptions: scanOptions.techScanOptions,
+      instrumentation: scanOptions.instrumentation,
+      auditClickableActions,
+      auditLandingPages,
+      auditForms,
+      auditHoverInteractions,
+      auditModalInteractions,
     }))
   } finally {
     await browser.close()
@@ -2009,17 +1970,23 @@ async function scanUrl(targetUrl, options = {}) {
   const safePageTitle = pageTitle || ''
   const snapshot = domSnapshot || createEmptyDomSnapshot()
   const safeMobileResult = mobileResult || createMobileFallback()
-  const safeLandingAuditResult = landingAuditResult || { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, redirectCount: 0, newWindowCount: 0, noTarget: true } }
-  const safeFormAuditResult = formAuditResult || { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } }
-  const safeHoverAuditResult = hoverAuditResult || { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } }
-  const safeModalAuditResult = modalAuditResult || { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } }
-  const linkAudit = createTechLinkAudit(snapshot.interactionTargets, targetUrl)
-  const linksToCheck = getLinksToCheck(linkAudit.requestableLinks)
-  const checkedLinks = await checkLinkStatuses(linksToCheck)
-  const linkAuditResult = mergeTechLinkAuditResults(linkAudit, checkedLinks)
-  const linkStatuses = linkAuditResult.links
+  const safeLandingAuditResult = landingAuditResult || { items: [], meta: {} }
+  const safeFormAuditResult = formAuditResult || { items: [], meta: {} }
+  const safeHoverAuditResult = hoverAuditResult || { items: [], meta: {} }
+  const safeModalAuditResult = modalAuditResult || { items: [], meta: {} }
+  const urlAuditResult = await runUrlAudit({
+    enabled: scanOptions.techScanOptions.url,
+    targetUrl,
+    snapshot,
+    createTechLinkAudit,
+    getLinksToCheck,
+    checkLinkStatuses,
+    mergeTechLinkAuditResults,
+  })
+  const linkAuditResult = urlAuditResult.linkAuditResult
+  const linkStatuses = urlAuditResult.links
   const images = mergeImageFailures(snapshot.images, failedImageRequests)
-  const missingHrefLinks = linkAudit.missingHrefLinks
+  const missingHrefLinks = urlAuditResult.missingHrefLinks
   const networkIssueSummary = classifyNetworkIssues(failedResourceRequests.concat(badResourceResponses))
   const clickActionSummary = summarizeClickActionAudit(clickActionAuditResult.items, clickActionAuditResult.meta)
   const consoleAudit = classifyConsoleMessages(consoleMessages, targetUrl)
@@ -2051,11 +2018,14 @@ async function scanUrl(targetUrl, options = {}) {
     formAuditResult: safeFormAuditResult,
     hoverAuditResult: safeHoverAuditResult,
     modalAuditResult: safeModalAuditResult,
+    techScanOptions: scanOptions.techScanOptions,
   })
 
   return {
     targetUrl,
     scannedAt: new Date().toISOString(),
+    durationMs: Math.max(0, Date.now() - startedAtMs),
+    scanOptions: scanOptions.techScanOptions,
     pageTitle: safePageTitle,
     httpStatus: mainResponse?.status() ?? null,
     accessible: Boolean(mainResponse && mainResponse.ok()),
@@ -2065,7 +2035,7 @@ async function scanUrl(targetUrl, options = {}) {
     links: linkStatuses,
     uncheckedLinkCount: 0,
     missingHrefLinks,
-    uiControlWithoutUrlCount: linkAudit.uiControlsWithoutUrl.length,
+    uiControlWithoutUrlCount: urlAuditResult.uiControlWithoutUrlCount,
     linkAudit: linkAuditResult.meta,
     clickActions: clickActionAuditResult.items,
     clickActionAudit: clickActionSummary.meta,
@@ -2092,6 +2062,7 @@ function normalizeScanUrlOptions(options = {}) {
   return {
     includeVisualPayloadData: options.includeVisualPayloadData === true,
     includeMobile: options.includeMobile !== false,
+    techScanOptions: normalizeTechScanOptions(options.techScanOptions),
     instrumentation: options.instrumentation && typeof options.instrumentation === 'object' ? options.instrumentation : null,
   }
 }
@@ -2465,9 +2436,9 @@ async function safeTitle(page) {
   }
 }
 
-async function safeDomSnapshot(page, targetUrl) {
+async function safeDomSnapshot(page, targetUrl, options = {}) {
   try {
-    const snapshot = await page.evaluate(({ baseUrl, maxDesignElements }) => {
+    const snapshot = await page.evaluate(({ baseUrl, maxDesignElements, includeMarkupData, includeClickableCandidates }) => {
       const documentHeight = getDocumentHeight()
       const links = Array.from(document.querySelectorAll('a')).map((anchor, index) => {
         const href = anchor.getAttribute('href')?.trim() || ''
@@ -2566,15 +2537,15 @@ async function safeDomSnapshot(page, targetUrl) {
         ...entry,
       }))
       const webCtaHints = collectWebCtaHints()
-      const metaInfo = collectMetaInfo()
-      const missingAltImages = images.filter((image) => image.altCategory === 'meaningful-image' && !normalizeText(image.alt)).slice(0, 30)
-      const formInfo = collectFormInfo()
-      const externalBlankLinks = collectExternalBlankLinks(links, baseUrl)
-      const duplicateIds = collectDuplicateIds()
-      const headingInfo = collectHeadingInfo()
+      const metaInfo = includeMarkupData ? collectMetaInfo() : {}
+      const missingAltImages = includeMarkupData ? images.filter((image) => image.altCategory === 'meaningful-image' && !normalizeText(image.alt)).slice(0, 30) : []
+      const formInfo = includeMarkupData ? collectFormInfo() : { total: 0, requiredCount: 0, missingLabels: [] }
+      const externalBlankLinks = includeMarkupData ? collectExternalBlankLinks(links, baseUrl) : []
+      const duplicateIds = includeMarkupData ? collectDuplicateIds() : []
+      const headingInfo = includeMarkupData ? collectHeadingInfo() : { h1Count: 0, headings: [], skipped: [] }
       const largeResources = collectLargeResources()
-      const unlabeledClickables = collectUnlabeledClickables().slice(0, 30)
-      const clickableCandidates = collectClickableCandidates().slice(0, 80)
+      const unlabeledClickables = includeMarkupData ? collectUnlabeledClickables().slice(0, 30) : []
+      const clickableCandidates = includeClickableCandidates ? collectClickableCandidates().slice(0, 80) : []
 
       return {
         links,
@@ -3320,7 +3291,12 @@ async function safeDomSnapshot(page, targetUrl) {
         if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(value)
         return String(value || '').replace(/[^a-zA-Z0-9_-]/g, '\\$&')
       }
-    }, { baseUrl: targetUrl, maxDesignElements: MAX_DESIGN_ELEMENTS })
+    }, {
+      baseUrl: targetUrl,
+      maxDesignElements: MAX_DESIGN_ELEMENTS,
+      includeMarkupData: options.includeMarkupData === true,
+      includeClickableCandidates: options.includeClickableCandidates === true,
+    })
     return applyImageAltClassifications(snapshot)
   } catch {
     return createEmptyDomSnapshot()
@@ -3534,6 +3510,7 @@ function buildChecks({
   formAuditResult = { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } },
   hoverAuditResult = { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } },
   modalAuditResult = { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } },
+  techScanOptions = normalizeTechScanOptions(),
 }) {
   const httpStatus = mainResponse?.status() ?? null
   const brokenImages = images.filter((image) => image.status === 'error')
@@ -3554,7 +3531,7 @@ function buildChecks({
   const formMissingLabels = Array.isArray(formInfo.missingLabels) ? formInfo.missingLabels : []
   const headingItems = createHeadingIssueItems(headingInfo)
 
-  return [
+  const checks = [
     {
       id: 'access',
       title: '페이지 접속 가능 여부',
@@ -3595,91 +3572,11 @@ function buildChecks({
       items: brokenImages,
     },
     {
-      id: 'links',
-      title: '링크 목록 수집',
-      status: links.length > 0 ? 'ok' : 'warn',
-      value: `${links.length}개`,
-      detail: 'a 태그 기준 href 목록을 수집했습니다.',
-    },
-    {
-      id: 'missing-href',
-      title: '링크/버튼 URL 누락 여부',
-      status: missingHrefCount > 0 ? 'error' : 'ok',
-      value: `${missingHrefCount}개`,
-      detail: missingHrefCount > 0 ? '이동 목적 CTA로 보이지만 href 또는 action 근거가 없는 요소가 있습니다.' : `URL 누락 이동 CTA가 없습니다. URL이 필요 없는 UI control ${Number(linkAuditMeta.uiControlWithoutUrlCount || 0)}개는 제외했습니다.`,
-      items: missingHrefLinks,
-    },
-    {
-      id: 'bad-links',
-      title: '404/500 계열 링크 여부',
-      status: badLinks.length > 0 ? 'error' : warningLinks.length > 0 ? 'warn' : 'ok',
-      value: `${badLinks.length}개 오류 / ${warningLinks.length}개 확인 필요`,
-      detail: `발견 ${Number(linkAuditMeta.discoveredLinkCount || linkStatuses.length)}개 중 unique URL ${Number(linkAuditMeta.uniqueRequestUrlCount || 0)}개를 실제 요청했고 중복 ${Number(linkAuditMeta.dedupedLinkCount || 0)}개를 병합했습니다.`,
-      items: badLinks.concat(warningLinks),
-    },
-    {
-      id: 'interaction-count',
-      title: '버튼 또는 a 태그 개수',
-      status: counts.buttons + counts.anchors > 0 ? 'ok' : 'warn',
-      value: `button ${counts.buttons} / a ${counts.anchors}`,
-      detail: '클릭하지 않고 DOM 요소 개수만 수집했습니다.',
-    },
-    {
       id: 'mobile',
       title: '모바일 viewport 접속 가능 여부',
       status: mobileResult.accessible ? 'ok' : 'error',
       value: mobileResult.statusCode ? String(mobileResult.statusCode) : '응답 없음',
       detail: mobileResult.note,
-    },
-    {
-      id: 'meta',
-      title: '메타 정보 검사',
-      status: missingMetaFields.length > 0 ? 'warn' : 'ok',
-      value: missingMetaFields.length > 0 ? `${missingMetaFields.length}개 확인 필요` : '기본 메타 설정됨',
-      detail: missingMetaFields.length > 0 ? `누락 가능성이 있는 메타 정보: ${missingMetaFields.join(', ')}` : '검색/공유용 기본 메타 정보가 확인되었습니다.',
-      items: missingMetaFields.map((field) => ({ label: field, message: '메타 정보 누락 가능성 확인 필요' })),
-    },
-    {
-      id: 'image-alt',
-      title: '이미지 alt 검사',
-      status: missingAltImages.length > 0 ? 'warn' : 'ok',
-      value: `${missingAltImages.length}개 확인 필요`,
-      detail: missingAltImages.length > 0 ? 'alt가 비어 있는 이미지가 있습니다. 장식용 이미지일 수 있으나 확인이 필요합니다.' : 'alt가 비어 있는 이미지가 감지되지 않았습니다.',
-      items: missingAltImages,
-    },
-    {
-      id: 'forms',
-      title: '폼 기본 검사',
-      status: formMissingLabels.length > 0 ? 'warn' : 'ok',
-      value: formInfo.total > 0 ? `폼 요소 ${formInfo.total}개 / required ${formInfo.requiredCount || 0}개` : '폼 요소 없음',
-      detail: formInfo.total > 0
-        ? formMissingLabels.length > 0 ? 'label 또는 aria-label이 없는 입력 요소가 있어 확인이 필요합니다.' : '폼 입력 요소의 기본 라벨 정보가 확인되었습니다.'
-        : 'input/select/textarea 요소가 감지되지 않았습니다.',
-      items: formMissingLabels,
-    },
-    {
-      id: 'external-links',
-      title: '외부 링크 보안 속성 검사',
-      status: externalBlankLinks.length > 0 ? 'warn' : 'ok',
-      value: `${externalBlankLinks.length}개 확인 필요`,
-      detail: externalBlankLinks.length > 0 ? '새 창으로 열리는 외부 링크 중 rel 보안 속성 확인이 필요한 항목이 있습니다.' : '새 창 외부 링크의 기본 보안 속성이 확인되었습니다.',
-      items: externalBlankLinks,
-    },
-    {
-      id: 'duplicate-ids',
-      title: '중복 ID 검사',
-      status: duplicateIds.length > 0 ? 'warn' : 'ok',
-      value: `${duplicateIds.length}개 확인 필요`,
-      detail: duplicateIds.length > 0 ? '동일한 id가 여러 번 사용된 항목이 있어 확인이 필요합니다.' : '중복 id가 감지되지 않았습니다.',
-      items: duplicateIds,
-    },
-    {
-      id: 'headings',
-      title: '헤딩 구조 검사',
-      status: headingItems.length > 0 ? 'warn' : 'ok',
-      value: `h1 ${headingInfo.h1Count || 0}개`,
-      detail: headingItems.length > 0 ? 'h1 개수 또는 h2/h3 순서에서 확인이 필요한 구조가 있습니다.' : '기본 헤딩 구조가 확인되었습니다.',
-      items: headingItems,
     },
     {
       id: 'resource-size',
@@ -3706,7 +3603,108 @@ function buildChecks({
       value: mobileResult.hasHorizontalOverflow ? `${mobileResult.documentWidth}px / viewport ${mobileResult.viewportWidth}px` : '가로 넘침 없음',
       detail: mobileResult.hasHorizontalOverflow ? '모바일 화면 너비보다 문서가 넓어 가로 스크롤이 생길 수 있습니다.' : '모바일 viewport 기준 가로 넘침이 감지되지 않았습니다.',
     },
-    {
+  ]
+
+  if (techScanOptions.url) {
+    checks.push(
+      {
+        id: 'links',
+        title: '링크 목록 수집',
+        status: links.length > 0 ? 'ok' : 'warn',
+        value: `${links.length}개`,
+        detail: 'a 태그 기준 href 목록을 수집했습니다.',
+      },
+      {
+        id: 'missing-href',
+        title: '링크/버튼 URL 누락 여부',
+        status: missingHrefCount > 0 ? 'error' : 'ok',
+        value: `${missingHrefCount}개`,
+        detail: missingHrefCount > 0 ? '이동 목적 CTA로 보이지만 href 또는 action 근거가 없는 요소가 있습니다.' : `URL 누락 이동 CTA가 없습니다. URL이 필요 없는 UI control ${Number(linkAuditMeta.uiControlWithoutUrlCount || 0)}개는 제외했습니다.`,
+        items: missingHrefLinks,
+      },
+      {
+        id: 'bad-links',
+        title: '404/500 계열 링크 여부',
+        status: badLinks.length > 0 ? 'error' : warningLinks.length > 0 ? 'warn' : 'ok',
+        value: `${badLinks.length}개 오류 / ${warningLinks.length}개 확인 필요`,
+        detail: `발견 ${Number(linkAuditMeta.discoveredLinkCount || linkStatuses.length)}개 중 unique URL ${Number(linkAuditMeta.uniqueRequestUrlCount || 0)}개를 실제 요청했고 중복 ${Number(linkAuditMeta.dedupedLinkCount || 0)}개를 병합했습니다.`,
+        items: badLinks.concat(warningLinks),
+      },
+      {
+        id: 'interaction-count',
+        title: '버튼 또는 a 태그 개수',
+        status: counts.buttons + counts.anchors > 0 ? 'ok' : 'warn',
+        value: `button ${counts.buttons} / a ${counts.anchors}`,
+        detail: '클릭하지 않고 DOM 요소 개수만 수집했습니다.',
+      },
+    )
+  }
+
+  if (techScanOptions.markup) {
+    checks.push(
+      {
+        id: 'meta',
+        title: '메타 정보 검사',
+        status: missingMetaFields.length > 0 ? 'warn' : 'ok',
+        value: missingMetaFields.length > 0 ? `${missingMetaFields.length}개 확인 필요` : '기본 메타 설정됨',
+        detail: missingMetaFields.length > 0 ? `누락 가능성이 있는 메타 정보: ${missingMetaFields.join(', ')}` : '검색/공유용 기본 메타 정보가 확인되었습니다.',
+        items: missingMetaFields.map((field) => ({ label: field, message: '메타 정보 누락 가능성 확인 필요' })),
+      },
+      {
+        id: 'image-alt',
+        title: '이미지 alt 검사',
+        status: missingAltImages.length > 0 ? 'warn' : 'ok',
+        value: `${missingAltImages.length}개 확인 필요`,
+        detail: missingAltImages.length > 0 ? 'alt가 비어 있는 이미지가 있습니다. 장식용 이미지일 수 있으나 확인이 필요합니다.' : 'alt가 비어 있는 이미지가 감지되지 않았습니다.',
+        items: missingAltImages,
+      },
+      {
+        id: 'forms',
+        title: '폼 기본 검사',
+        status: formMissingLabels.length > 0 ? 'warn' : 'ok',
+        value: formInfo.total > 0 ? `폼 요소 ${formInfo.total}개 / required ${formInfo.requiredCount || 0}개` : '폼 요소 없음',
+        detail: formInfo.total > 0
+          ? formMissingLabels.length > 0 ? 'label 또는 aria-label이 없는 입력 요소가 있어 확인이 필요합니다.' : '폼 입력 요소의 기본 라벨 정보가 확인되었습니다.'
+          : 'input/select/textarea 요소가 감지되지 않았습니다.',
+        items: formMissingLabels,
+      },
+      {
+        id: 'external-links',
+        title: '외부 링크 보안 속성 검사',
+        status: externalBlankLinks.length > 0 ? 'warn' : 'ok',
+        value: `${externalBlankLinks.length}개 확인 필요`,
+        detail: externalBlankLinks.length > 0 ? '새 창으로 열리는 외부 링크 중 rel 보안 속성 확인이 필요한 항목이 있습니다.' : '새 창 외부 링크의 기본 보안 속성이 확인되었습니다.',
+        items: externalBlankLinks,
+      },
+      {
+        id: 'duplicate-ids',
+        title: '중복 ID 검사',
+        status: duplicateIds.length > 0 ? 'warn' : 'ok',
+        value: `${duplicateIds.length}개 확인 필요`,
+        detail: duplicateIds.length > 0 ? '동일한 id가 여러 번 사용된 항목이 있어 확인이 필요합니다.' : '중복 id가 감지되지 않았습니다.',
+        items: duplicateIds,
+      },
+      {
+        id: 'headings',
+        title: '헤딩 구조 검사',
+        status: headingItems.length > 0 ? 'warn' : 'ok',
+        value: `h1 ${headingInfo.h1Count || 0}개`,
+        detail: headingItems.length > 0 ? 'h1 개수 또는 h2/h3 순서에서 확인이 필요한 구조가 있습니다.' : '기본 헤딩 구조가 확인되었습니다.',
+        items: headingItems,
+      },
+      {
+        id: 'unlabeled-clickables',
+        title: '클릭 가능 요소 텍스트 검사',
+        status: unlabeledClickables.length > 0 ? 'warn' : 'ok',
+        value: `${unlabeledClickables.length}개 확인 필요`,
+        detail: unlabeledClickables.length > 0 ? '텍스트나 aria-label이 없는 클릭 가능 요소가 있어 목적 확인이 필요합니다.' : '클릭 가능 요소의 텍스트 또는 접근성 라벨이 확인되었습니다.',
+        items: unlabeledClickables,
+      },
+    )
+  }
+
+  if (techScanOptions.click) {
+    checks.push({
       id: 'click-actions',
       title: '클릭 동작 검사',
       status: clickActionSummary.status,
@@ -3716,8 +3714,11 @@ function buildChecks({
         : '버튼이나 링크처럼 보이는 요소 중 동작 근거 또는 실제 클릭 가능 여부 확인이 필요한 항목이 있습니다.',
       items: clickActionSummary.items,
       meta: clickActionSummary.meta,
-    },
-    {
+    })
+  }
+
+  if (techScanOptions.landing) {
+    checks.push({
       id: 'landing-pages',
       title: '랜딩 페이지 검사',
       status: landingErrors.length > 0 ? 'error' : landingWarnings.length > 0 ? 'warn' : 'ok',
@@ -3727,8 +3728,11 @@ function buildChecks({
         : `대상 ${Number(landingMeta.candidateCount || landingItems.length)}개 중 중복을 정리한 최종 ${landingItems.length}개 랜딩 페이지를 확인했습니다.`,
       items: landingItems,
       meta: landingMeta,
-    },
-    {
+    })
+  }
+
+  if (techScanOptions.form) {
+    checks.push({
       id: 'form-interaction',
       title: 'Form QA',
       status: Number(formMeta.errorCount || 0) > 0 ? 'error' : Number(formMeta.warningCount || 0) > 0 ? 'warn' : 'ok',
@@ -3738,8 +3742,11 @@ function buildChecks({
         : `대상 ${Number(formMeta.candidateCount || formItems.length)}개 중 ${formItems.length}개를 점검했습니다. 참고 ${Number(formMeta.skippedCount || 0)}개는 안전 정책에 따라 생략했습니다.`,
       items: formItems,
       meta: formMeta,
-    },
-    {
+    })
+  }
+
+  if (techScanOptions.hover) {
+    checks.push({
       id: 'hover-interaction',
       title: 'Hover / Dropdown QA',
       status: Number(hoverMeta.errorCount || 0) > 0 ? 'error' : Number(hoverMeta.warningCount || 0) > 0 ? 'warn' : 'ok',
@@ -3749,8 +3756,11 @@ function buildChecks({
         : `대상 ${Number(hoverMeta.candidateCount || hoverItems.length)}개 중 ${hoverItems.length}개를 Hover 조작으로 점검했습니다.`,
       items: hoverItems,
       meta: hoverMeta,
-    },
-    {
+    })
+  }
+
+  if (techScanOptions.modal) {
+    checks.push({
       id: 'modal-interaction',
       title: 'Modal QA',
       status: Number(modalMeta.errorCount || 0) > 0 ? 'error' : Number(modalMeta.warningCount || 0) > 0 ? 'warn' : 'ok',
@@ -3760,16 +3770,10 @@ function buildChecks({
         : `대상 ${Number(modalMeta.candidateCount || modalItems.length)}개 중 ${modalItems.length}개를 점검했습니다.`,
       items: modalItems,
       meta: modalMeta,
-    },
-    {
-      id: 'unlabeled-clickables',
-      title: '클릭 가능 요소 텍스트 검사',
-      status: unlabeledClickables.length > 0 ? 'warn' : 'ok',
-      value: `${unlabeledClickables.length}개 확인 필요`,
-      detail: unlabeledClickables.length > 0 ? '텍스트나 aria-label이 없는 클릭 가능 요소가 있어 목적 확인이 필요합니다.' : '클릭 가능 요소의 텍스트 또는 접근성 라벨이 확인되었습니다.',
-      items: unlabeledClickables,
-    },
-  ]
+    })
+  }
+
+  return checks
 }
 
 function getMissingMetaFields(metaInfo = {}) {

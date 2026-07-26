@@ -1,14 +1,17 @@
+import { normalizeTechScanOptions } from '../shared/techScanOptions.js'
+
 export function createQaRunHandler(dependencies) {
   return async function qaRunHandler(req, res) {
     const webUrl = typeof req.body?.webUrl === 'string' ? req.body.webUrl.trim() : ''
     const figmaUrl = typeof req.body?.figmaUrl === 'string' ? req.body.figmaUrl.trim() : ''
+    const scanOptions = req.body?.scanOptions
 
     if (!dependencies.isHttpUrl(webUrl)) {
       res.status(400).json({ message: 'http:// 또는 https://로 시작하는 Web URL만 사용할 수 있습니다.' })
       return
     }
 
-    const result = await buildQaRunResponse({ webUrl, figmaUrl }, dependencies)
+    const result = await buildQaRunResponse({ webUrl, figmaUrl, scanOptions }, dependencies)
     res.json(result)
   }
 }
@@ -18,6 +21,7 @@ export async function buildQaRunResponse(input, dependencies) {
   const startedAtMs = now()
   const startedAt = new Date(startedAtMs).toISOString()
   const hasFigmaUrl = Boolean(input.figmaUrl)
+  const normalizedScanOptions = normalizeTechScanOptions(input?.scanOptions)
   const instrumentation = {
     playwrightRunCount: 0,
     browserLaunchCount: 0,
@@ -31,6 +35,7 @@ export async function buildQaRunResponse(input, dependencies) {
     scanResult = await dependencies.scanUrl(input.webUrl, {
       includeVisualPayloadData: hasFigmaUrl,
       includeMobile: true,
+      techScanOptions: normalizedScanOptions,
       instrumentation,
     })
   } catch (error) {

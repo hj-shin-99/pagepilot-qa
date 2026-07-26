@@ -118,27 +118,45 @@ function createTechCompletion(result = {}, view = {}) {
   const engine = meta.find((item) => item.label === '검사 엔진')?.value
   const environment = meta.find((item) => item.label === '검사 환경')?.value
   const method = engine ? `${engine}를 통해` : '수집된 Tech QA 결과를 기반으로'
-  const environmentText = environment ? `${environment} 환경, ` : ''
+  const environmentText = environment ? `${environment} 환경에서 ` : ''
+  const scopeText = createCompletionScopeText(view.scanOptions)
 
   return {
     title: 'Tech QA 검사 완료',
-    description: `${method} 페이지 접속, ${environmentText}링크·이미지·마크업 및 클릭 동작 검사를 완료했습니다.`,
+    description: `${method} ${environmentText}${scopeText}를 완료했습니다.`,
     steps,
     meta,
   }
 }
 
+function createCompletionScopeText(scanOptions = {}) {
+  return hasSelectedTechChecks(scanOptions)
+    ? '페이지 기본 검사와 선택한 Tech QA 검사'
+    : '페이지 기본 검사'
+}
+
 function createCompletionSteps(result = {}, view = {}) {
   const steps = []
-  const checks = Array.isArray(view.checkItems) ? view.checkItems : []
-  const hasCheck = (id) => checks.some((item) => item.id === id)
+  const durationText = formatTechQaDuration(result.durationMs)
 
-  if (result.accessible !== undefined || hasCheck('access') || checks.length > 0) steps.push('페이지 및 DOM 수집 완료')
+  if (result.accessible !== undefined || Array.isArray(view.checkItems) && view.checkItems.length > 0) steps.push('페이지 기본 검사 완료')
   if (getEnvironmentLabel(result)) steps.push(`${getEnvironmentLabel(result)} 검사 완료`)
-  if (hasLinks(result, view) || hasImages(result)) steps.push('링크 및 리소스 검사 완료')
-  if (hasCheck('click-actions') || hasCheck('form-interaction') || hasCheck('hover-interaction') || hasCheck('modal-interaction') || hasMarkupChecks(checks)) steps.push('클릭 및 마크업 검사 완료')
+  if (hasSelectedTechChecks(view.scanOptions)) steps.push('선택한 Tech QA 검사 완료')
+  if (durationText) steps.push(`Tech QA 처리시간 ${durationText}`)
 
   return steps.length > 0 ? steps : ['Tech QA 결과 수집 완료']
+}
+
+function hasSelectedTechChecks(scanOptions = {}) {
+  return Boolean(
+    scanOptions.url
+    || scanOptions.click
+    || scanOptions.landing
+    || scanOptions.form
+    || scanOptions.hover
+    || scanOptions.modal
+    || scanOptions.markup,
+  )
 }
 
 function createCompletionMeta(result = {}, view = {}) {
@@ -147,13 +165,21 @@ function createCompletionMeta(result = {}, view = {}) {
   const environment = getEnvironmentLabel(result)
   const linkCount = getLinkInspectionCount(result, view)
   const imageCount = Array.isArray(result.images) ? result.images.length : null
+  const durationText = formatTechQaDuration(result.durationMs)
 
   if (engine) meta.push({ label: '검사 엔진', value: engine })
   if (environment) meta.push({ label: '검사 환경', value: environment })
   if (linkCount !== null) meta.push({ label: '링크 검사', value: `${linkCount}개` })
   if (imageCount !== null) meta.push({ label: '이미지 검사', value: `${imageCount}개` })
+  if (durationText) meta.push({ label: '처리시간', value: durationText })
 
   return meta
+}
+
+function formatTechQaDuration(value) {
+  const durationMs = Number(value)
+  if (!Number.isFinite(durationMs) || durationMs < 0) return ''
+  return `${(durationMs / 1000).toFixed(1)}초`
 }
 
 export function resolveTechQaEngine(result = {}, view = {}) {
@@ -211,23 +237,12 @@ function getEnvironmentLabel(result = {}) {
 }
 
 function getLinkInspectionCount(result = {}, view = {}) {
+  if (view.scanOptions?.url !== true) return null
   const uniqueCount = getPositiveNumber(view.linkSummary?.uniqueRequestUrlCount || result.linkAudit?.uniqueRequestUrlCount)
   if (uniqueCount !== null) return uniqueCount
   if (Array.isArray(view.links)) return view.links.length
   if (Array.isArray(result.links)) return result.links.length
   return null
-}
-
-function hasLinks(result = {}, view = {}) {
-  return Array.isArray(result.links) || Array.isArray(view.links) || Boolean(result.linkAudit)
-}
-
-function hasImages(result = {}) {
-  return Array.isArray(result.images)
-}
-
-function hasMarkupChecks(checks = []) {
-  return checks.some((item) => ['meta', 'image-alt', 'external-links', 'headings', 'duplicate-ids', 'forms', 'unlabeled-clickables'].includes(item.id))
 }
 
 function getPositiveNumber(value) {

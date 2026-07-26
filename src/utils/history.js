@@ -165,6 +165,7 @@ function sanitizeSessionBranch(branch) {
     status: sanitizeBranchStatus(branch.status),
     summary: getString(branch.summary),
     compactResult: branch.compactResult && typeof branch.compactResult === 'object' ? branch.compactResult : null,
+    scanOptions: branch.scanOptions && typeof branch.scanOptions === 'object' ? branch.scanOptions : null,
     error: getString(branch.error),
   }
 }

@@ -1,3 +1,5 @@
+import { TECH_SCAN_OPTION_DEFINITIONS, TECH_SCAN_OPTION_KEYS, areAllTechScanOptionsSelected } from '../../shared/techScanOptions.js'
+
 function InputPanel({
   url,
   figmaUrl,
@@ -5,14 +7,32 @@ function InputPanel({
   figmaError,
   isCollapsed,
   isScanning,
+  techScanOptions,
   onUrlChange,
   onFigmaUrlChange,
   onStartScan,
+  onTechScanOptionsChange,
   onToggleCollapsed,
 }) {
+  const allSelected = areAllTechScanOptionsSelected(techScanOptions)
+
   const handleSubmit = (event) => {
     event.preventDefault()
     onStartScan()
+  }
+
+  const handleToggleAll = (checked) => {
+    onTechScanOptionsChange(TECH_SCAN_OPTION_KEYS.reduce((nextOptions, key) => {
+      nextOptions[key] = checked
+      return nextOptions
+    }, {}))
+  }
+
+  const handleToggleOption = (key, checked) => {
+    onTechScanOptionsChange({
+      ...techScanOptions,
+      [key]: checked,
+    })
   }
 
   return (
@@ -53,6 +73,7 @@ function InputPanel({
               type="url"
               value={url}
               placeholder="https://staging.example.com/page"
+              disabled={isScanning}
               onChange={(event) => onUrlChange(event.target.value)}
             />
             {inputError ? <p className="input-error">{inputError}</p> : null}
@@ -66,9 +87,40 @@ function InputPanel({
               type="url"
               value={figmaUrl}
               placeholder="https://www.figma.com/design/...?...node-id=..."
+              disabled={isScanning}
               onChange={(event) => onFigmaUrlChange(event.target.value)}
             />
             {figmaError ? <p className="input-error">{figmaError}</p> : null}
+
+            <details className="tech-scan-options" aria-label="Tech QA 옵션">
+              <summary onClick={isScanning ? (event) => event.preventDefault() : undefined}>
+                <span>Tech QA 옵션</span>
+              </summary>
+              <div className="tech-scan-options-body">
+                <label className="tech-scan-option-row" htmlFor="tech-scan-option-all">
+                  <input
+                    id="tech-scan-option-all"
+                    type="checkbox"
+                    checked={allSelected}
+                    disabled={isScanning}
+                    onChange={(event) => handleToggleAll(event.target.checked)}
+                  />
+                  <span>전체 선택</span>
+                </label>
+                {TECH_SCAN_OPTION_DEFINITIONS.map((option) => (
+                  <label className="tech-scan-option-row" htmlFor={`tech-scan-option-${option.key}`} key={option.key}>
+                    <input
+                      id={`tech-scan-option-${option.key}`}
+                      type="checkbox"
+                      checked={techScanOptions[option.key] === true}
+                      disabled={isScanning}
+                      onChange={(event) => handleToggleOption(option.key, event.target.checked)}
+                    />
+                    <span>{option.label}</span>
+                  </label>
+                ))}
+              </div>
+            </details>
 
             <button className="primary-button" type="submit" disabled={isScanning}>
               {isScanning ? '검사 중...' : '검사 시작'}

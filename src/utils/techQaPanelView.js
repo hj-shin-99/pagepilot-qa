@@ -22,6 +22,8 @@ export function createTechDetailRows(view = {}) {
   const scrollRows = createInteractionDetailRows(view.scrollInteractionGroups, 'tech-scroll')
   const responsiveRows = createInteractionDetailRows(view.responsiveLayoutGroups, 'tech-responsive')
   const downloadRows = createInteractionDetailRows(view.downloadResourceGroups, 'tech-download')
+  const cookieRows = createInteractionDetailRows(view.cookieGroups, 'tech-cookie')
+  const imageRows = createInteractionDetailRows(view.imageGroups, 'tech-image')
   const markupRows = createMarkupDetailRows(view.checkItems)
 
   return {
@@ -35,6 +37,8 @@ export function createTechDetailRows(view = {}) {
     scrollRows,
     responsiveRows,
     downloadRows,
+    cookieRows,
+    imageRows,
     markupRows,
   }
 }
@@ -163,6 +167,8 @@ function hasSelectedTechChecks(scanOptions = {}) {
     || scanOptions.scroll
     || scanOptions.responsive
     || scanOptions.download
+    || scanOptions.cookie
+    || scanOptions.image
   )
 }
 
@@ -220,11 +226,15 @@ function hasTechQaScanEvidence(result = {}, view = {}) {
   if (Array.isArray(result.links) && result.links.length > 0) return true
   if (Array.isArray(result.images) && result.images.length > 0) return true
   if (Array.isArray(result.clickActions) && result.clickActions.length > 0) return true
+  if (Array.isArray(result.cookieItems) && result.cookieItems.length > 0) return true
+  if (Array.isArray(result.imageItems) && result.imageItems.length > 0) return true
   if (Array.isArray(result.consoleMessages) && result.consoleMessages.length > 0) return true
   if (result.mobile && typeof result.mobile === 'object') return true
   if (hasObjectKeys(result.linkAudit)) return true
   if (hasObjectKeys(result.clickActionAudit)) return true
   if (hasObjectKeys(result.consoleAudit)) return true
+  if (hasObjectKeys(result.cookieAudit)) return true
+  if (hasObjectKeys(result.imageAudit)) return true
   if (Array.isArray(view.checkItems) && view.checkItems.length > 0) return true
   if (Array.isArray(view.links) && view.links.length > 0) return true
   return false

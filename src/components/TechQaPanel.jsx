@@ -135,6 +135,30 @@ function TechQaPanel({ result }) {
         />
       ) : null}
 
+      {scanOptions.cookie ? (
+        <InteractionAuditSection
+          id="tech-cookie-section"
+          title="Cookie QA"
+          ariaLabel="Cookie QA"
+          note="페이지에서 생성된 쿠키의 출처와 기본 보안 속성을 확인합니다."
+          emptyMessage="검사 대상 쿠키가 없습니다."
+          groups={view.cookieGroups}
+          rows={display.detailRows.cookieRows}
+        />
+      ) : null}
+
+      {scanOptions.image ? (
+        <InteractionAuditSection
+          id="tech-image-section"
+          title="Image QA"
+          ariaLabel="Image QA"
+          note="이미지 리소스의 로딩 상태와 실제 해상도 및 렌더링 상태를 확인합니다."
+          emptyMessage="검사 대상 이미지가 없습니다."
+          groups={view.imageGroups}
+          rows={display.detailRows.imageRows}
+        />
+      ) : null}
+
       {scanOptions.markup ? <MarkupAccessibilitySection items={markupItems} /> : null}
 
       <details className="detail-card tech-detail-accordion">
@@ -602,6 +626,27 @@ function InteractionAuditDetails({ item }) {
         <Meta label="content-disposition" value={item.contentDisposition} />
         <Meta label="filename" value={item.filename} />
         <Meta label="source count" value={item.sourceCount} />
+        <Meta label="cookie domain" value={item.domain} />
+        <Meta label="cookie path" value={item.path} />
+        <Meta label="sameSite" value={item.sameSite} />
+        <Meta label="secure" value={formatBoolean(item.secure)} />
+        <Meta label="httpOnly" value={formatBoolean(item.httpOnly)} />
+        <Meta label="session cookie" value={formatBoolean(item.session)} />
+        <Meta label="first/third party" value={item.party} />
+        <Meta label="hostOnly" value={formatBoolean(item.hostOnly)} />
+        <Meta label="expires" value={item.expiresAt} />
+        <Meta label="source origin" value={item.sourceOrigin} />
+        <Meta label="value length" value={item.valueLength} />
+        <Meta label="banner hints" value={Array.isArray(item.bannerHints) ? item.bannerHints.join(' · ') : ''} />
+        <Meta label="src" value={item.src} />
+        <Meta label="currentSrc" value={item.currentSrc} />
+        <Meta label="natural size" value={formatImageSize(item.naturalWidth, item.naturalHeight)} />
+        <Meta label="rendered size" value={formatImageSize(item.renderedWidth, item.renderedHeight)} />
+        <Meta label="client size" value={formatImageSize(item.clientWidth, item.clientHeight)} />
+        <Meta label="object-fit" value={item.objectFit} />
+        <Meta label="visible count" value={item.visibleCount} />
+        <Meta label="selectors" value={Array.isArray(item.selectors) ? item.selectors.join(' | ') : ''} />
+        <Meta label="rendered sizes" value={Array.isArray(item.renderedSizeList) ? item.renderedSizeList.join(' | ') : ''} />
         <Meta label="near bottom" value={formatBoolean(item.nearBottom)} />
         <Meta label="overflow hidden" value={formatBoolean(item.overflowHidden)} />
         <Meta label="lazy images" value={item.lazyImageCount} />
@@ -619,7 +664,7 @@ function InteractionAuditDetails({ item }) {
         <Meta label="focus moved" value={formatBoolean(item.focusMovedInside)} />
         <Meta label="focus return" value={formatBoolean(item.focusReturned)} />
         <Meta label="scroll lock" value={formatBoolean(item.scrollLocked)} />
-        <Meta label="selector" value={item.selector} />
+        <Meta label="selector" value={item.selector || item.representativeSelector} />
         <Meta label="section" value={item.section} />
       </dl>
       {Array.isArray(item.issues) && item.issues.length > 0 ? (
@@ -854,6 +899,13 @@ function formatRequestMethods(value) {
   return Array.isArray(value) && value.length > 0 ? value.join(', ') : ''
 }
 
+function formatImageSize(width, height) {
+  const numericWidth = Number(width || 0)
+  const numericHeight = Number(height || 0)
+  if (numericWidth <= 0 || numericHeight <= 0) return ''
+  return `${Math.round(numericWidth)}x${Math.round(numericHeight)}`
+}
+
 function getLargeResourceThreshold(item = {}) {
   const detail = String(item.raw?.detail || '').trim()
   return detail.includes('1MB') ? '1MB 이상' : ''
@@ -994,7 +1046,13 @@ function formatTechnicalEvidence(raw = {}) {
     raw?.section ? `section: ${raw.section}` : '',
     raw?.domPath ? `DOM path: ${raw.domPath}` : '',
     raw?.href || raw?.url ? `href/url: ${raw.href || raw.url}` : '',
+    raw?.currentSrc || raw?.src ? `image src: ${raw.currentSrc || raw.src}` : '',
     raw?.finalUrl ? `final URL: ${raw.finalUrl}` : '',
+    raw?.domain ? `domain: ${raw.domain}` : '',
+    raw?.path ? `path: ${raw.path}` : '',
+    raw?.sameSite ? `sameSite: ${raw.sameSite}` : '',
+    raw?.contentType ? `content-type: ${raw.contentType}` : '',
+    raw?.objectFit ? `object-fit: ${raw.objectFit}` : '',
     raw?.redirected !== undefined ? `redirected: ${raw.redirected}` : '',
     raw?.requestUrl ? `request URL: ${raw.requestUrl}` : '',
     raw?.actionType || raw?.actionEvidence ? `action: ${raw.actionType || raw.actionEvidence}` : '',
@@ -1177,6 +1235,20 @@ function DeveloperInfo({ view, result, scanOptions }) {
     )
   }
 
+  if (scanOptions.cookie) {
+    metaItems.push(
+      { label: 'cookie candidates', value: view.cookieGroups?.meta?.candidateCount },
+      { label: 'cookie audited', value: view.cookieGroups?.meta?.inspectedCount },
+    )
+  }
+
+  if (scanOptions.image) {
+    metaItems.push(
+      { label: 'image candidates', value: view.imageGroups?.meta?.candidateCount },
+      { label: 'image audited', value: view.imageGroups?.meta?.inspectedCount },
+    )
+  }
+
   return (
     <div className="developer-info-grid">
       {metaItems.map((item) => <Meta label={item.label} value={item.value} key={item.label} />)}
@@ -1204,6 +1276,10 @@ function RawDetails({ view, result, scanOptions }) {
   const responsiveItems = Array.isArray(result.responsiveLayouts) ? result.responsiveLayouts : Array.isArray(responsiveCheck?.items) ? responsiveCheck.items : []
   const downloadCheck = Array.isArray(result.checks) ? result.checks.find((check) => check.id === 'download-resource') : null
   const downloadItems = Array.isArray(result.downloadResources) ? result.downloadResources : Array.isArray(downloadCheck?.items) ? downloadCheck.items : []
+  const cookieCheck = Array.isArray(result.checks) ? result.checks.find((check) => check.id === 'cookie-security') : null
+  const cookieItems = Array.isArray(result.cookieItems) ? result.cookieItems : Array.isArray(cookieCheck?.items) ? cookieCheck.items : []
+  const imageCheck = Array.isArray(result.checks) ? result.checks.find((check) => check.id === 'image-rendering') : null
+  const imageItems = Array.isArray(result.imageItems) ? result.imageItems : Array.isArray(imageCheck?.items) ? imageCheck.items : []
   return (
     <div className="tech-raw-grid">
       <CountBreakdown items={view.issueCounts.checkBreakdown || []} />
@@ -1216,6 +1292,8 @@ function RawDetails({ view, result, scanOptions }) {
       {scanOptions.scroll ? <RawList title="Raw scroll audits" items={scrollItems} /> : null}
       {scanOptions.responsive ? <RawList title="Raw responsive audits" items={responsiveItems} /> : null}
       {scanOptions.download ? <RawList title="Raw download audits" items={downloadItems} /> : null}
+      {scanOptions.cookie ? <RawList title="Raw cookie audits" items={cookieItems} /> : null}
+      {scanOptions.image ? <RawList title="Raw image audits" items={imageItems} /> : null}
       {scanOptions.landing ? <RawList title="Raw landing audits" items={landingItems} /> : null}
       {scanOptions.click ? <RawList title="Raw click candidates" items={clickItems} /> : null}
       <RawList title="Raw console" items={consoleItems} />
@@ -1251,7 +1329,7 @@ function RawList({ title, items }) {
 }
 
 function formatRawItem(item = {}) {
-  return [item.type || item.tagName || item.kind, item.statusCode, item.finalUrl || item.requestedUrl || item.url || item.href || item.source, item.selector, item.category, item.reason || item.note || item.message].filter(Boolean).join(' · ') || JSON.stringify(item)
+  return [item.label || item.name, item.type || item.tagName || item.kind, item.statusCode, item.finalUrl || item.requestedUrl || item.url || item.href || item.source || item.currentSrc || item.src, item.selector || item.representativeSelector, item.category, item.reason || item.note || item.message].filter(Boolean).join(' · ') || JSON.stringify(item)
 }
 
 function getCheckItemCount(result, checkId) {

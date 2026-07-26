@@ -80,10 +80,12 @@ test('/api/qa/run builder calls scanUrl once and reuses scanResult for visual', 
     form: true,
     hover: true,
     modal: true,
-    markup: true,
     scroll: true,
     responsive: true,
     download: true,
+    cookie: true,
+    image: true,
+    markup: true,
   })
   assert.equal(calls.visual, 1)
   assert.equal(calls.visualScanResult, scanResult)
@@ -119,10 +121,12 @@ test('/api/qa/run builder defaults missing or invalid scan options to full selec
     form: true,
     hover: true,
     modal: true,
-    markup: true,
     scroll: true,
     responsive: true,
     download: true,
+    cookie: true,
+    image: true,
+    markup: true,
   })
 })
 

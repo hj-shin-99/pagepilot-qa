@@ -488,6 +488,14 @@ function createCompactTechResult(result) {
     downloadResources: Array.isArray(result.downloadResources) ? result.downloadResources : [],
     downloadAudit: result.downloadAudit || {},
     uiControlWithoutUrlCount: result.uiControlWithoutUrlCount || 0,
+    ...(Array.isArray(result.cookieItems) || result.cookieAudit ? {
+      cookieItems: Array.isArray(result.cookieItems) ? result.cookieItems : [],
+      cookieAudit: result.cookieAudit || {},
+    } : {}),
+    ...(Array.isArray(result.imageItems) || result.imageAudit ? {
+      imageItems: Array.isArray(result.imageItems) ? result.imageItems : [],
+      imageAudit: result.imageAudit || {},
+    } : {}),
   }
 }
 

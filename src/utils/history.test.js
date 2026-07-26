@@ -66,7 +66,7 @@ test('history stores and restores combined sessions', () => {
       },
     },
     visual: { status: 'success', summary: 'Visual ok', compactResult: { meta: { webUrl: 'https://example.com' } } },
-    tech: { status: 'error', summary: 'Tech failed', compactResult: null, scanOptions: { url: false, click: true, landing: false, form: false, hover: false, modal: false, markup: true }, error: 'failed' },
+    tech: { status: 'error', summary: 'Tech failed', compactResult: null, scanOptions: { url: false, click: true, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, markup: true }, error: 'failed' },
   })
 
   const [item] = loadHistoryItems()
@@ -107,9 +107,9 @@ test('history keeps tech scan options when stored and defaults legacy results to
     topIssueSummaries: ['Tech'],
     result: {
       targetUrl: 'https://example.com',
-      scanOptions: { url: true, click: false, landing: false, form: false, hover: false, modal: false, markup: true },
-    },
-  })
+        scanOptions: { url: true, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, markup: true },
+      },
+    })
   localStorage.setItem('pagepilot-qa-history-v3', JSON.stringify([
     ...loadHistoryItems(),
     { id: 'legacy-tech-options', url: 'https://legacy.example', scannedAt: '2026-01-05T00:00:00.000Z', counts: { total: 0 }, topIssueSummaries: ['Legacy'], result: { targetUrl: 'https://legacy.example' } },
@@ -118,4 +118,27 @@ test('history keeps tech scan options when stored and defaults legacy results to
   const items = loadHistoryItems()
   assert.equal(items[0].result.scanOptions.click, false)
   assert.equal(items[1].result.scanOptions, undefined)
+})
+
+test('history preserves new tech result fields without storing raw cookie values', () => {
+  installLocalStorage()
+  saveHistoryItem({
+    type: 'tech',
+    id: 't3',
+    url: 'https://example.com',
+    scannedAt: '2026-01-06T00:00:00.000Z',
+    counts: { total: 1, high: 0 },
+    topIssueSummaries: ['Tech'],
+    result: {
+      targetUrl: 'https://example.com',
+      scanOptions: { url: true, click: true, landing: true, form: true, hover: true, modal: true, scroll: true, responsive: true, download: true, cookie: true, image: true, markup: true },
+      cookieItems: [{ label: 'sid', valueLength: 32 }],
+      imageItems: [{ label: 'hero.webp', sourceCount: 2 }],
+    },
+  })
+
+  const stored = localStorage.getItem('pagepilot-qa-history-v3')
+  assert.equal(stored.includes('cookieItems'), true)
+  assert.equal(stored.includes('imageItems'), true)
+  assert.equal(stored.includes('SECRET_TOKEN_VALUE_123'), false)
 })

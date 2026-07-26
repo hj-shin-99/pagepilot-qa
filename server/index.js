@@ -24,6 +24,8 @@ import { auditModalInteractions } from './techModalAudit.js'
 import { auditResponsiveLayouts } from './techResponsiveAudit.js'
 import { auditScrollInteractions } from './techScrollAudit.js'
 import { auditDownloadResources } from './techDownloadAudit.js'
+import { auditCookies } from './techCookieAudit.js'
+import { auditImages } from './techImageAudit.js'
 import { classifyConsoleMessages } from './techConsoleAudit.js'
 import { runOptionalTechAudits, runUrlAudit } from './techScanOrchestration.js'
 import { buildVisualQaPayloadArtifacts } from './visualQaPayload.js'
@@ -1918,6 +1920,8 @@ async function scanUrl(targetUrl, options = {}) {
   let scrollAuditResult
   let responsiveAuditResult
   let downloadAuditResult
+  let cookieAuditResult
+  let imageAuditResult
 
   try {
     const context = await browser.newContext({
@@ -1957,7 +1961,7 @@ async function scanUrl(targetUrl, options = {}) {
     }
     mobileResult = scanOptions.includeMobile ? await scanMobile(browser, targetUrl, scanOptions.instrumentation) : createMobileFallback()
     await context.close()
-    ;({ clickActionAuditResult, landingAuditResult, formAuditResult, hoverAuditResult, modalAuditResult, scrollAuditResult, responsiveAuditResult, downloadAuditResult } = await runOptionalTechAudits({
+    ;({ clickActionAuditResult, landingAuditResult, formAuditResult, hoverAuditResult, modalAuditResult, scrollAuditResult, responsiveAuditResult, downloadAuditResult, cookieAuditResult, imageAuditResult } = await runOptionalTechAudits({
       browser,
       targetUrl,
       snapshot: domSnapshot,
@@ -1971,6 +1975,8 @@ async function scanUrl(targetUrl, options = {}) {
       auditScrollInteractions,
       auditResponsiveLayouts,
       auditDownloadResources,
+      auditCookies,
+      auditImages,
     }))
   } finally {
     await browser.close()
@@ -1986,6 +1992,8 @@ async function scanUrl(targetUrl, options = {}) {
   const safeScrollAuditResult = scrollAuditResult || { items: [], meta: {} }
   const safeResponsiveAuditResult = responsiveAuditResult || { items: [], meta: {} }
   const safeDownloadAuditResult = downloadAuditResult || { items: [], meta: {} }
+  const safeCookieAuditResult = cookieAuditResult || { items: [], meta: {} }
+  const safeImageAuditResult = imageAuditResult || { items: [], meta: {} }
   const urlAuditResult = await runUrlAudit({
     enabled: scanOptions.techScanOptions.url,
     targetUrl,
@@ -2033,6 +2041,8 @@ async function scanUrl(targetUrl, options = {}) {
     scrollAuditResult: safeScrollAuditResult,
     responsiveAuditResult: safeResponsiveAuditResult,
     downloadAuditResult: safeDownloadAuditResult,
+    cookieAuditResult: safeCookieAuditResult,
+    imageAuditResult: safeImageAuditResult,
     techScanOptions: scanOptions.techScanOptions,
   })
 
@@ -2067,6 +2077,8 @@ async function scanUrl(targetUrl, options = {}) {
     responsiveAudit: safeResponsiveAuditResult.meta,
     downloadResources: safeDownloadAuditResult.items,
     downloadAudit: safeDownloadAuditResult.meta,
+    ...(scanOptions.techScanOptions.cookie ? { cookieItems: safeCookieAuditResult.items, cookieAudit: safeCookieAuditResult.meta } : {}),
+    ...(scanOptions.techScanOptions.image ? { imageItems: safeImageAuditResult.items, imageAudit: safeImageAuditResult.meta } : {}),
     images,
     designElements: snapshot.designElements,
     webCtaHints: snapshot.webCtaHints || [],
@@ -3535,6 +3547,8 @@ function buildChecks({
   scrollAuditResult = { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } },
   responsiveAuditResult = { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } },
   downloadAuditResult = { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } },
+  cookieAuditResult = { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } },
+  imageAuditResult = { items: [], meta: { candidateCount: 0, inspectedCount: 0, okCount: 0, warningCount: 0, errorCount: 0, skippedCount: 0, noTarget: true } },
   techScanOptions = normalizeTechScanOptions(),
 }) {
   const httpStatus = mainResponse?.status() ?? null
@@ -3558,6 +3572,10 @@ function buildChecks({
   const responsiveMeta = responsiveAuditResult.meta || {}
   const downloadItems = Array.isArray(downloadAuditResult.items) ? downloadAuditResult.items : []
   const downloadMeta = downloadAuditResult.meta || {}
+  const cookieItems = Array.isArray(cookieAuditResult.items) ? cookieAuditResult.items : []
+  const cookieMeta = cookieAuditResult.meta || {}
+  const imageItems = Array.isArray(imageAuditResult.items) ? imageAuditResult.items : []
+  const imageMeta = imageAuditResult.meta || {}
   const missingMetaFields = getMissingMetaFields(metaInfo)
   const formMissingLabels = Array.isArray(formInfo.missingLabels) ? formInfo.missingLabels : []
   const headingItems = createHeadingIssueItems(headingInfo)
@@ -3843,6 +3861,34 @@ function buildChecks({
         : `다운로드 후보 ${Number(downloadMeta.candidateCount || downloadItems.length)}개 중 ${downloadItems.length}개를 점검했습니다.`,
       items: downloadItems,
       meta: downloadMeta,
+    })
+  }
+
+  if (techScanOptions.cookie) {
+    checks.push({
+      id: 'cookie-security',
+      title: '쿠키 보안',
+      status: Number(cookieMeta.errorCount || 0) > 0 ? 'error' : Number(cookieMeta.warningCount || 0) > 0 ? 'warn' : 'ok',
+      value: cookieMeta.noTarget ? '검사 대상 없음' : `오류 ${Number(cookieMeta.errorCount || 0)}개 / 확인 필요 ${Number(cookieMeta.warningCount || 0)}개`,
+      detail: cookieMeta.noTarget
+        ? '현재 페이지에서 수집된 쿠키가 없어 Cookie QA를 생략했습니다.'
+        : `쿠키 ${Number(cookieMeta.candidateCount || cookieItems.length)}개 중 ${cookieItems.length}개를 보안 속성 기준으로 확인했습니다. 참고 ${Number(cookieMeta.skippedCount || 0)}개는 참고 항목으로 분류했습니다.`,
+      items: cookieItems,
+      meta: cookieMeta,
+    })
+  }
+
+  if (techScanOptions.image) {
+    checks.push({
+      id: 'image-rendering',
+      title: '이미지 렌더링',
+      status: Number(imageMeta.errorCount || 0) > 0 ? 'error' : Number(imageMeta.warningCount || 0) > 0 ? 'warn' : 'ok',
+      value: imageMeta.noTarget ? '검사 대상 없음' : `오류 ${Number(imageMeta.errorCount || 0)}개 / 확인 필요 ${Number(imageMeta.warningCount || 0)}개`,
+      detail: imageMeta.noTarget
+        ? '의미 있는 표시 이미지가 없어 Image QA를 생략했습니다.'
+        : `이미지 후보 ${Number(imageMeta.candidateCount || imageItems.length)}개 중 중복 URL을 정리한 ${imageItems.length}개를 점검했습니다.`,
+      items: imageItems,
+      meta: imageMeta,
     })
   }
 

@@ -50,6 +50,8 @@ export async function runOptionalTechAudits({
   auditScrollInteractions,
   auditResponsiveLayouts,
   auditDownloadResources,
+  auditCookies,
+  auditImages,
 }) {
   const normalizedOptions = normalizeTechScanOptions(techScanOptions)
   const safeSnapshot = snapshot && typeof snapshot === 'object' ? snapshot : { clickableCandidates: [], interactionTargets: [], links: [] }
@@ -61,6 +63,8 @@ export async function runOptionalTechAudits({
   let scrollAuditResult = createSkippedInteractionAuditResult()
   let responsiveAuditResult = createSkippedInteractionAuditResult()
   let downloadAuditResult = createSkippedInteractionAuditResult()
+  let cookieAuditResult = createSkippedInteractionAuditResult()
+  let imageAuditResult = createSkippedInteractionAuditResult()
 
   if (normalizedOptions.click) {
     clickActionAuditResult = await auditClickableActions(browser, targetUrl, safeSnapshot.clickableCandidates || [], instrumentation).catch((error) => ({
@@ -184,6 +188,38 @@ export async function runOptionalTechAudits({
     }))
   }
 
+  if (normalizedOptions.cookie) {
+    cookieAuditResult = await auditCookies(browser, targetUrl, instrumentation).catch((error) => ({
+      items: [],
+      meta: {
+        candidateCount: 0,
+        inspectedCount: 0,
+        okCount: 0,
+        warningCount: 0,
+        errorCount: 1,
+        skippedCount: 0,
+        noTarget: true,
+        error: error instanceof Error ? error.message : 'cookie audit failed',
+      },
+    }))
+  }
+
+  if (normalizedOptions.image) {
+    imageAuditResult = await auditImages(browser, targetUrl, instrumentation).catch((error) => ({
+      items: [],
+      meta: {
+        candidateCount: 0,
+        inspectedCount: 0,
+        okCount: 0,
+        warningCount: 0,
+        errorCount: 1,
+        skippedCount: 0,
+        noTarget: true,
+        error: error instanceof Error ? error.message : 'image audit failed',
+      },
+    }))
+  }
+
   return {
     techScanOptions: normalizedOptions,
     clickActionAuditResult,
@@ -194,6 +230,8 @@ export async function runOptionalTechAudits({
     scrollAuditResult,
     responsiveAuditResult,
     downloadAuditResult,
+    cookieAuditResult,
+    imageAuditResult,
   }
 }
 

@@ -11,10 +11,12 @@ test('tech scan options default to all selected and normalize invalid values saf
     form: true,
     hover: true,
     modal: true,
-    markup: true,
     scroll: true,
     responsive: true,
     download: true,
+    cookie: true,
+    image: true,
+    markup: true,
   })
   assert.deepEqual(normalizeTechScanOptions(null), createDefaultTechScanOptions())
   assert.deepEqual(normalizeTechScanOptions({ url: false, click: 'nope', unknown: false }), {
@@ -24,10 +26,12 @@ test('tech scan options default to all selected and normalize invalid values saf
     form: true,
     hover: true,
     modal: true,
-    markup: true,
     scroll: true,
     responsive: true,
     download: true,
+    cookie: true,
+    image: true,
+    markup: true,
   })
   assert.equal(areAllTechScanOptionsSelected({ url: false }), false)
   assert.equal(areAllTechScanOptionsSelected(createDefaultTechScanOptions()), true)
@@ -39,33 +43,37 @@ test('stored tech scan options keep legacy history from showing newly added sect
     click: true,
     landing: true,
     form: true,
-    hover: true,
-    modal: true,
-    markup: true,
-    scroll: false,
-    responsive: false,
-    download: false,
-  })
+      hover: true,
+      modal: true,
+      scroll: false,
+      responsive: false,
+      download: false,
+      cookie: false,
+      image: false,
+      markup: true,
+    })
 
   assert.deepEqual(normalizeStoredTechScanOptions({ url: true, click: true, landing: true, form: true, hover: true, modal: true, markup: true }, {}), {
     url: true,
     click: true,
     landing: true,
     form: true,
-    hover: true,
-    modal: true,
-    markup: true,
-    scroll: false,
-    responsive: false,
-    download: false,
-  })
+      hover: true,
+      modal: true,
+      scroll: false,
+      responsive: false,
+      download: false,
+      cookie: false,
+      image: false,
+      markup: true,
+    })
 })
 
 test('tech qa view model excludes unselected option checks and counts while keeping common checks', () => {
   const view = createTechQaViewModel({
     targetUrl: 'https://example.com',
     pageTitle: 'Example',
-    scanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, markup: false, scroll: false, responsive: false, download: false },
+    scanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, markup: false },
     checks: [
       { id: 'access', status: 'ok', title: '접속', value: '가능' },
       { id: 'links', status: 'warn', title: '링크 목록 수집', value: '2개' },
@@ -86,10 +94,12 @@ test('tech qa view model excludes unselected option checks and counts while keep
     form: false,
     hover: false,
     modal: false,
-    markup: false,
     scroll: false,
     responsive: false,
     download: false,
+    cookie: false,
+    image: false,
+    markup: false,
   })
   assert.equal(view.checkItems.some((item) => item.id === 'links'), false)
   assert.equal(view.checkItems.some((item) => item.id === 'meta'), false)
@@ -117,4 +127,6 @@ test('legacy results without stored options keep existing sections and hide new 
   assert.equal(view.scanOptions.scroll, false)
   assert.equal(view.scanOptions.responsive, false)
   assert.equal(view.scanOptions.download, false)
+  assert.equal(view.scanOptions.cookie, false)
+  assert.equal(view.scanOptions.image, false)
 })

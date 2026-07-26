@@ -59,6 +59,8 @@ const CHECK_DEFINITIONS = {
   'scroll-interaction': { section: 'frontend', owner: 'UID팀', label: 'Scroll QA', description: '페이지 스크롤, 하단 도달, 지연 로딩 및 고정 요소의 동작을 확인합니다.' },
   'responsive-layout': { section: 'frontend', owner: 'UID팀', label: 'Responsive QA', description: 'Desktop, Tablet, Mobile 화면에서 레이아웃과 가로 넘침 여부를 확인합니다.' },
   'download-resource': { section: 'link', owner: 'UID팀', label: 'Download QA', description: '다운로드 링크의 응답 상태, 파일 형식 및 주요 헤더를 확인합니다.' },
+  'cookie-security': { section: 'frontend', owner: '개발팀', label: '쿠키 보안', description: '페이지에서 생성된 쿠키의 출처와 기본 보안 속성을 확인합니다.' },
+  'image-rendering': { section: 'frontend', owner: 'UID팀', label: '이미지 렌더링', description: '이미지 리소스의 로딩 상태와 실제 해상도 및 렌더링 상태를 확인합니다.' },
   'unlabeled-clickables': { section: 'planning', owner: 'UID팀', label: '클릭 가능한 요소 이름', description: '버튼과 링크에 사용자용 이름이 있는지 확인합니다.' },
 }
 
@@ -82,6 +84,8 @@ export function createTechQaViewModel(result = {}) {
   const scrollInteractionGroups = createInteractionGroups(filteredResult, 'scroll-interaction', 'scrollInteractions', 'scrollAudit')
   const responsiveLayoutGroups = createInteractionGroups(filteredResult, 'responsive-layout', 'responsiveLayouts', 'responsiveAudit')
   const downloadResourceGroups = createInteractionGroups(filteredResult, 'download-resource', 'downloadResources', 'downloadAudit')
+  const cookieGroups = createInteractionGroups(filteredResult, 'cookie-security', 'cookieItems', 'cookieAudit')
+  const imageGroups = createInteractionGroups(filteredResult, 'image-rendering', 'imageItems', 'imageAudit')
   const links = createLinkItems(filteredResult.links)
   const linkSummary = createLinkSummary(links, filteredResult.linkAudit)
   const checkItems = checks.map((check) => createCheckItem(check, clickActionGroups, { result: filteredResult, linkSummary }))
@@ -120,6 +124,8 @@ export function createTechQaViewModel(result = {}) {
     scrollInteractionGroups,
     responsiveLayoutGroups,
     downloadResourceGroups,
+    cookieGroups,
+    imageGroups,
     links,
     allItems: allItems.sort(comparePriorityItems),
     developer: createDeveloperInfo(filteredResult, linkSummary),
@@ -140,6 +146,8 @@ function createFilteredTechResult(result = {}, scanOptions = normalizeStoredTech
     scrollInteractions: scanOptions.scroll ? arrayOfObjects(result.scrollInteractions) : [],
     responsiveLayouts: scanOptions.responsive ? arrayOfObjects(result.responsiveLayouts) : [],
     downloadResources: scanOptions.download ? arrayOfObjects(result.downloadResources) : [],
+    cookieItems: scanOptions.cookie ? arrayOfObjects(result.cookieItems) : [],
+    imageItems: scanOptions.image ? arrayOfObjects(result.imageItems) : [],
   }
 }
 
@@ -468,6 +476,8 @@ function getObjectiveCheckValue(check = {}, context = {}, problemItems = []) {
   if (check.id === 'scroll-interaction') return check.meta?.noTarget ? '검사 대상 없음' : `오류 ${Number(check.meta?.errorCount || 0)}개 · 확인 필요 ${Number(check.meta?.warningCount || 0)}개`
   if (check.id === 'responsive-layout') return check.meta?.noTarget ? '검사 대상 없음' : `오류 ${Number(check.meta?.errorCount || 0)}개 · 확인 필요 ${Number(check.meta?.warningCount || 0)}개`
   if (check.id === 'download-resource') return check.meta?.noTarget ? '검사 대상 없음' : `오류 ${Number(check.meta?.errorCount || 0)}개 · 확인 필요 ${Number(check.meta?.warningCount || 0)}개`
+  if (check.id === 'cookie-security') return check.meta?.noTarget ? '검사 대상 없음' : `오류 ${Number(check.meta?.errorCount || 0)}개 · 확인 필요 ${Number(check.meta?.warningCount || 0)}개`
+  if (check.id === 'image-rendering') return check.meta?.noTarget ? '검사 대상 없음' : `오류 ${Number(check.meta?.errorCount || 0)}개 · 확인 필요 ${Number(check.meta?.warningCount || 0)}개`
   return ''
 }
 
@@ -746,6 +756,8 @@ function getCheckPriority(check = {}) {
   if (check.id === 'responsive-layout') return 7
   if (check.id === 'scroll-interaction') return 8
   if (check.id === 'download-resource') return 8
+  if (check.id === 'cookie-security') return 8
+  if (check.id === 'image-rendering') return 8
   if (check.id === 'images') return 7
   if (check.id === 'meta' || check.id === 'title') return 9
   return 12

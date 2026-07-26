@@ -8,6 +8,8 @@ export const TECH_SCAN_OPTION_DEFINITIONS = Object.freeze([
   { key: 'scroll', label: 'Scroll QA', checkIds: ['scroll-interaction'] },
   { key: 'responsive', label: 'Responsive QA', checkIds: ['responsive-layout'] },
   { key: 'download', label: 'Download QA', checkIds: ['download-resource'] },
+  { key: 'cookie', label: 'Cookie QA', checkIds: ['cookie-security'] },
+  { key: 'image', label: 'Image QA', checkIds: ['image-rendering'] },
   { key: 'markup', label: '마크업 및 접근성 검사', checkIds: ['meta', 'image-alt', 'forms', 'external-links', 'duplicate-ids', 'headings', 'unlabeled-clickables'] },
 ])
 
@@ -20,10 +22,12 @@ export const DEFAULT_TECH_SCAN_OPTIONS = Object.freeze({
   form: true,
   hover: true,
   modal: true,
-  markup: true,
   scroll: true,
   responsive: true,
   download: true,
+  cookie: true,
+  image: true,
+  markup: true,
 })
 
 const LEGACY_TECH_SCAN_OPTION_KEYS = Object.freeze(['url', 'click', 'landing', 'form', 'hover', 'modal', 'markup'])
@@ -37,6 +41,8 @@ const OPTION_RESULT_FIELDS = Object.freeze({
   scroll: ['scrollInteractions', 'scrollAudit'],
   responsive: ['responsiveLayouts', 'responsiveAudit'],
   download: ['downloadResources', 'downloadAudit'],
+  cookie: ['cookieItems', 'cookieAudit'],
+  image: ['imageItems', 'imageAudit'],
 })
 
 const CHECK_ID_TO_OPTION_KEY = Object.freeze(TECH_SCAN_OPTION_DEFINITIONS.reduce((map, definition) => {

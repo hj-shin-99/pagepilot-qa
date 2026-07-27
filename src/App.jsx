@@ -9,7 +9,7 @@ import { createTechQaViewModel } from './utils/techQa'
 import { createDefaultTechScanOptions, normalizeStoredTechScanOptions, normalizeTechScanOptions } from '../shared/techScanOptions.js'
 import EmptyState from './components/EmptyState'
 import HistoryPanel from './components/HistoryPanel'
-import InputPanel from './components/InputPanel'
+import QaStartScreen from './components/QaStartScreen'
 import TechQaPanel from './components/TechQaPanel'
 import VisualQaPanel from './components/VisualQaPanel'
 import WorkspaceTabs from './components/WorkspaceTabs'
@@ -31,13 +31,14 @@ function App() {
   const [scanStage, setScanStage] = useState('idle')
   const [historyItems, setHistoryItems] = useState(() => loadHistoryItems())
   const [selectedHistoryId, setSelectedHistoryId] = useState('')
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [techScanOptions, setTechScanOptions] = useState(() => createDefaultTechScanOptions())
 
   const isScanning = visualScanState === 'loading' || techScanState === 'loading' || aiReviewState === 'loading'
+  const isWebUrlReady = isValidHttpUrl(url.trim())
   const isVisualTabEnabled = Boolean(visualResult) || visualScanState === 'loading' || visualScanState === 'success' || visualScanState === 'error'
   const isTechTabEnabled = Boolean(techResult) || techScanState === 'loading' || techScanState === 'success' || techScanState === 'error'
-  const isEmptyWorkspaceView = activeTab !== 'history' && ((activeTab === 'tech' && !techResult) || (activeTab === 'visual' && !visualResult) || activeTab === 'overview')
+  const isIdleStartView = !isScanning && activeTab === 'overview' && !visualResult && !techResult && visualScanState === 'idle' && techScanState === 'idle'
+  const isEmptyResultView = activeTab !== 'history' && ((activeTab === 'tech' && !techResult) || (activeTab === 'visual' && !visualResult) || activeTab === 'overview')
 
   const handleTabChange = (tabId) => {
     if (tabId === 'visual' && !isVisualTabEnabled) return
@@ -230,41 +231,59 @@ function App() {
           ? <EmptyState scanState={visualScanState} scanError={visualScanError} mode="visual" combined={techScanState === 'loading'} scanStage={scanStage} />
           : <EmptyState scanState="idle" scanError="" mode="overview" combined={false} scanStage={scanStage} />
 
-  return (
-    <main className={`app-shell ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
-      <InputPanel
+  const scanningContent = activeTab === 'tech' || visualScanState !== 'loading'
+    ? <EmptyState scanState={techScanState} scanError={techScanError} mode="tech" combined={visualScanState === 'loading'} scanStage={scanStage} />
+    : <EmptyState scanState={visualScanState} scanError={visualScanError} mode="visual" combined={techScanState === 'loading'} scanStage={scanStage} />
+
+  if (isIdleStartView) {
+    return (
+      <QaStartScreen
         figmaError={figmaError}
         figmaUrl={figmaUrl}
         inputError={inputError}
-        isCollapsed={isSidebarCollapsed}
         isScanning={isScanning}
+        isWebUrlReady={isWebUrlReady}
         techScanOptions={techScanOptions}
         url={url}
         onFigmaUrlChange={(value) => {
           setFigmaUrl(value)
           if (figmaError) setFigmaError('')
         }}
+        onOpenHistory={() => setActiveTab('history')}
         onStartScan={handleStartScan}
         onTechScanOptionsChange={setTechScanOptions}
-        onToggleCollapsed={() => setIsSidebarCollapsed((value) => !value)}
         onUrlChange={(value) => {
           setUrl(value)
           if (inputError) setInputError('')
         }}
       />
+    )
+  }
 
-      <section className="workspace" aria-live="polite">
+  if (isScanning) {
+    return (
+      <main className="scanning-screen" aria-live="polite">
+        {scanningContent}
+      </main>
+    )
+  }
+
+  return (
+    <div className="result-shell">
+      <header className="result-topbar">
         <WorkspaceTabs
           activeTab={activeTab}
           disabledTabs={{ visual: !isVisualTabEnabled, tech: !isTechTabEnabled }}
           onTabChange={handleTabChange}
         />
+      </header>
 
-        <div className={`workspace-content ${isEmptyWorkspaceView ? 'is-empty' : ''}`}>
+      <main className="result-content" aria-live="polite">
+        <div className={`workspace-content ${isEmptyResultView ? 'is-empty' : ''}`}>
           {workspaceContent}
         </div>
-      </section>
-    </main>
+      </main>
+    </div>
   )
 }
 

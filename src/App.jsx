@@ -3,7 +3,7 @@ import './App.css'
 import { createResultSummary } from './utils/report'
 import { deleteHistoryItem, loadHistoryItems, saveHistoryItem } from './utils/history'
 import { buildAiReviewPayloadFromSession, sanitizeAiReviewResponse } from './utils/aiReview'
-import { isValidHttpUrl } from './utils/scanSession'
+import { confirmWebUrlInput, createPublicWebUrlState, createWebUrlInputState, isValidHttpUrl } from './utils/scanSession'
 import { countIssueCards, createCompactVisualResult, createVisualIssueCards, createVisualSummary } from './utils/visualQa'
 import { createTechQaViewModel } from './utils/techQa'
 import { createDefaultTechScanOptions, normalizeStoredTechScanOptions, normalizeTechScanOptions } from '../shared/techScanOptions.js'
@@ -23,6 +23,8 @@ function App() {
   const [techScanState, setTechScanState] = useState('idle')
   const [activeTab, setActiveTab] = useState('overview')
   const [inputError, setInputError] = useState('')
+  const [hasWebUrlBlurred, setHasWebUrlBlurred] = useState(false)
+  const [isWebUrlConfirmed, setIsWebUrlConfirmed] = useState(false)
   const [figmaError, setFigmaError] = useState('')
   const [visualScanError, setVisualScanError] = useState('')
   const [techScanError, setTechScanError] = useState('')
@@ -34,7 +36,9 @@ function App() {
   const [techScanOptions, setTechScanOptions] = useState(() => createDefaultTechScanOptions())
 
   const isScanning = visualScanState === 'loading' || techScanState === 'loading' || aiReviewState === 'loading'
-  const isWebUrlReady = isValidHttpUrl(url.trim())
+  const webUrlState = createWebUrlInputState(url, { isConfirmed: isWebUrlConfirmed })
+  const isWebUrlReady = webUrlState.isConfirmed
+  const canStartWithWebUrl = webUrlState.isSyntacticallyValid
   const isVisualTabEnabled = Boolean(visualResult) || visualScanState === 'loading' || visualScanState === 'success' || visualScanState === 'error'
   const isTechTabEnabled = Boolean(techResult) || techScanState === 'loading' || techScanState === 'success' || techScanState === 'error'
   const isIdleStartView = !isScanning && activeTab === 'overview' && !visualResult && !techResult && visualScanState === 'idle' && techScanState === 'idle'
@@ -47,8 +51,16 @@ function App() {
   }
 
   const handleStartScan = async () => {
-    const webUrl = url.trim()
+    const startWebUrlState = createPublicWebUrlState(url)
+    const webUrl = startWebUrlState.normalizedUrl
     const frameUrl = figmaUrl.trim()
+
+    if (startWebUrlState.isValid) {
+      setIsWebUrlConfirmed(true)
+      if (webUrl !== url.trim()) setUrl(webUrl)
+    } else {
+      setIsWebUrlConfirmed(false)
+    }
 
     setVisualScanError('')
     setTechScanError('')
@@ -61,8 +73,9 @@ function App() {
     setScanStage('idle')
     setSelectedHistoryId('')
 
-    if (!isValidHttpUrl(webUrl)) {
+    if (!startWebUrlState.isValid || !isValidHttpUrl(webUrl)) {
       setInputError('http:// 또는 https://로 시작하는 Web URL을 입력해 주세요.')
+      setHasWebUrlBlurred(true)
       setTechScanState('idle')
       setVisualScanState('idle')
       setScanStage('idle')
@@ -196,6 +209,25 @@ function App() {
     setActiveTab('overview')
   }
 
+  const handleUrlBlur = () => {
+    confirmWebUrl()
+  }
+
+  const handleUrlConfirm = () => {
+    confirmWebUrl()
+  }
+
+  const confirmWebUrl = () => {
+    setHasWebUrlBlurred(true)
+    const nextState = confirmWebUrlInput(url)
+    setIsWebUrlConfirmed(nextState.isConfirmed)
+    if (nextState.isConfirmed) {
+      if (nextState.inputValue !== url.trim()) setUrl(nextState.inputValue)
+      setInputError('')
+    }
+    return nextState
+  }
+
   const handleDeleteHistory = (id) => {
     const nextItems = deleteHistoryItem(id)
     setHistoryItems(nextItems)
@@ -240,7 +272,8 @@ function App() {
       <QaStartScreen
         figmaError={figmaError}
         figmaUrl={figmaUrl}
-        inputError={inputError}
+        inputError={inputError || (hasWebUrlBlurred && url.trim() && !isWebUrlReady ? '공개 Web URL 형식을 확인해 주세요.' : '')}
+        canStartScan={canStartWithWebUrl}
         isScanning={isScanning}
         isWebUrlReady={isWebUrlReady}
         techScanOptions={techScanOptions}
@@ -252,8 +285,12 @@ function App() {
         onOpenHistory={() => setActiveTab('history')}
         onStartScan={handleStartScan}
         onTechScanOptionsChange={setTechScanOptions}
+        onUrlBlur={handleUrlBlur}
+        onUrlConfirm={handleUrlConfirm}
         onUrlChange={(value) => {
           setUrl(value)
+          setIsWebUrlConfirmed(false)
+          setHasWebUrlBlurred(false)
           if (inputError) setInputError('')
         }}
       />

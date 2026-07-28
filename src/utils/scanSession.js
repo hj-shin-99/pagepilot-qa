@@ -1,23 +1,104 @@
+export function createPublicWebUrlState(value) {
+  const rawValue = String(value || '')
+  const trimmedValue = rawValue.trim()
+  const normalizedCandidate = createNormalizedWebUrlCandidate(trimmedValue)
+  const isValid = isValidWebUrlCandidate(normalizedCandidate)
+
+  return {
+    rawValue,
+    normalizedCandidate,
+    normalizedUrl: isValid ? normalizedCandidate : '',
+    isValid,
+  }
+}
+
 export function isValidHttpUrl(value) {
+  return isValidWebUrl(value)
+}
+
+export function isValidWebUrl(value) {
+  const normalizedCandidate = createNormalizedWebUrlCandidate(String(value || '').trim())
+  return isValidWebUrlCandidate(normalizedCandidate)
+}
+
+export function normalizeWebUrlInput(value) {
+  const state = createPublicWebUrlState(value)
+  return state.isValid ? state.normalizedUrl : state.rawValue.trim()
+}
+
+export function createWebUrlInputState(value, { isConfirmed = false } = {}) {
+  const state = createPublicWebUrlState(value)
+  return {
+    ...state,
+    isSyntacticallyValid: state.isValid,
+    isConfirmed: Boolean(isConfirmed && state.isValid),
+  }
+}
+
+export function confirmWebUrlInput(value) {
+  const state = createPublicWebUrlState(value)
+  return {
+    ...state,
+    inputValue: state.isValid ? state.normalizedUrl : state.rawValue.trim(),
+    isConfirmed: state.isValid,
+  }
+}
+
+function createNormalizedWebUrlCandidate(value) {
+  if (!value) return ''
+  if (/^[a-z][a-z\d+.-]*:/i.test(value)) return value
+  return `https://${value}`
+}
+
+function isValidWebUrlCandidate(value) {
+  if (!value || hasDuplicateHttpProtocol(value) || hasBlockedProtocol(value)) return false
+
   try {
     const url = new URL(value)
-    return url.protocol === 'http:' || url.protocol === 'https:'
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return false
+    if (url.username || url.password) return false
+    if (url.port) {
+      const port = Number(url.port)
+      if (!Number.isInteger(port) || port < 1 || port > 65535) return false
+    }
+    return isValidPublicHostname(url.hostname)
   } catch {
     return false
   }
 }
 
+function hasBlockedProtocol(value) {
+  return /^(?:javascript|data|file|mailto|tel):/i.test(value)
+}
+
+function isValidPublicHostname(hostname) {
+  if (!hostname || hostname.length > 253 || /\s/.test(hostname)) return false
+  if (!hostname.includes('.') || hostname.startsWith('.') || hostname.endsWith('.') || hostname.includes('..')) return false
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname)) return false
+
+  const labels = hostname.split('.')
+  const tld = labels.at(-1)
+  if (!tld || tld.length < 2 || !/^[a-z]+$/i.test(tld)) return false
+  if (labels.length === 2 && labels[0].toLowerCase() === 'www') return false
+  return labels.every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label))
+}
+
+function hasDuplicateHttpProtocol(value) {
+  return /^https?:\/\/https?:\/\//i.test(value)
+}
+
 export function isValidFigmaUrl(value) {
   try {
     const url = new URL(value)
-    return url.hostname.includes('figma.com') && (url.protocol === 'http:' || url.protocol === 'https:')
+    const hostname = url.hostname.toLowerCase()
+    return (url.protocol === 'http:' || url.protocol === 'https:') && (hostname === 'figma.com' || hostname.endsWith('.figma.com'))
   } catch {
     return false
   }
 }
 
 export async function runScanSession({ webUrl, figmaUrl, runTech, runVisual }) {
-  const targetUrl = String(webUrl || '').trim()
+  const targetUrl = normalizeWebUrlInput(webUrl)
   const frameUrl = String(figmaUrl || '').trim()
   const hasFigmaUrl = Boolean(frameUrl)
   const canRunVisual = hasFigmaUrl && isValidFigmaUrl(frameUrl)

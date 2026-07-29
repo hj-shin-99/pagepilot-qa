@@ -4,6 +4,9 @@ function EmptyState({ scanState, scanError, mode = 'visual', combined = false, s
   const isSkipped = scanState === 'skipped'
   const isTech = mode === 'tech'
   const isOverview = mode === 'overview'
+  const scanStages = isScanning ? getStages({ isTech, combined }) : []
+  const activeStageIndex = isScanning ? getActiveStageIndex({ isTech, combined, scanStage }) : 0
+  const stageRollOffset = Math.max(activeStageIndex - 1, 0)
 
   return (
     <section className={`empty-state ${isScanning ? 'is-scanning' : ''} ${isFailed ? 'is-failed' : ''}`}>
@@ -17,14 +20,23 @@ function EmptyState({ scanState, scanError, mode = 'visual', combined = false, s
         <h2>{getTitle({ isFailed, isScanning, isSkipped, isTech, isOverview, combined })}</h2>
         <p>{isFailed ? scanError : getDescription({ isTech, isSkipped, isScanning, isOverview, combined })}</p>
         {isScanning ? (
-          <ol className="scan-stage-list" aria-label="검사 진행 단계">
-            {getStages({ isTech, combined }).map((stage, index) => (
-              <li className={`scan-stage-row ${getStageClassName(index, getActiveStageIndex({ isTech, combined, scanStage }))}`} key={stage}>
-                <span className="scan-stage-dot" aria-hidden="true" />
-                <span className="scan-stage-text">{stage}</span>
-              </li>
-            ))}
-          </ol>
+          <>
+            <p className="scan-stage-current-sr">현재 단계: {scanStages[activeStageIndex]}</p>
+            <div className="scan-stage-viewport" aria-hidden="true">
+              <ol
+                className="scan-stage-list"
+                aria-label="검사 진행 단계"
+                style={{ '--active-stage-index': activeStageIndex, '--stage-roll-offset': stageRollOffset }}
+              >
+                {scanStages.map((stage, index) => (
+                  <li className={`scan-stage-row ${getStageClassName(index, activeStageIndex)}`} key={stage}>
+                    <span className="scan-stage-dot" aria-hidden="true" />
+                    <span className="scan-stage-text">{stage}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </>
         ) : null}
       </div>
     </section>

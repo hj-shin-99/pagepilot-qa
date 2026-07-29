@@ -8393,6 +8393,252 @@
   }
 }
 
+/* Modern AI loading screen. Progress logic stays in React; this only changes presentation. */
+.scanning-screen {
+  --scan-mint: #43c4ad;
+  --scan-mint-hover: #39b79f;
+  --scan-mint-active: #2fa891;
+  --scan-text: #18272d;
+  --scan-muted: #718087;
+  display: grid;
+  min-height: 100dvh;
+  place-items: center;
+  padding: 24px;
+  color: var(--scan-text);
+  background-color: #f7faf9;
+  background-image:
+    radial-gradient(ellipse 118% 58% at 50% 100%, rgba(75, 210, 188, 0.3) 0%, rgba(99, 220, 202, 0.23) 34%, rgba(124, 218, 224, 0.16) 54%, rgba(247, 250, 249, 0) 78%),
+    radial-gradient(ellipse 72% 42% at 50% 48%, rgba(100, 214, 194, 0.13) 0%, rgba(247, 250, 249, 0) 68%),
+    radial-gradient(ellipse 48% 38% at 84% 78%, rgba(190, 218, 226, 0.1) 0%, rgba(247, 250, 249, 0) 72%);
+  font-family: Pretendard, Inter, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+}
+
+.scanning-screen > .empty-state {
+  display: grid;
+  width: min(100%, 1040px);
+  min-height: 0;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.scanning-screen > .empty-state > div {
+  display: grid;
+  width: 100%;
+  justify-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.scanning-screen .state-indicator,
+.scanning-screen .empty-state.is-scanning > div::after {
+  display: none;
+  content: none;
+}
+
+.scanning-screen .state-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.scanning-screen .empty-state h2 {
+  max-width: 980px;
+  margin: 0;
+  color: var(--scan-text);
+  font-size: clamp(30px, 2.5vw, 42px);
+  font-weight: 610;
+  line-height: 1.25;
+  letter-spacing: -0.042em;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.scanning-screen .empty-state p {
+  max-width: 520px;
+  margin: 18px 0 0;
+  color: var(--scan-muted);
+  font-size: clamp(14px, 1.8vw, 16px);
+  font-weight: 460;
+  line-height: 1.65;
+  text-align: center;
+}
+
+.scanning-screen .scan-stage-current-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.scanning-screen .scan-stage-viewport {
+  --scan-stage-row-height: 52px;
+  --scan-stage-row-gap: 8px;
+  --scan-stage-step: 60px;
+  display: block;
+  position: relative;
+  width: min(100%, 680px);
+  height: 252px;
+  margin: 38px auto 0;
+  overflow: hidden;
+  border: 0;
+  padding: 10px 18px;
+  background: transparent;
+  box-sizing: border-box;
+  mask-image: linear-gradient(180deg, transparent 0%, #000 12%, #000 88%, transparent 100%);
+}
+
+.scanning-screen .scan-stage-list,
+.scanning-screen .empty-state .scan-stage-list.scan-stage-list {
+  display: flex;
+  position: relative;
+  width: 100%;
+  flex-direction: column;
+  gap: var(--scan-stage-row-gap);
+  margin: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  list-style: none;
+  transform: translateY(calc(var(--stage-roll-offset, 0) * -1 * var(--scan-stage-step)));
+  transition: transform 760ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.scanning-screen .scan-stage-list > .scan-stage-row,
+.scanning-screen .empty-state .scan-stage-list.scan-stage-list > .scan-stage-row,
+.scanning-screen .empty-state .scan-stage-list.scan-stage-list > li {
+  display: grid;
+  position: relative;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 16px;
+  width: 100%;
+  height: var(--scan-stage-row-height);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  color: var(--scan-muted);
+  font-size: clamp(16px, 2.2vw, 19px);
+  font-weight: 560;
+  line-height: 1.35;
+  text-align: left;
+  white-space: normal;
+  opacity: 0.48;
+  pointer-events: none;
+  transition: opacity 480ms ease, color 420ms ease, font-weight 420ms ease;
+}
+
+.scanning-screen .scan-stage-list > .scan-stage-row.is-active,
+.scanning-screen .empty-state .scan-stage-list.scan-stage-list > .scan-stage-row.is-active,
+.scanning-screen .empty-state .scan-stage-list.scan-stage-list > li.is-active {
+  color: #1f3d38;
+  opacity: 1;
+  font-weight: 620;
+}
+
+.scanning-screen .scan-stage-list > .scan-stage-row.is-complete,
+.scanning-screen .empty-state .scan-stage-list.scan-stage-list > .scan-stage-row.is-complete,
+.scanning-screen .empty-state .scan-stage-list.scan-stage-list > li.is-complete {
+  color: #5f827b;
+  opacity: 0.62;
+}
+
+.scanning-screen .scan-stage-dot,
+.scanning-screen .scan-stage-list .scan-stage-dot,
+.scanning-screen .empty-state .scan-stage-list.scan-stage-list .scan-stage-dot {
+  display: grid;
+  position: relative;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1.5px solid rgba(113, 133, 143, 0.42);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.42);
+  box-shadow: none;
+}
+
+.scanning-screen .scan-stage-dot::before {
+  content: '';
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(113, 133, 143, 0.52);
+}
+
+.scanning-screen .is-active .scan-stage-dot {
+  border-color: var(--scan-mint);
+  background: rgba(255, 255, 255, 0.58);
+  box-shadow: 0 0 0 6px rgba(67, 196, 173, 0.12);
+  animation: scanCurrentPulse 1800ms ease-in-out infinite;
+}
+
+.scanning-screen .is-active .scan-stage-dot::before {
+  background: var(--scan-mint);
+}
+
+.scanning-screen .is-complete .scan-stage-dot {
+  border-color: var(--scan-mint);
+  background: var(--scan-mint);
+}
+
+.scanning-screen .is-complete .scan-stage-dot::before {
+  content: '✓';
+  width: auto;
+  height: auto;
+  color: #ffffff;
+  background: transparent;
+  font-size: 15px;
+  font-weight: 780;
+  line-height: 1;
+}
+
+.scanning-screen .scan-stage-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@keyframes scanCurrentPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 5px rgba(67, 196, 173, 0.1);
+  }
+  50% {
+    box-shadow: 0 0 0 9px rgba(67, 196, 173, 0.16);
+  }
+}
+
+@media (max-width: 760px) {
+  .scanning-screen {
+    padding: 22px 18px;
+  }
+
+  .scanning-screen .empty-state h2 {
+    white-space: normal;
+  }
+
+  .scanning-screen .scan-stage-viewport {
+    width: min(100%, 340px);
+    height: 252px;
+    margin-top: 30px;
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .start-input,
   .start-progressive,
@@ -8403,10 +8649,17 @@
   .start-screen .tech-scan-options-trigger,
   .start-history-button,
   .tech-scan-options-backdrop,
-  .tech-scan-options-dialog {
+  .tech-scan-options-dialog,
+  .scanning-screen .scan-stage-list > .scan-stage-row,
+  .scanning-screen .scan-stage-dot {
     animation: none;
     transition: none;
     filter: none;
     transform: none;
+  }
+
+  .scanning-screen .scan-stage-list,
+  .scanning-screen .empty-state .scan-stage-list.scan-stage-list {
+    transition: none;
   }
 }

@@ -26,8 +26,8 @@ function TechScanOptions({ isScanning, techScanOptions, onTechScanOptionsChange 
   const selectedCount = TECH_SCAN_OPTION_KEYS.filter((key) => techScanOptions[key] === true).length
   const draftAllSelected = areAllTechScanOptionsSelected(draftOptions)
   const selectionLabel = selectedCount === 0
-    ? '주요 검사만 적용'
-    : `주요 검사 + ${selectedCount}개 Tech QA 적용 중`
+    ? '추가 Tech QA 선택 옵션 없음'
+    : `${selectedCount}개 Tech QA 선택 옵션 적용 중`
 
   useEffect(() => {
     if (!isTechOptionsOpen && shouldRestoreFocusRef.current) {
@@ -115,21 +115,31 @@ function TechScanOptions({ isScanning, techScanOptions, onTechScanOptionsChange 
 
   return (
     <div className="tech-scan-options" aria-label="Tech QA 옵션">
-      <button
-        ref={triggerRef}
-        className="tech-scan-options-trigger"
-        type="button"
-        disabled={isScanning}
-        aria-haspopup="dialog"
-        aria-expanded={isTechOptionsOpen}
-        aria-controls="tech-scan-options-dialog"
-        onClick={openTechOptions}
-      >
-        <span className="tech-scan-options-summary-copy">
-          <span className="tech-scan-options-status">{selectionLabel}</span>
-          <span className="tech-scan-options-action">옵션 변경</span>
+      <div className="tech-scan-options-summary-copy">
+        <span className="tech-scan-options-status tech-scan-options-primary">
+          <span className="tech-scan-options-status-check" aria-hidden="true">✓</span>
+          <span>주요 검사</span>
         </span>
-      </button>
+
+        <span className="tech-scan-options-secondary-row">
+          <span className="tech-scan-options-status-check" aria-hidden="true">✓</span>
+          <button
+            ref={triggerRef}
+            className="tech-scan-options-trigger"
+            type="button"
+            disabled={isScanning}
+            aria-haspopup="dialog"
+            aria-expanded={isTechOptionsOpen}
+            aria-controls="tech-scan-options-dialog"
+            onClick={openTechOptions}
+          >
+            <span className="tech-scan-options-link">
+              <span>{selectionLabel}</span>
+              <span className="tech-scan-options-chevron" aria-hidden="true" />
+            </span>
+          </button>
+        </span>
+      </div>
 
       {isTechOptionsOpen ? createPortal((
         <div className="tech-scan-options-backdrop" onMouseDown={handleBackdropMouseDown}>
@@ -147,31 +157,15 @@ function TechScanOptions({ isScanning, techScanOptions, onTechScanOptionsChange 
             <span className="tech-scan-options-sheet-handle" aria-hidden="true" />
             <header className="tech-scan-options-dialog-header">
               <div>
-                <h2 id={titleId}>Tech QA 옵션</h2>
+                <h2 id={titleId}>Tech QA 선택 옵션</h2>
                 <p id={descriptionId}>필요한 검사 항목을 선택하세요</p>
               </div>
-              <button className="tech-scan-options-close-button" type="button" onClick={closeTechOptions} aria-label="Tech QA 옵션 닫기">
+              <button className="tech-scan-options-close-button" type="button" onClick={closeTechOptions} aria-label="Tech QA 선택 옵션 닫기">
                 닫기
               </button>
             </header>
 
             <div className="tech-scan-options-body">
-              <section className="tech-scan-option-group tech-scan-option-basic-card">
-                <label className="tech-scan-option-row is-disabled" htmlFor="tech-scan-option-basic">
-                  <input
-                    id="tech-scan-option-basic"
-                    type="checkbox"
-                    checked
-                    disabled
-                    readOnly
-                  />
-                  <span className="tech-scan-option-basic-copy">
-                    <strong>주요 검사</strong>
-                    <span>항상 실행됨</span>
-                  </span>
-                </label>
-              </section>
-
               <label className="tech-scan-option-row tech-scan-option-toggle-row" htmlFor="tech-scan-option-all">
                 <span className="tech-scan-option-toggle-title">선택 검사</span>
                 <span className="tech-scan-option-toggle-control">

@@ -1,3 +1,36 @@
+export const WEB_URL_AUTO_CONFIRM_DELAY_MS = 800
+
+export function createDebouncedWebUrlConfirmScheduler({
+  delayMs = WEB_URL_AUTO_CONFIRM_DELAY_MS,
+  setTimeoutFn = setTimeout,
+  clearTimeoutFn = clearTimeout,
+  onConfirm,
+} = {}) {
+  let timeoutId = null
+
+  const cancel = () => {
+    if (timeoutId === null) return
+    clearTimeoutFn(timeoutId)
+    timeoutId = null
+  }
+
+  const schedule = (value) => {
+    cancel()
+    timeoutId = setTimeoutFn(() => {
+      timeoutId = null
+      onConfirm?.(confirmWebUrlInput(value))
+    }, delayMs)
+  }
+
+  return {
+    cancel,
+    schedule,
+    get hasPending() {
+      return timeoutId !== null
+    },
+  }
+}
+
 export function createPublicWebUrlState(value) {
   const rawValue = String(value || '')
   const trimmedValue = rawValue.trim()

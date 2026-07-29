@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import './App.css'
 import { createResultSummary } from './utils/report'
 import { deleteHistoryItem, loadHistoryItems, saveHistoryItem } from './utils/history'
 import { buildAiReviewPayloadFromSession, sanitizeAiReviewResponse } from './utils/aiReview'
-import { confirmWebUrlInput, createPublicWebUrlState, createWebUrlInputState, isValidHttpUrl } from './utils/scanSession'
+import { confirmWebUrlInput, createDebouncedWebUrlConfirmScheduler, createPublicWebUrlState, createWebUrlInputState, isValidHttpUrl } from './utils/scanSession'
 import { countIssueCards, createCompactVisualResult, createVisualIssueCards, createVisualSummary } from './utils/visualQa'
 import { createTechQaViewModel } from './utils/techQa'
 import { createDefaultTechScanOptions, normalizeStoredTechScanOptions, normalizeTechScanOptions } from '../shared/techScanOptions.js'
@@ -43,6 +43,26 @@ function App() {
   const isTechTabEnabled = Boolean(techResult) || techScanState === 'loading' || techScanState === 'success' || techScanState === 'error'
   const isIdleStartView = !isScanning && activeTab === 'overview' && !visualResult && !techResult && visualScanState === 'idle' && techScanState === 'idle'
   const isEmptyResultView = activeTab !== 'history' && ((activeTab === 'tech' && !techResult) || (activeTab === 'visual' && !visualResult) || activeTab === 'overview')
+
+  useEffect(() => {
+    if (isScanning || isWebUrlConfirmed || !url.trim()) return undefined
+
+    const scheduler = createDebouncedWebUrlConfirmScheduler({
+      setTimeoutFn: window.setTimeout,
+      clearTimeoutFn: window.clearTimeout,
+      onConfirm: (nextState) => {
+        if (!nextState.isConfirmed) {
+          setIsWebUrlConfirmed(false)
+          return
+        }
+        setInputError('')
+        setIsWebUrlConfirmed(true)
+        setUrl((currentUrl) => currentUrl.trim() === nextState.rawValue.trim() ? nextState.inputValue : currentUrl)
+      },
+    })
+    scheduler.schedule(url)
+    return scheduler.cancel
+  }, [isScanning, isWebUrlConfirmed, url])
 
   const handleTabChange = (tabId) => {
     if (tabId === 'visual' && !isVisualTabEnabled) return

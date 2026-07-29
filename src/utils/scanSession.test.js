@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { confirmWebUrlInput, createPublicWebUrlState, createWebUrlInputState, isValidFigmaUrl, isValidHttpUrl, isValidWebUrl, normalizeWebUrlInput, runScanSession } from './scanSession.js'
+import { WEB_URL_AUTO_CONFIRM_DELAY_MS, confirmWebUrlInput, createDebouncedWebUrlConfirmScheduler, createPublicWebUrlState, createWebUrlInputState, isValidFigmaUrl, isValidHttpUrl, isValidWebUrl, normalizeWebUrlInput, runScanSession } from './scanSession.js'
 
 const REQUIRED_INVALID_WEB_URLS = Object.freeze([
   'www.n',
@@ -128,6 +128,99 @@ test('confirms web URL input only when it can normalize to a public URL', () => 
   assert.equal(invalidState.isConfirmed, false)
   assert.equal(invalidState.normalizedUrl, '')
   assert.equal(invalidState.inputValue, 'www.n')
+})
+
+test('auto-confirm scheduler confirms valid URL after debounce with normalized value', () => {
+  const timer = createFakeTimer()
+  const confirmations = []
+  const scheduler = createDebouncedWebUrlConfirmScheduler({
+    setTimeoutFn: timer.setTimeoutFn,
+    clearTimeoutFn: timer.clearTimeoutFn,
+    onConfirm: (state) => confirmations.push(state),
+  })
+
+  scheduler.schedule('naver.com')
+  timer.tick(WEB_URL_AUTO_CONFIRM_DELAY_MS - 1)
+  assert.equal(confirmations.length, 0)
+  assert.equal(scheduler.hasPending, true)
+
+  timer.tick(1)
+  assert.equal(confirmations.length, 1)
+  assert.equal(confirmations[0].isConfirmed, true)
+  assert.equal(confirmations[0].inputValue, 'https://naver.com')
+  assert.equal(scheduler.hasPending, false)
+})
+
+test('auto-confirm scheduler keeps the web URL debounce at 800ms', () => {
+  const scheduledDelays = []
+  const scheduler = createDebouncedWebUrlConfirmScheduler({
+    setTimeoutFn: (callback, delay) => {
+      scheduledDelays.push(delay)
+      return callback
+    },
+    clearTimeoutFn: () => {},
+    onConfirm: () => {},
+  })
+
+  assert.equal(WEB_URL_AUTO_CONFIRM_DELAY_MS, 800)
+  scheduler.schedule('example.com')
+  assert.deepEqual(scheduledDelays, [800])
+})
+
+test('auto-confirm scheduler cancels previous debounce when typing continues', () => {
+  const timer = createFakeTimer()
+  const confirmations = []
+  const scheduler = createDebouncedWebUrlConfirmScheduler({
+    setTimeoutFn: timer.setTimeoutFn,
+    clearTimeoutFn: timer.clearTimeoutFn,
+    onConfirm: (state) => confirmations.push(state),
+  })
+
+  scheduler.schedule('www.na')
+  timer.tick(400)
+  scheduler.schedule('www.naver.com')
+  timer.tick(WEB_URL_AUTO_CONFIRM_DELAY_MS - 1)
+  assert.equal(confirmations.length, 0)
+
+  timer.tick(1)
+  assert.equal(confirmations.length, 1)
+  assert.equal(confirmations[0].isConfirmed, true)
+  assert.equal(confirmations[0].inputValue, 'https://www.naver.com')
+})
+
+test('auto-confirm scheduler does not confirm incomplete URLs after debounce', () => {
+  const timer = createFakeTimer()
+  const confirmations = []
+  const scheduler = createDebouncedWebUrlConfirmScheduler({
+    setTimeoutFn: timer.setTimeoutFn,
+    clearTimeoutFn: timer.clearTimeoutFn,
+    onConfirm: (state) => confirmations.push(state),
+  })
+
+  for (const value of ['www.n', 'https://www.bm', 'naver', 'example.']) {
+    scheduler.schedule(value)
+    timer.tick(WEB_URL_AUTO_CONFIRM_DELAY_MS)
+    const state = confirmations.at(-1)
+    assert.equal(state.isConfirmed, false, value)
+    assert.equal(state.inputValue, value, value)
+  }
+})
+
+test('auto-confirm scheduler cancel prevents pending confirmation', () => {
+  const timer = createFakeTimer()
+  const confirmations = []
+  const scheduler = createDebouncedWebUrlConfirmScheduler({
+    setTimeoutFn: timer.setTimeoutFn,
+    clearTimeoutFn: timer.clearTimeoutFn,
+    onConfirm: (state) => confirmations.push(state),
+  })
+
+  scheduler.schedule('example.com')
+  assert.equal(scheduler.hasPending, true)
+  scheduler.cancel()
+  assert.equal(scheduler.hasPending, false)
+  timer.tick(WEB_URL_AUTO_CONFIRM_DELAY_MS)
+  assert.equal(confirmations.length, 0)
 })
 
 test('validates figma URLs by exact figma.com host only', () => {
@@ -258,6 +351,38 @@ test('invalid figma URL does not block tech scan', async () => {
   assert.equal(session.visual.status, 'error')
   assert.equal(session.figmaError, 'Figma Frame URL 형식을 확인해 주세요.')
 })
+
+function createFakeTimer() {
+  let now = 0
+  let nextId = 1
+  const timers = new Map()
+
+  const setTimeoutFn = (callback, delay) => {
+    const id = nextId
+    nextId += 1
+    timers.set(id, { callback, runAt: now + delay })
+    return id
+  }
+
+  const clearTimeoutFn = (id) => {
+    timers.delete(id)
+  }
+
+  const tick = (duration) => {
+    now += duration
+    while (true) {
+      const dueTimer = Array.from(timers.entries())
+        .filter(([, timer]) => timer.runAt <= now)
+        .sort(([, left], [, right]) => left.runAt - right.runAt)[0]
+      if (!dueTimer) return
+      const [id, timer] = dueTimer
+      timers.delete(id)
+      timer.callback()
+    }
+  }
+
+  return { clearTimeoutFn, setTimeoutFn, tick }
+}
 
 test('invalid web URL calls no API', async () => {
   const calls = { tech: 0, visual: 0 }

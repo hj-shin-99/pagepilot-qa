@@ -65,7 +65,6 @@ function QaStartScreen({
     <div className="start-screen">
       <header className="start-header" aria-label="PagePilot QA">
         <span className="start-brand">
-          <span className="start-brand-symbol" aria-hidden="true" />
           <strong>PagePilot QA</strong>
           <span className="start-version">v0.6.0</span>
         </span>

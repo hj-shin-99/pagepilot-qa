@@ -160,14 +160,13 @@ function TechScanOptions({ isScanning, techScanOptions, onTechScanOptionsChange 
                 <h2 id={titleId}>Tech QA 선택 옵션</h2>
                 <p id={descriptionId}>필요한 검사 항목을 선택하세요</p>
               </div>
-              <button className="tech-scan-options-close-button" type="button" onClick={closeTechOptions} aria-label="Tech QA 선택 옵션 닫기">
-                닫기
+              <button className="tech-scan-options-close-button" type="button" onClick={closeTechOptions} aria-label="닫기" title="닫기">
+                <span aria-hidden="true">×</span>
               </button>
             </header>
 
             <div className="tech-scan-options-body">
               <label className="tech-scan-option-row tech-scan-option-toggle-row" htmlFor="tech-scan-option-all">
-                <span className="tech-scan-option-toggle-title">선택 검사</span>
                 <span className="tech-scan-option-toggle-control">
                   <input
                     id="tech-scan-option-all"
@@ -224,7 +223,6 @@ function TechScanOptions({ isScanning, techScanOptions, onTechScanOptionsChange 
             </div>
 
             <footer className="tech-scan-options-dialog-footer">
-              <button className="tech-scan-options-cancel-button" type="button" onClick={closeTechOptions}>취소</button>
               <button className="tech-scan-options-apply-button" type="button" onClick={applyTechOptions}>적용</button>
             </footer>
           </section>

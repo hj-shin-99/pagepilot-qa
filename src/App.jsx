@@ -225,6 +225,10 @@ function App() {
   const resetToNewScan = () => {
     if (isScanning) return
     clearResultState()
+    setUrl('')
+    setFigmaUrl('')
+    setIsWebUrlConfirmed(false)
+    setHasWebUrlBlurred(false)
     setSelectedHistoryId('')
     setActiveTab('overview')
   }
@@ -311,6 +315,12 @@ function App() {
           setUrl(value)
           setIsWebUrlConfirmed(false)
           setHasWebUrlBlurred(false)
+          if (!value.trim()) {
+            setFigmaUrl('')
+            setFigmaError('')
+            setInputError('')
+            return
+          }
           if (inputError) setInputError('')
         }}
       />

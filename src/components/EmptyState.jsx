@@ -249,8 +249,8 @@ function usePrefersReducedMotion() {
 
 function getTitle({ isFailed, isScanning, isSkipped, isTech, isOverview, combined }) {
   if (isFailed) return '검사 요청을 완료하지 못했습니다.'
-  if (isScanning && combined) return 'Web 페이지와 Figma 시안을 분석하고 있습니다.'
-  if (isScanning) return 'Web 페이지를 분석하고 있습니다.'
+  if (isScanning && combined) return 'Web 페이지와 Figma 시안을 비교하고 있습니다.'
+  if (isScanning) return 'Web 페이지를 점검하고 있습니다.'
   if (isSkipped) return 'Figma URL을 입력하면 Visual QA를 함께 실행합니다.'
   if (isOverview) return 'PagePilot QA'
   return isTech ? 'Tech QA' : 'Visual QA'
@@ -260,10 +260,10 @@ function getDescription({ isTech, isSkipped, isScanning, isOverview, combined })
   if (isOverview) return <>Web URL만 입력하면 Tech QA를 실행합니다.<br />Figma URL을 함께 입력하면 Visual QA도 같이 실행합니다.</>
   if (isSkipped) return '왼쪽 입력 영역에 Figma Frame URL을 추가하고 검사 시작을 누르면 Visual QA도 실행됩니다.'
   if (!isScanning) return isTech ? 'Web URL을 입력하고 검사를 시작하세요. 페이지 접속 상태와 기술 항목을 검사합니다.' : 'Web URL과 Figma URL을 입력하세요. Figma 시안과 Web 페이지를 비교합니다.'
-  if (combined) return 'Visual QA와 Tech QA를 함께 검사하고 결과를 정리하고 있습니다.'
+  if (combined) return '기술 품질과 디자인 차이를 함께 확인합니다.'
   return isTech
-    ? 'Tech QA 항목을 검사하고 있습니다.'
-    : 'Figma와 Web을 수집해 canonical Visual QA 결과를 생성합니다.'
+    ? '기술 품질과 주요 기능을 순차적으로 확인합니다.'
+    : '기술 품질과 디자인 차이를 함께 확인합니다.'
 }
 
 export default EmptyState

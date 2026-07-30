@@ -16,19 +16,19 @@ import {
 test('builds detailed tech stages instead of one macro status', () => {
   assert.deepEqual(getScanningStages({ isTech: true, combined: false }), [
     'Web 페이지 정보를 수집하고 있습니다.',
-    '페이지 구조와 주요 기능을 검사하고 있습니다.',
-    '선택한 Tech QA 항목을 분석하고 있습니다.',
-    '최종 QA 결과를 정리하고 있습니다.',
+    '페이지 구조를 확인하고 있습니다.',
+    '선택한 Tech QA 항목을 점검하고 있습니다.',
+    '검사 결과를 준비하고 있습니다.',
   ])
 })
 
 test('builds detailed combined stages with actual ai-review and finalizing slots', () => {
   assert.deepEqual(getScanningStages({ isTech: false, combined: true }), [
-    'Web 페이지와 검사 데이터를 수집하고 있습니다.',
-    '시안 정보와 Web 데이터를 비교하고 있습니다.',
-    '구조와 콘텐츠의 차이를 검증하고 있습니다.',
-    'AI가 확인된 차이를 최종 검토하고 있습니다.',
-    '최종 QA 결과를 정리하고 있습니다.',
+    'Web 페이지와 시안 정보를 수집하고 있습니다.',
+    '레이아웃과 콘텐츠를 비교하고 있습니다.',
+    '선택한 Tech QA 항목을 점검하고 있습니다.',
+    'AI가 차이점을 분석하고 있습니다.',
+    '검사 결과를 준비하고 있습니다.',
   ])
 })
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import './App.css'
 import { createResultSummary } from './utils/report'
 import { deleteHistoryItem, loadHistoryItems, saveHistoryItem } from './utils/history'
@@ -7,6 +7,7 @@ import { confirmWebUrlInput, createDebouncedWebUrlConfirmScheduler, createPublic
 import { countIssueCards, createCompactVisualResult, createVisualIssueCards, createVisualSummary } from './utils/visualQa'
 import { createTechQaViewModel } from './utils/techQa'
 import { createDefaultTechScanOptions, normalizeStoredTechScanOptions, normalizeTechScanOptions } from '../shared/techScanOptions.js'
+import { getScanningResultReadyTransitionMs, SCAN_RESULT_READY_TRANSITION_MS } from './utils/scanningStages'
 import EmptyState from './components/EmptyState'
 import HistoryPanel from './components/HistoryPanel'
 import QaStartScreen from './components/QaStartScreen'
@@ -34,6 +35,7 @@ function App() {
   const [historyItems, setHistoryItems] = useState(() => loadHistoryItems())
   const [selectedHistoryId, setSelectedHistoryId] = useState('')
   const [techScanOptions, setTechScanOptions] = useState(() => createDefaultTechScanOptions())
+  const minimumScanningTimerRef = useRef(null)
 
   const isScanning = visualScanState === 'loading' || techScanState === 'loading' || aiReviewState === 'loading'
   const webUrlState = createWebUrlInputState(url, { isConfirmed: isWebUrlConfirmed })
@@ -63,6 +65,10 @@ function App() {
     scheduler.schedule(url)
     return scheduler.cancel
   }, [isScanning, isWebUrlConfirmed, url])
+
+  useEffect(() => () => {
+    if (minimumScanningTimerRef.current !== null) window.clearTimeout(minimumScanningTimerRef.current)
+  }, [])
 
   const handleTabChange = (tabId) => {
     if (tabId === 'visual' && !isVisualTabEnabled) return
@@ -145,6 +151,12 @@ function App() {
     }
 
     setScanStage('finalizing')
+    await waitForResultReadyTransition({
+      durationMs: getScanningResultReadyTransitionMs({ isTech: !frameUrl, combined: Boolean(frameUrl) }),
+      setTimeoutFn: window.setTimeout,
+      clearTimeoutFn: window.clearTimeout,
+      timerRef: minimumScanningTimerRef,
+    })
     applyTechSessionState(session.tech, setTechResult, setTechScanState, setTechScanError)
     applyVisualSessionState(session.visual, setVisualResult, setVisualScanState, setVisualScanError)
 
@@ -389,6 +401,22 @@ async function readJsonResponse(response) {
   } catch {
     return null
   }
+}
+
+function waitForResultReadyTransition({
+  durationMs = SCAN_RESULT_READY_TRANSITION_MS,
+  setTimeoutFn = setTimeout,
+  clearTimeoutFn = clearTimeout,
+  timerRef = null,
+} = {}) {
+  return new Promise((resolve) => {
+    if (timerRef && timerRef.current !== null) clearTimeoutFn(timerRef.current)
+    const timerId = setTimeoutFn(() => {
+      if (timerRef && timerRef.current === timerId) timerRef.current = null
+      resolve()
+    }, durationMs)
+    if (timerRef) timerRef.current = timerId
+  })
 }
 
 async function requestQaRun(webUrl, figmaUrl, scanOptions) {

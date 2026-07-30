@@ -1,12 +1,166 @@
+import { useEffect, useRef, useState } from 'react'
+import {
+  getActiveScanningStageIndex,
+  getNextDisplayedScanningStageIndex,
+  getScanningProgressValue,
+  getScanningStages,
+  getStageClassName,
+  getStageRollOffset,
+  SCAN_STAGE_TRANSITION_MS,
+} from '../utils/scanningStages'
+
 function EmptyState({ scanState, scanError, mode = 'visual', combined = false, scanStage = 'idle' }) {
   const isScanning = scanState === 'scanning' || scanState === 'loading'
   const isFailed = scanState === 'failed' || scanState === 'error'
   const isSkipped = scanState === 'skipped'
   const isTech = mode === 'tech'
   const isOverview = mode === 'overview'
-  const scanStages = isScanning ? getStages({ isTech, combined }) : []
-  const activeStageIndex = isScanning ? getActiveStageIndex({ isTech, combined, scanStage }) : 0
-  const stageRollOffset = Math.max(activeStageIndex - 1, 0)
+  const prefersReducedMotion = usePrefersReducedMotion()
+  const [displayedActiveStageIndex, setDisplayedActiveStageIndex] = useState(0)
+  const [stageTransitionTick, setStageTransitionTick] = useState(0)
+  const [displayedProgressValue, setDisplayedProgressValue] = useState(0)
+  const stageTransitionTimerRef = useRef(null)
+  const stageStepAnimationFrameRef = useRef(null)
+  const progressAnimationFrameRef = useRef(null)
+  const hasStartedProgressRef = useRef(false)
+  const scanStages = isScanning ? getScanningStages({ isTech, combined }) : []
+  const actualActiveStageIndex = isScanning ? getActiveScanningStageIndex({ isTech, combined, scanStage }) : 0
+  const displayedScanStage = displayedActiveStageIndex >= actualActiveStageIndex ? scanStage : 'catching-up'
+  const stageRollOffset = getStageRollOffset(displayedActiveStageIndex)
+  const progressTargetValue = isScanning ? getScanningProgressValue({
+    activeStageIndex: displayedActiveStageIndex,
+    stagesLength: scanStages.length,
+    scanStage: displayedScanStage,
+  }) : 0
+  const currentStatusText = isScanning ? scanStages[actualActiveStageIndex] : ''
+  const stageRows = isScanning ? createStageRows(scanStages, displayedActiveStageIndex) : []
+
+  useEffect(() => () => {
+    if (stageTransitionTimerRef.current !== null) window.clearTimeout(stageTransitionTimerRef.current)
+    if (stageStepAnimationFrameRef.current !== null) window.cancelAnimationFrame(stageStepAnimationFrameRef.current)
+    if (progressAnimationFrameRef.current !== null) window.cancelAnimationFrame(progressAnimationFrameRef.current)
+  }, [])
+
+  useEffect(() => {
+    if (!isScanning) {
+      if (stageTransitionTimerRef.current !== null) {
+        window.clearTimeout(stageTransitionTimerRef.current)
+        stageTransitionTimerRef.current = null
+      }
+      if (stageStepAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(stageStepAnimationFrameRef.current)
+        stageStepAnimationFrameRef.current = null
+      }
+      return undefined
+    }
+
+    if (prefersReducedMotion) {
+      if (stageTransitionTimerRef.current !== null) {
+        window.clearTimeout(stageTransitionTimerRef.current)
+        stageTransitionTimerRef.current = null
+      }
+      if (stageStepAnimationFrameRef.current === null) {
+        stageStepAnimationFrameRef.current = window.requestAnimationFrame(() => {
+          stageStepAnimationFrameRef.current = null
+          setDisplayedActiveStageIndex(actualActiveStageIndex)
+        })
+      }
+      return () => {
+        if (stageStepAnimationFrameRef.current !== null) {
+          window.cancelAnimationFrame(stageStepAnimationFrameRef.current)
+          stageStepAnimationFrameRef.current = null
+        }
+      }
+    }
+
+    if (displayedActiveStageIndex > actualActiveStageIndex) {
+      if (stageTransitionTimerRef.current !== null) {
+        window.clearTimeout(stageTransitionTimerRef.current)
+        stageTransitionTimerRef.current = null
+      }
+      if (stageStepAnimationFrameRef.current === null) {
+        stageStepAnimationFrameRef.current = window.requestAnimationFrame(() => {
+          stageStepAnimationFrameRef.current = null
+          setDisplayedActiveStageIndex(actualActiveStageIndex)
+        })
+      }
+      return () => {
+        if (stageStepAnimationFrameRef.current !== null) {
+          window.cancelAnimationFrame(stageStepAnimationFrameRef.current)
+          stageStepAnimationFrameRef.current = null
+        }
+      }
+    }
+
+    if (stageTransitionTimerRef.current !== null || stageStepAnimationFrameRef.current !== null || displayedActiveStageIndex >= actualActiveStageIndex) return undefined
+
+    stageStepAnimationFrameRef.current = window.requestAnimationFrame(() => {
+      stageStepAnimationFrameRef.current = null
+      setDisplayedActiveStageIndex((currentDisplayedStageIndex) => getNextDisplayedScanningStageIndex({
+        displayedActiveStageIndex: currentDisplayedStageIndex,
+        actualActiveStageIndex,
+      }))
+      stageTransitionTimerRef.current = window.setTimeout(() => {
+        stageTransitionTimerRef.current = null
+        setStageTransitionTick((currentTick) => currentTick + 1)
+      }, SCAN_STAGE_TRANSITION_MS)
+    })
+
+    return () => {
+      if (stageStepAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(stageStepAnimationFrameRef.current)
+        stageStepAnimationFrameRef.current = null
+      }
+    }
+  }, [actualActiveStageIndex, displayedActiveStageIndex, isScanning, prefersReducedMotion, stageTransitionTick])
+
+  useEffect(() => {
+    if (!isScanning) {
+      hasStartedProgressRef.current = false
+      if (progressAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(progressAnimationFrameRef.current)
+        progressAnimationFrameRef.current = null
+      }
+      return undefined
+    }
+
+    if (!hasStartedProgressRef.current) {
+      hasStartedProgressRef.current = true
+
+      if (typeof window === 'undefined' || !window.requestAnimationFrame) {
+        return undefined
+      }
+
+      progressAnimationFrameRef.current = window.requestAnimationFrame(() => {
+        progressAnimationFrameRef.current = null
+        setDisplayedProgressValue((currentProgress) => Math.max(currentProgress, progressTargetValue))
+      })
+      return () => {
+        if (progressAnimationFrameRef.current !== null) {
+          window.cancelAnimationFrame(progressAnimationFrameRef.current)
+          progressAnimationFrameRef.current = null
+        }
+      }
+    }
+
+    if (progressAnimationFrameRef.current !== null) {
+      window.cancelAnimationFrame(progressAnimationFrameRef.current)
+      progressAnimationFrameRef.current = null
+    }
+
+    if (progressAnimationFrameRef.current === null) {
+      progressAnimationFrameRef.current = window.requestAnimationFrame(() => {
+        progressAnimationFrameRef.current = null
+        setDisplayedProgressValue((currentProgress) => Math.max(currentProgress, progressTargetValue))
+      })
+    }
+    return () => {
+      if (progressAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(progressAnimationFrameRef.current)
+        progressAnimationFrameRef.current = null
+      }
+    }
+  }, [isScanning, progressTargetValue])
 
   return (
     <section className={`empty-state ${isScanning ? 'is-scanning' : ''} ${isFailed ? 'is-failed' : ''}`}>
@@ -21,26 +175,76 @@ function EmptyState({ scanState, scanError, mode = 'visual', combined = false, s
         <p>{isFailed ? scanError : getDescription({ isTech, isSkipped, isScanning, isOverview, combined })}</p>
         {isScanning ? (
           <>
-            <p className="scan-stage-current-sr">현재 단계: {scanStages[activeStageIndex]}</p>
+            <p className="scan-stage-current-sr" aria-live="polite">현재 상태: {currentStatusText}</p>
             <div className="scan-stage-viewport" aria-hidden="true">
               <ol
                 className="scan-stage-list"
-                aria-label="검사 진행 단계"
-                style={{ '--active-stage-index': activeStageIndex, '--stage-roll-offset': stageRollOffset }}
+                style={{ '--stage-roll-offset': stageRollOffset }}
               >
-                {scanStages.map((stage, index) => (
-                  <li className={`scan-stage-row ${getStageClassName(index, activeStageIndex)}`} key={stage}>
-                    <span className="scan-stage-dot" aria-hidden="true" />
-                    <span className="scan-stage-text">{stage}</span>
+                {stageRows.map((stageRow) => (
+                  <li className={stageRow.className} key={stageRow.id}>
+                    {stageRow.isPlaceholder ? null : (
+                      <span className="scan-stage-group">
+                        <span className="scan-stage-dot" aria-hidden="true" />
+                        <span className="scan-stage-text">{stageRow.text}</span>
+                      </span>
+                    )}
                   </li>
                 ))}
               </ol>
+            </div>
+            <div
+              className={`scan-stage-progress ${prefersReducedMotion ? 'is-reduced-motion' : ''}`}
+              style={{ '--scan-stage-progress': `${displayedProgressValue}%` }}
+              aria-hidden="true"
+            >
+              <span className="scan-stage-progress-track">
+                <span className="scan-stage-progress-fill" />
+              </span>
             </div>
           </>
         ) : null}
       </div>
     </section>
   )
+}
+
+function createStageRows(scanStages, displayedActiveStageIndex) {
+  return [
+    { id: 'scan-stage-placeholder-before', className: 'scan-stage-row is-placeholder', isPlaceholder: true, text: '' },
+    ...scanStages.map((stage, index) => ({
+      id: `scan-stage-${index}`,
+      className: `scan-stage-row ${getStageClassName(index, displayedActiveStageIndex)}`,
+      isPlaceholder: false,
+      text: stage,
+    })),
+    { id: 'scan-stage-placeholder-after', className: 'scan-stage-row is-placeholder', isPlaceholder: true, text: '' },
+  ]
+}
+
+function usePrefersReducedMotion() {
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return false
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  })
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return undefined
+
+    const query = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const updatePreference = () => setPrefersReducedMotion(query.matches)
+    updatePreference()
+
+    if (query.addEventListener) {
+      query.addEventListener('change', updatePreference)
+      return () => query.removeEventListener('change', updatePreference)
+    }
+
+    query.addListener(updatePreference)
+    return () => query.removeListener(updatePreference)
+  }, [])
+
+  return prefersReducedMotion
 }
 
 function getTitle({ isFailed, isScanning, isSkipped, isTech, isOverview, combined }) {
@@ -60,44 +264,6 @@ function getDescription({ isTech, isSkipped, isScanning, isOverview, combined })
   return isTech
     ? 'Tech QA 항목을 검사하고 있습니다.'
     : 'Figma와 Web을 수집해 canonical Visual QA 결과를 생성합니다.'
-}
-
-function getStages({ isTech, combined }) {
-  if (combined) return [
-    'Web 페이지와 검사 데이터를 수집하고 있습니다.',
-    '시안 정보와 Web 데이터를 비교하고 있습니다.',
-    '구조와 콘텐츠의 차이를 검증하고 있습니다.',
-    'AI가 확인된 차이를 최종 검토하고 있습니다.',
-    '최종 QA 결과를 정리하고 있습니다.',
-  ]
-  return isTech
-    ? [
-      'Web 페이지 정보를 수집하고 있습니다.',
-      '페이지 구조와 주요 기능을 검사하고 있습니다.',
-      '선택한 Tech QA 항목을 분석하고 있습니다.',
-      '최종 QA 결과를 정리하고 있습니다.',
-    ]
-    : [
-      '시안 화면을 준비하고 있습니다.',
-      'Web 화면을 수집하고 있습니다.',
-      '비교 기준 데이터를 생성하고 있습니다.',
-    ]
-}
-
-function getActiveStageIndex({ isTech, combined, scanStage }) {
-  if (combined) {
-    if (scanStage === 'ai-review') return 3
-    if (scanStage === 'finalizing') return 4
-    return 0
-  }
-  if (scanStage === 'finalizing') return isTech ? 3 : 2
-  return 0
-}
-
-function getStageClassName(index, activeIndex) {
-  if (index === activeIndex) return 'is-active'
-  if (index < activeIndex) return 'is-complete'
-  return ''
 }
 
 export default EmptyState

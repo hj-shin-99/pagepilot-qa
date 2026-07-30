@@ -31,7 +31,8 @@ import { auditSeoReadiness } from './techSeoAudit.js'
 import { classifyConsoleMessages } from './techConsoleAudit.js'
 import { runOptionalTechAudits, runUrlAudit } from './techScanOrchestration.js'
 import { buildVisualQaPayloadArtifacts } from './visualQaPayload.js'
-import { buildQaRunResponse, createQaRunHandler, isWebScanNavigationFailure } from './qaRunRoute.js'
+import { buildQaRunResponse, createQaRunHandler, createQaRunStreamHandler, isWebScanNavigationFailure } from './qaRunRoute.js'
+import { emitQaProgress } from './qaProgress.js'
 import { buildVisualPayloadFromScanResult, createVisualPayloadHandler } from './visualPayloadRoute.js'
 import { createVisualVisionService } from './visualVisionService.js'
 import { createWebVisualAnalysis } from './webVisualAnalysis.js'
@@ -122,6 +123,7 @@ const qaRunDependencies = {
 }
 
 const qaRunHandler = createQaRunHandler(qaRunDependencies)
+const qaRunStreamHandler = createQaRunStreamHandler(qaRunDependencies)
 
 const aiReviewPayloadHandler = createAiReviewPayloadHandler({
   isHttpUrl,
@@ -350,6 +352,8 @@ app.post('/api/figma/render', async (req, res) => {
 app.post('/api/visual/payload', visualPayloadHandler)
 
 app.post('/api/qa/run', qaRunHandler)
+
+app.post('/api/qa/run-stream', qaRunStreamHandler)
 
 app.post('/api/ai-review/payload', aiReviewPayloadHandler)
 
@@ -1951,19 +1955,22 @@ async function scanUrl(targetUrl, options = {}) {
       await page.waitForLoadState('networkidle', { timeout: 5000 }).catch((error) => {
         loadWarning = `networkidle 대기 제한: ${sanitizePlaywrightMessage(error.message)}`
       })
-    } catch (error) {
-      mainError = error instanceof Error ? error.message : '페이지 접속 실패'
-    }
+      } catch (error) {
+        mainError = error instanceof Error ? error.message : '페이지 접속 실패'
+      }
+      emitQaProgress(scanOptions.onProgress, 'web_collect')
 
-    pageTitle = await safeTitle(page)
-    domSnapshot = await safeDomSnapshot(page, targetUrl, {
+      pageTitle = await safeTitle(page)
+      domSnapshot = await safeDomSnapshot(page, targetUrl, {
       includeMarkupData: scanOptions.techScanOptions.markup,
       includeClickableCandidates: scanOptions.techScanOptions.click,
       includePerformanceData: scanOptions.techScanOptions.performance,
-      includeSeoData: scanOptions.techScanOptions.seo,
-    })
-    webScreenshot = await safeWebScreenshot(page)
-    if (scanOptions.includeVisualPayloadData) {
+        includeSeoData: scanOptions.techScanOptions.seo,
+      })
+      emitQaProgress(scanOptions.onProgress, 'page_structure')
+      if (scanOptions.techScanOptions.markup) emitQaProgress(scanOptions.onProgress, 'tech_markup')
+      webScreenshot = await safeWebScreenshot(page)
+      if (scanOptions.includeVisualPayloadData) {
       visualPayloadData = await safeVisualPayloadData(page, scanOptions.instrumentation)
     }
     mobileResult = scanOptions.includeMobile ? await scanMobile(browser, targetUrl, scanOptions.instrumentation) : createMobileFallback()
@@ -1987,6 +1994,7 @@ async function scanUrl(targetUrl, options = {}) {
       auditImages,
       auditPerformanceResources,
       auditSeoReadiness,
+      onProgress: scanOptions.onProgress,
     }))
   } finally {
     await browser.close()
@@ -2015,6 +2023,7 @@ async function scanUrl(targetUrl, options = {}) {
     checkLinkStatuses,
     mergeTechLinkAuditResults,
   })
+  if (scanOptions.techScanOptions.url) emitQaProgress(scanOptions.onProgress, 'tech_url')
   const linkAuditResult = urlAuditResult.linkAuditResult
   const linkStatuses = urlAuditResult.links
   const images = mergeImageFailures(snapshot.images, failedImageRequests)
@@ -2113,6 +2122,7 @@ function normalizeScanUrlOptions(options = {}) {
     includeMobile: options.includeMobile !== false,
     techScanOptions: normalizeTechScanOptions(options.techScanOptions),
     instrumentation: options.instrumentation && typeof options.instrumentation === 'object' ? options.instrumentation : null,
+    onProgress: typeof options.onProgress === 'function' ? options.onProgress : null,
   }
 }
 

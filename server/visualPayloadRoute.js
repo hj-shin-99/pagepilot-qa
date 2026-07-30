@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { emitQaProgress } from './qaProgress.js'
 
 export function createVisualPayloadHandler(dependencies) {
   return async function visualPayloadHandler(req, res) {
@@ -89,6 +90,7 @@ export async function buildVisualPayloadFromScanResult(input, dependencies) {
     includeFlatNodes: true,
   })
   timings.figmaNodeLoadMs = now() - figmaNodeStartedAt
+  emitQaProgress(input.onProgress, 'visual_figma_node')
 
   const figmaRenderStartedAt = now()
   const figmaRender = await dependencies.getFigmaRenderedImage({
@@ -100,6 +102,7 @@ export async function buildVisualPayloadFromScanResult(input, dependencies) {
     scale: 2,
   })
   timings.figmaRenderLoadMs = now() - figmaRenderStartedAt
+  emitQaProgress(input.onProgress, 'visual_figma_render')
 
   const webAnalysis = dependencies.createWebVisualAnalysis(scanResult)
 
@@ -125,6 +128,7 @@ export async function buildVisualPayloadFromScanResult(input, dependencies) {
     webOnlyPreview: textCompareResponse.webOnlyPreview,
   }
   timings.textCompareMs = now() - textCompareStartedAt
+  emitQaProgress(input.onProgress, 'visual_compare')
 
   const payloadStartedAt = now()
   const artifacts = dependencies.buildVisualQaPayloadArtifacts({
@@ -140,6 +144,7 @@ export async function buildVisualPayloadFromScanResult(input, dependencies) {
     collectDebugArtifacts: debug,
   })
   timings.payloadBuildMs = now() - payloadStartedAt
+  emitQaProgress(input.onProgress, 'visual_payload')
   timings.totalMs = now() - totalStartedAt
 
   const response = {

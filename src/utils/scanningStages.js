@@ -32,10 +32,14 @@ export function getActiveScanningStageIndex({ isTech, combined, scanStage }) {
   if (combined) {
     if (scanStage === 'ai-review') return 3
     if (scanStage === 'finalizing') return 4
+    if (scanStage === 'visual-compare') return 1
+    if (scanStage === 'tech-audit') return 2
     return 0
   }
 
   if (scanStage === 'finalizing') return isTech ? 3 : 2
+  if (scanStage === 'page-structure') return isTech ? 1 : 0
+  if (scanStage === 'tech-audit') return isTech ? 2 : 0
   return 0
 }
 
@@ -65,6 +69,30 @@ export function getScanningProgressValue({ activeStageIndex, stagesLength, scanS
     : Math.min(Math.max(activeStageIndex, 0), lastNonFinalStageIndex) / lastNonFinalStageIndex
 
   return Math.min(Math.round(10 + normalizedStagePosition * 84), 94)
+}
+
+export function getScanningProgressValueFromEvent(progressEvent) {
+  const completedUnits = Number(progressEvent?.completedUnits)
+  const totalUnits = Number(progressEvent?.totalUnits)
+  if (!Number.isFinite(completedUnits) || !Number.isFinite(totalUnits) || totalUnits <= 0) return null
+  return Math.min(Math.max(Math.round((completedUnits / totalUnits) * 94), 0), 94)
+}
+
+export function getScanStageFromQaProgressEvent(progressEvent, { combined } = {}) {
+  switch (progressEvent?.stage) {
+    case 'page_structure':
+      return combined ? 'qa-run' : 'page-structure'
+    case 'tech_audit':
+      return 'tech-audit'
+    case 'visual_compare':
+      return 'visual-compare'
+    case 'result_prepare':
+      return 'finalizing'
+    case 'web_collect':
+    case 'visual_collect':
+    default:
+      return combined ? 'qa-run' : 'tech-run'
+  }
 }
 
 export function getScanningResultReadyTransitionMs({ isTech, combined }) {

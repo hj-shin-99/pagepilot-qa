@@ -1,4 +1,5 @@
 import { normalizeTechScanOptions } from '../shared/techScanOptions.js'
+import { emitQaProgress } from './qaProgress.js'
 
 export function createSkippedClickAuditResult() {
   return { items: [], meta: {} }
@@ -55,6 +56,7 @@ export async function runOptionalTechAudits({
   auditImages,
   auditPerformanceResources,
   auditSeoReadiness,
+  onProgress,
 }) {
   const normalizedOptions = normalizeTechScanOptions(techScanOptions)
   const safeSnapshot = snapshot && typeof snapshot === 'object' ? snapshot : { clickableCandidates: [], interactionTargets: [], links: [] }
@@ -76,6 +78,7 @@ export async function runOptionalTechAudits({
       items: [],
       meta: { candidateCount: safeSnapshot.clickableCandidates?.length || 0, safeClickAttemptCount: 0, safeClickLimit: 0, error: error instanceof Error ? error.message : 'click audit failed' },
     }))
+    emitQaProgress(onProgress, 'tech_click')
   }
 
   if (normalizedOptions.landing) {
@@ -94,6 +97,7 @@ export async function runOptionalTechAudits({
         error: error instanceof Error ? error.message : 'landing audit failed',
       },
     }))
+    emitQaProgress(onProgress, 'tech_landing')
   }
 
   if (normalizedOptions.form) {
@@ -110,6 +114,7 @@ export async function runOptionalTechAudits({
         error: error instanceof Error ? error.message : 'form audit failed',
       },
     }))
+    emitQaProgress(onProgress, 'tech_form')
   }
 
   if (normalizedOptions.hover) {
@@ -126,6 +131,7 @@ export async function runOptionalTechAudits({
         error: error instanceof Error ? error.message : 'hover audit failed',
       },
     }))
+    emitQaProgress(onProgress, 'tech_hover')
   }
 
   if (normalizedOptions.modal) {
@@ -143,6 +149,7 @@ export async function runOptionalTechAudits({
         error: error instanceof Error ? error.message : 'modal audit failed',
       },
     }))
+    emitQaProgress(onProgress, 'tech_modal')
   }
 
   if (normalizedOptions.scroll) {
@@ -159,6 +166,7 @@ export async function runOptionalTechAudits({
         error: error instanceof Error ? error.message : 'scroll audit failed',
       },
     }))
+    emitQaProgress(onProgress, 'tech_scroll')
   }
 
   if (normalizedOptions.responsive) {
@@ -175,6 +183,7 @@ export async function runOptionalTechAudits({
         error: error instanceof Error ? error.message : 'responsive audit failed',
       },
     }))
+    emitQaProgress(onProgress, 'tech_responsive')
   }
 
   if (normalizedOptions.download) {
@@ -191,6 +200,7 @@ export async function runOptionalTechAudits({
         error: error instanceof Error ? error.message : 'download audit failed',
       },
     }))
+    emitQaProgress(onProgress, 'tech_download')
   }
 
   if (normalizedOptions.cookie) {
@@ -207,6 +217,7 @@ export async function runOptionalTechAudits({
         error: error instanceof Error ? error.message : 'cookie audit failed',
       },
     }))
+    emitQaProgress(onProgress, 'tech_cookie')
   }
 
   if (normalizedOptions.image) {
@@ -223,6 +234,7 @@ export async function runOptionalTechAudits({
         error: error instanceof Error ? error.message : 'image audit failed',
       },
     }))
+    emitQaProgress(onProgress, 'tech_image')
   }
 
   if (normalizedOptions.performance && typeof auditPerformanceResources === 'function') {
@@ -241,6 +253,7 @@ export async function runOptionalTechAudits({
         error: error instanceof Error ? error.message : 'performance audit failed',
       },
       }))
+    emitQaProgress(onProgress, 'tech_performance')
   }
 
   if (normalizedOptions.seo && typeof auditSeoReadiness === 'function') {
@@ -259,6 +272,7 @@ export async function runOptionalTechAudits({
         error: error instanceof Error ? error.message : 'seo audit failed',
       },
       }))
+    emitQaProgress(onProgress, 'tech_seo')
   }
 
   return {

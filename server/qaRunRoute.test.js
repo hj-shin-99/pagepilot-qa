@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildQaRunResponse } from './qaRunRoute.js'
+import { buildQaRunResponse, createQaRunStreamHandler } from './qaRunRoute.js'
 
 function createDependencies(overrides = {}) {
   const calls = { scanUrl: 0, visual: 0, visualScanResult: null }
@@ -175,4 +175,98 @@ test('/api/qa/run builder preserves visual regression summary values from shared
   assert.equal(result.visual.result.aiHints.heroCtaGroup.web.count, 2)
   assert.equal(result.visual.result.aiHints.evidenceSummary.hero.webPrimaryMediaCount, 1)
   assert.equal(result.visual.result.aiHints.evidenceSummary.numeric.priceCount, 3)
+})
+
+test('/api/qa/run builder emits monotonic selected-unit progress without changing result shape', async () => {
+  const events = []
+  const { calls, dependencies } = createDependencies()
+  const scanOptions = {
+    url: false,
+    click: true,
+    landing: false,
+    form: false,
+    hover: false,
+    modal: false,
+    scroll: false,
+    responsive: false,
+    download: false,
+    cookie: false,
+    image: false,
+    performance: false,
+    seo: false,
+    markup: false,
+  }
+
+  dependencies.scanUrl = async (url, options) => {
+    calls.scanUrl += 1
+    calls.scanArgs = { url, options }
+    options.onProgress('web_collect')
+    options.onProgress('page_structure')
+    options.onProgress('tech_click')
+    return {
+      targetUrl: url,
+      httpStatus: 200,
+      accessible: true,
+      navigationError: '',
+      checks: [],
+      links: [],
+      images: [],
+      scanOptions: options.techScanOptions,
+    }
+  }
+
+  const result = await buildQaRunResponse({ webUrl: 'https://example.com', figmaUrl: '', scanOptions, onProgress: (event) => events.push(event) }, dependencies)
+
+  assert.equal(result.tech.status, 'success')
+  assert.deepEqual(events.map((event) => event.completedUnits), [0, 1, 2, 3, 4])
+  assert.equal(events.every((event) => event.totalUnits === 4), true)
+  assert.deepEqual(events.map((event) => event.stage), ['web_collect', 'web_collect', 'page_structure', 'tech_audit', 'result_prepare'])
+})
+
+test('/api/qa/run builder ignores progress callback failures', async () => {
+  const { dependencies } = createDependencies()
+  const result = await buildQaRunResponse({
+    webUrl: 'https://example.com',
+    figmaUrl: '',
+    onProgress() {
+      throw new Error('progress failed')
+    },
+  }, dependencies)
+
+  assert.equal(result.tech.status, 'success')
+})
+
+test('/api/qa/run-stream writes progress and final result as NDJSON', async () => {
+  const { dependencies } = createDependencies()
+  const writes = []
+  const headers = {}
+  const res = {
+    destroyed: false,
+    writableEnded: false,
+    statusCode: 0,
+    status(code) {
+      this.statusCode = code
+      return this
+    },
+    setHeader(name, value) {
+      headers[name] = value
+    },
+    flushHeaders() {},
+    write(chunk) {
+      writes.push(chunk)
+    },
+    end() {
+      this.writableEnded = true
+    },
+  }
+
+  const handler = createQaRunStreamHandler(dependencies)
+  await handler({ body: { webUrl: 'https://example.com', figmaUrl: '', scanOptions: { url: false } } }, res)
+
+  const events = writes.join('').trim().split('\n').map((line) => JSON.parse(line))
+  assert.equal(res.statusCode, 200)
+  assert.equal(headers['Content-Type'], 'application/x-ndjson; charset=utf-8')
+  assert.equal(events[0].type, 'progress')
+  assert.equal(events.at(-1).type, 'result')
+  assert.equal(events.at(-1).result.tech.status, 'success')
 })

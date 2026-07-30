@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   getActiveScanningStageIndex,
   getNextDisplayedScanningStageIndex,
+  getScanningProgressValueFromEvent,
   getScanningProgressValue,
   getScanningStages,
   getStageClassName,
@@ -9,7 +10,7 @@ import {
   SCAN_STAGE_TRANSITION_MS,
 } from '../utils/scanningStages'
 
-function EmptyState({ scanState, scanError, mode = 'visual', combined = false, scanStage = 'idle' }) {
+function EmptyState({ scanState, scanError, mode = 'visual', combined = false, scanStage = 'idle', scanProgressEvent = null }) {
   const isScanning = scanState === 'scanning' || scanState === 'loading'
   const isFailed = scanState === 'failed' || scanState === 'error'
   const isSkipped = scanState === 'skipped'
@@ -27,11 +28,12 @@ function EmptyState({ scanState, scanError, mode = 'visual', combined = false, s
   const actualActiveStageIndex = isScanning ? getActiveScanningStageIndex({ isTech, combined, scanStage }) : 0
   const displayedScanStage = displayedActiveStageIndex >= actualActiveStageIndex ? scanStage : 'catching-up'
   const stageRollOffset = getStageRollOffset(displayedActiveStageIndex)
-  const progressTargetValue = isScanning ? getScanningProgressValue({
+  const eventProgressValue = isScanning ? getScanningProgressValueFromEvent(scanProgressEvent) : null
+  const progressTargetValue = eventProgressValue ?? (isScanning ? getScanningProgressValue({
     activeStageIndex: displayedActiveStageIndex,
     stagesLength: scanStages.length,
     scanStage: displayedScanStage,
-  }) : 0
+  }) : 0)
   const currentStatusText = isScanning ? scanStages[actualActiveStageIndex] : ''
   const stageRows = isScanning ? createStageRows(scanStages, displayedActiveStageIndex) : []
 

@@ -3,7 +3,9 @@ import assert from 'node:assert/strict'
 import {
   getActiveScanningStageIndex,
   getNextDisplayedScanningStageIndex,
+  getScanStageFromQaProgressEvent,
   getScanningResultReadyTransitionMs,
+  getScanningProgressValueFromEvent,
   getScanningProgressValue,
   getScanningStages,
   getStageClassName,
@@ -32,10 +34,14 @@ test('builds detailed combined stages with actual ai-review and finalizing slots
   ])
 })
 
-test('maps active stage index only from frontend scanStage signals', () => {
+test('maps active stage index from frontend and server scanStage signals', () => {
   assert.equal(getActiveScanningStageIndex({ isTech: true, combined: false, scanStage: 'tech-run' }), 0)
+  assert.equal(getActiveScanningStageIndex({ isTech: true, combined: false, scanStage: 'page-structure' }), 1)
+  assert.equal(getActiveScanningStageIndex({ isTech: true, combined: false, scanStage: 'tech-audit' }), 2)
   assert.equal(getActiveScanningStageIndex({ isTech: true, combined: false, scanStage: 'finalizing' }), 3)
   assert.equal(getActiveScanningStageIndex({ isTech: false, combined: true, scanStage: 'qa-run' }), 0)
+  assert.equal(getActiveScanningStageIndex({ isTech: false, combined: true, scanStage: 'visual-compare' }), 1)
+  assert.equal(getActiveScanningStageIndex({ isTech: false, combined: true, scanStage: 'tech-audit' }), 2)
   assert.equal(getActiveScanningStageIndex({ isTech: false, combined: true, scanStage: 'ai-review' }), 3)
   assert.equal(getActiveScanningStageIndex({ isTech: false, combined: true, scanStage: 'finalizing' }), 4)
 })
@@ -66,6 +72,21 @@ test('calculates determinate progress from active stage and caps below finalizin
   assert.equal(getScanningProgressValue({ activeStageIndex: 3, stagesLength: 5, scanStage: 'ai-review' }), 94)
   assert.equal(getScanningProgressValue({ activeStageIndex: 4, stagesLength: 5, scanStage: 'qa-run' }), 94)
   assert.equal(getScanningProgressValue({ activeStageIndex: 4, stagesLength: 5, scanStage: 'finalizing' }), 100)
+})
+
+test('calculates determinate progress from server progress events and caps below final result', () => {
+  assert.equal(getScanningProgressValueFromEvent({ completedUnits: 0, totalUnits: 8 }), 0)
+  assert.equal(getScanningProgressValueFromEvent({ completedUnits: 4, totalUnits: 8 }), 47)
+  assert.equal(getScanningProgressValueFromEvent({ completedUnits: 8, totalUnits: 8 }), 94)
+  assert.equal(getScanningProgressValueFromEvent({ completedUnits: 1, totalUnits: 0 }), null)
+})
+
+test('maps server progress stages to existing frontend scan stage slots', () => {
+  assert.equal(getScanStageFromQaProgressEvent({ stage: 'web_collect' }, { combined: false }), 'tech-run')
+  assert.equal(getScanStageFromQaProgressEvent({ stage: 'page_structure' }, { combined: false }), 'page-structure')
+  assert.equal(getScanStageFromQaProgressEvent({ stage: 'tech_audit' }, { combined: false }), 'tech-audit')
+  assert.equal(getScanStageFromQaProgressEvent({ stage: 'visual_compare' }, { combined: true }), 'visual-compare')
+  assert.equal(getScanStageFromQaProgressEvent({ stage: 'result_prepare' }, { combined: true }), 'finalizing')
 })
 
 test('keeps fast result handoff long enough for one-step displayed catch-up plus final hold', () => {

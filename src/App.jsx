@@ -7,7 +7,8 @@ import { confirmWebUrlInput, createDebouncedWebUrlConfirmScheduler, createPublic
 import { countIssueCards, createCompactVisualResult, createVisualIssueCards, createVisualSummary } from './utils/visualQa'
 import { createTechQaViewModel } from './utils/techQa'
 import { createDefaultTechScanOptions, normalizeStoredTechScanOptions, normalizeTechScanOptions } from '../shared/techScanOptions.js'
-import { getScanningResultReadyTransitionMs, SCAN_RESULT_READY_TRANSITION_MS } from './utils/scanningStages'
+import { getScanStageFromQaProgressEvent, getScanningResultReadyTransitionMs, SCAN_RESULT_READY_TRANSITION_MS } from './utils/scanningStages'
+import { requestQaRunStream } from './utils/qaRunStream'
 import EmptyState from './components/EmptyState'
 import HistoryPanel from './components/HistoryPanel'
 import QaStartScreen from './components/QaStartScreen'
@@ -32,6 +33,7 @@ function App() {
   const [aiReview, setAiReview] = useState(null)
   const [aiReviewState, setAiReviewState] = useState('idle')
   const [scanStage, setScanStage] = useState('idle')
+  const [scanProgressEvent, setScanProgressEvent] = useState(null)
   const [historyItems, setHistoryItems] = useState(() => loadHistoryItems())
   const [selectedHistoryId, setSelectedHistoryId] = useState('')
   const [techScanOptions, setTechScanOptions] = useState(() => createDefaultTechScanOptions())
@@ -97,6 +99,7 @@ function App() {
     setAiReview(null)
     setAiReviewState('idle')
     setScanStage('idle')
+    setScanProgressEvent(null)
     setSelectedHistoryId('')
 
     if (!startWebUrlState.isValid || !isValidHttpUrl(webUrl)) {
@@ -116,7 +119,10 @@ function App() {
 
     let session
     try {
-      session = await requestQaRun(webUrl, frameUrl, techScanOptions)
+      session = await requestQaRun(webUrl, frameUrl, techScanOptions, (progressEvent) => {
+        setScanProgressEvent(progressEvent)
+        setScanStage(getScanStageFromQaProgressEvent(progressEvent, { combined: Boolean(frameUrl) }))
+      })
     } catch (error) {
       const message = error instanceof Error ? error.message : '통합 검사 요청에 실패했습니다.'
       session = {
@@ -179,6 +185,7 @@ function App() {
     setAiReview(null)
     setAiReviewState('idle')
     setScanStage('idle')
+    setScanProgressEvent(null)
 
     if (item.type === 'combined') {
       setVisualResult(item.visual?.compactResult || null)
@@ -232,6 +239,7 @@ function App() {
     setAiReview(null)
     setAiReviewState('idle')
     setScanStage('idle')
+    setScanProgressEvent(null)
   }
 
   const resetToNewScan = () => {
@@ -286,7 +294,7 @@ function App() {
     ) : activeTab === 'tech'
       ? (techResult
         ? <TechQaPanel result={techResult} />
-        : <EmptyState scanState={techScanState} scanError={techScanError} mode="tech" combined={visualScanState === 'loading'} scanStage={scanStage} />)
+        : <EmptyState scanState={techScanState} scanError={techScanError} mode="tech" combined={visualScanState === 'loading'} scanStage={scanStage} scanProgressEvent={scanProgressEvent} />)
       : activeTab === 'visual' && visualResult
         ? (
           <VisualQaPanel
@@ -296,12 +304,12 @@ function App() {
             pageTitle={techResult?.pageTitle}
           />
         ) : activeTab === 'visual'
-          ? <EmptyState scanState={visualScanState} scanError={visualScanError} mode="visual" combined={techScanState === 'loading'} scanStage={scanStage} />
-          : <EmptyState scanState="idle" scanError="" mode="overview" combined={false} scanStage={scanStage} />
+          ? <EmptyState scanState={visualScanState} scanError={visualScanError} mode="visual" combined={techScanState === 'loading'} scanStage={scanStage} scanProgressEvent={scanProgressEvent} />
+          : <EmptyState scanState="idle" scanError="" mode="overview" combined={false} scanStage={scanStage} scanProgressEvent={scanProgressEvent} />
 
   const scanningContent = activeTab === 'tech' || visualScanState !== 'loading'
-    ? <EmptyState scanState={techScanState} scanError={techScanError} mode="tech" combined={visualScanState === 'loading'} scanStage={scanStage} />
-    : <EmptyState scanState={visualScanState} scanError={visualScanError} mode="visual" combined={techScanState === 'loading'} scanStage={scanStage} />
+    ? <EmptyState scanState={techScanState} scanError={techScanError} mode="tech" combined={visualScanState === 'loading'} scanStage={scanStage} scanProgressEvent={scanProgressEvent} />
+    : <EmptyState scanState={visualScanState} scanError={visualScanError} mode="visual" combined={techScanState === 'loading'} scanStage={scanStage} scanProgressEvent={scanProgressEvent} />
 
   if (isIdleStartView) {
     return (
@@ -419,7 +427,13 @@ function waitForResultReadyTransition({
   })
 }
 
-async function requestQaRun(webUrl, figmaUrl, scanOptions) {
+async function requestQaRun(webUrl, figmaUrl, scanOptions, onProgress) {
+  try {
+    return await requestQaRunStream({ webUrl, figmaUrl, scanOptions, onProgress })
+  } catch (error) {
+    if (!error?.fallbackToJson) throw error
+  }
+
   const response = await fetch('/api/qa/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

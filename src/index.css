@@ -6,12 +6,12 @@
   --panel: #070b12;
   --panel-text: #f8fafc;
   --panel-muted: #8f9bab;
-  --accent: #1c69d4;
-  --accent-strong: #0a5bd3;
+  --accent: #43c4ad;
+  --accent-strong: #2fa891;
   --card: #ffffff;
   --surface: #f9fafb;
-  --info-bg: #f0f6ff;
-  --info-line: #cfe1ff;
+  --info-bg: #f0fdfa;
+  --info-line: #b8eee2;
   --success: #16a34a;
   --success-bg: #ecfdf3;
   --warning: #d97706;
@@ -21,7 +21,7 @@
   --danger-bg: #fef2f2;
   --danger-line: #fecaca;
   --neutral-bg: #f3f4f6;
-  --focus-line: rgba(28, 105, 212, 0.28);
+  --focus-line: rgba(35, 140, 105, 0.28);
   --subtle-line: rgba(17, 24, 39, 0.08);
   --soft-shadow: 0 1px 2px rgba(17, 24, 39, 0.06), 0 12px 32px rgba(17, 24, 39, 0.06);
   --radius-sm: 10px;

@@ -391,8 +391,10 @@ function classifyImageGroup(group = {}, responses = new Map()) {
 
 function shouldExcludeImageCandidate(candidate = {}) {
   const classText = `${candidate.className || ''} ${candidate.ancestorClassText || ''}`
+  const role = String(candidate.role || '').toLowerCase()
   if (candidate.hidden === true || candidate.ariaHidden === true || candidate.insideClosedDialog === true) return true
   if (String(candidate.display || '').toLowerCase() === 'none' || String(candidate.visibility || '').toLowerCase() === 'hidden') return true
+  if (role === 'presentation' || role === 'none') return true
   if (Number(candidate.renderedWidth || 0) <= 1 && Number(candidate.renderedHeight || 0) <= 1) return true
   if (candidate.offscreen === true && isLazyOffscreenCandidate(candidate)) return true
   if (candidate.altCategory === 'excluded-image') return true

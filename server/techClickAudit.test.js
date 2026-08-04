@@ -295,12 +295,27 @@ test('collapsed or hit-test unavailable UI control is not actual error', () => {
   assert.notEqual(item.status, 'error')
 })
 
-test('safe click timeout without explicit failure is actionable warning', () => {
+test('safe click timeout is actual error after click execution fails', () => {
   const base = classifyClickableCandidate(candidate({ tagName: 'div', role: 'button', label: 'Open panel', hasOnClick: true, actionEvidence: 'onclick' }))
   const checked = applySafeClickResult(base, { clicked: false, changed: false, error: 'Timeout 2500ms exceeded' })
 
-  assert.equal(checked.actionClassification, 'actionable-warning')
-  assert.notEqual(checked.status, 'error')
+  assert.equal(checked.actionClassification, 'actual-error')
+  assert.equal(checked.status, 'error')
+})
+
+test('phase 3A click fixtures keep UI controls out of false positive errors and preserve real failures', () => {
+  const problem = applySafeClickResult(classifyClickableCandidate(candidate({ tagName: 'button', label: 'Run action', hasOnClick: true })), { clicked: true, changed: true, consoleErrors: ['ReferenceError: brokenHandler'], interactionOutcome: 'ui-change' })
+  const review = applySafeClickResult(classifyClickableCandidate(candidate({ tagName: 'button', label: 'Track analytics', hasOnClick: true })), { clicked: true, changed: false })
+  const normal = classifyClickableCandidate(candidate({ tagName: 'a', href: '/ok', url: 'https://example.com/ok', label: 'Open page' }))
+  const excluded = classifyClickableCandidate(candidate({ tagName: 'button', role: 'button', ariaControls: 'menu', label: 'Menu' }))
+  const falsePositive = applySafeClickResult(classifyClickableCandidate(candidate({ tagName: 'a', href: '#', label: 'Open modal', hasOnClick: true })), { clicked: true, changed: true, interactionOutcome: 'modal', interactionEvidence: ['dialog/modal 노출'] })
+
+  assert.equal(problem.actionClassification, 'actual-error')
+  assert.equal(review.actionClassification, 'actionable-warning')
+  assert.equal(normal.actionClassification, 'verified-working')
+  assert.equal(excluded.actionClassification, 'ui-control-no-url-required')
+  assert.equal(falsePositive.actionClassification, 'verified-working')
+  assert.notEqual(falsePositive.status, 'error')
 })
 
 test('clickable candidate source dedupes parent descendant actions generically', () => {

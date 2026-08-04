@@ -18,7 +18,7 @@ test('responsive audit keeps healthy viewport observations as ok', () => {
   assert.equal(item.status, 'ok')
 })
 
-test('responsive audit warns on clear horizontal overflow and clipped elements', () => {
+test('responsive audit errors on clear horizontal overflow and warns on clipped elements', () => {
   const item = classifyResponsiveViewportObservation(candidate('Tablet'), {
     viewportWidth: 768,
     viewportHeight: 1024,
@@ -29,7 +29,7 @@ test('responsive audit warns on clear horizontal overflow and clipped elements',
     blankLike: false,
   })
 
-  assert.equal(item.status, 'warn')
+  assert.equal(item.status, 'error')
   assert.equal(item.issues.some((issue) => issue.includes('overflow')), true)
 })
 
@@ -75,6 +75,20 @@ test('responsive candidate filters exclude intended horizontal scroller children
   const clippedCta = classifyResponsiveViewportObservation(candidate('Mobile'), { viewportWidth: 390, viewportHeight: 844, overflowAmount: 0, clippedCount: 1, textClipCount: 0, mainVisible: true, blankLike: false })
   assert.equal(rootOverflow.status, 'warn')
   assert.equal(clippedCta.status, 'warn')
+})
+
+test('phase 3A responsive fixtures separate problem review normal excluded and no-target cases', () => {
+  const problem = classifyResponsiveViewportObservation(candidate('Mobile'), { viewportWidth: 390, viewportHeight: 844, overflowAmount: 80, clippedCount: 2, textClipCount: 0, mainVisible: true, blankLike: false })
+  const review = classifyResponsiveViewportObservation(candidate('Tablet'), { viewportWidth: 768, viewportHeight: 1024, overflowAmount: 0, clippedCount: 1, textClipCount: 0, mainVisible: true, blankLike: false })
+  const normal = classifyResponsiveViewportObservation(candidate('Desktop'), { viewportWidth: 1440, viewportHeight: 900, overflowAmount: 0, clippedCount: 0, textClipCount: 0, mainVisible: true, blankLike: false })
+  const noTarget = classifyResponsiveViewportObservation(candidate('Mobile'), { noTarget: true })
+
+  assert.equal(problem.status, 'error')
+  assert.equal(review.status, 'warn')
+  assert.equal(normal.status, 'ok')
+  assert.equal(noTarget.status, 'info')
+  assert.equal(shouldIgnoreResponsiveCandidate({ className: 'swiper-slide-duplicate', display: 'block', visibility: 'visible' }), true)
+  assert.equal(shouldFlagResponsiveTextClip({ scrollWidth: 180, clientWidth: 120, hasEllipsis: true }), false)
 })
 
 test('responsive text clipping ignores intentional ellipsis and line clamp', () => {

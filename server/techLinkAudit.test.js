@@ -66,10 +66,10 @@ test('Tech link audit classifies anchor, mailto, tel, javascript, and invalid li
 
   assert.equal(audit.requestableLinks.length, 0)
   assert.deepEqual(new Set(result.links.map((item) => item.linkType)), new Set(['anchor', 'mailto', 'tel', 'javascript', 'invalid']))
-  assert.equal(result.links.find((item) => item.linkType === 'mailto').category, 'special-scheme')
-  assert.equal(result.links.find((item) => item.linkType === 'tel').category, 'special-scheme')
+  assert.equal(result.links.find((item) => item.linkType === 'mailto').status, 'ok')
+  assert.equal(result.links.find((item) => item.linkType === 'tel').status, 'ok')
   assert.equal(result.links.find((item) => item.linkType === 'javascript').category, 'javascript-pseudo-url')
-  assert.equal(result.links.find((item) => item.linkType === 'invalid').category, 'invalid-url')
+  assert.equal(result.links.find((item) => item.linkType === 'invalid').status, 'error')
 })
 
 test('Tech link audit preserves redirect final URL and timeout as priority error', () => {
@@ -89,6 +89,28 @@ test('Tech link audit preserves redirect final URL and timeout as priority error
   assert.equal(result.links[0].category, 'timeout')
   assert.equal(result.links.find((item) => item.label === 'Redirect').finalUrl, 'https://example.com/final')
   assert.equal(result.links.find((item) => item.label === 'Redirect').redirected, true)
+})
+
+test('phase 3A URL fixtures separate problem review normal excluded and sparse-success cases', () => {
+  const audit = createTechLinkAudit([
+    anchor({ label: 'Missing', href: '/missing' }),
+    anchor({ label: 'Restricted', href: '/restricted' }),
+    anchor({ label: 'Sparse success', href: '/empty' }),
+    anchor({ label: 'Mail', href: 'mailto:hello@example.com' }),
+    button({ label: 'Open menu', ariaControls: 'menu' }),
+  ], 'https://example.com/page')
+  const checked = [
+    normalizeCheckedLinkResult(audit.requestableLinks.find((item) => item.label === 'Missing'), { statusCode: 404, finalUrl: 'https://example.com/missing' }),
+    normalizeCheckedLinkResult(audit.requestableLinks.find((item) => item.label === 'Restricted'), { statusCode: 403, finalUrl: 'https://example.com/restricted' }),
+    normalizeCheckedLinkResult(audit.requestableLinks.find((item) => item.label === 'Sparse success'), { statusCode: 200, finalUrl: 'https://example.com/empty', title: '', bodyTextLength: 5, visibleElementCount: 1 }),
+  ]
+  const result = mergeTechLinkAuditResults(audit, checked)
+
+  assert.equal(result.links.find((item) => item.label === 'Missing').status, 'error')
+  assert.equal(result.links.find((item) => item.label === 'Restricted').status, 'warn')
+  assert.equal(result.links.find((item) => item.label === 'Sparse success').category, 'sparse-success-page')
+  assert.equal(result.links.find((item) => item.label === 'Mail').status, 'ok')
+  assert.equal(result.links.find((item) => item.label === 'Open menu').category, 'url-not-required-ui-control')
 })
 
 function anchor(overrides = {}) {

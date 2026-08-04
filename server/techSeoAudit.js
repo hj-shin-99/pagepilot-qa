@@ -81,7 +81,11 @@ export function createSeoAuditMeta(items = [], context = {}) {
 
 function createSearchMetaItem(evidence = {}) {
   const issues = []
-  if (!evidence.titleText) issues.push('title이 비어 있거나 수집되지 않았습니다.')
+  let status = 'ok'
+  if (!evidence.titleText) {
+    issues.push('title이 비어 있거나 수집되지 않았습니다.')
+    status = isPublicPageEvidence(evidence) ? 'error' : 'warn'
+  }
   if (evidence.titleCount > 1) issues.push(`title 요소가 ${evidence.titleCount}개 감지되었습니다.`)
   if (evidence.titleText && (evidence.titleText.length < TITLE_WARNING_MIN || evidence.titleText.length > TITLE_WARNING_MAX)) issues.push(`title 길이 ${evidence.titleText.length}자가 검색 결과 표시 기준과 다를 수 있습니다.`)
   if (evidence.metaDescriptions.length === 0) issues.push('meta description이 없습니다.')
@@ -95,7 +99,7 @@ function createSearchMetaItem(evidence = {}) {
     auditId: 'seo-search-meta',
     label: '검색 메타',
     category: 'search-meta',
-    status: issues.length > 0 ? 'warn' : 'ok',
+    status: status === 'error' ? 'error' : issues.length > 0 ? 'warn' : 'ok',
     note: issues[0] || 'title, description, H1 구성이 전반적으로 양호합니다.',
     issues,
     owner: 'UID팀',
@@ -107,6 +111,13 @@ function createSearchMetaItem(evidence = {}) {
     h1Text: evidence.h1Texts[0] || '',
     technicalTerm: 'search-meta',
   })
+}
+
+function isPublicPageEvidence(evidence = {}) {
+  const directives = evidence.robotsMetas.flatMap((entry) => parseDirectiveTokens(entry.content)).concat(parseDirectiveTokens(evidence.xRobotsTag))
+  const blockedByRobots = hasDirective(directives, 'noindex') || hasDirective(directives, 'none')
+  if (blockedByRobots) return false
+  return evidence.metaDescriptions.length > 0 || evidence.h1Texts.length > 0
 }
 
 function createCanonicalItem(evidence = {}) {

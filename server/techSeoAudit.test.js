@@ -52,6 +52,38 @@ test('seo audit warns on missing title description and lang', async () => {
   assert.equal(result.items.find((item) => item.category === 'indexing').status, 'warn')
 })
 
+test('phase 3A SEO fixtures keep intent-dependent signals review or not applicable and only objective failures as problem', async () => {
+  const problem = await auditSeoReadiness('https://example.com', snapshot({ seoInfo: { titleText: '', titleCount: 0, metaDescriptions: ['Public page description long enough for a generic search preview.'], canonicalLinks: ['https://example.com/'], robotsMetas: [{ name: 'robots', content: 'index,follow' }], htmlLang: 'en', og: {}, twitter: {}, hreflangs: [], jsonLdScripts: [], h1Texts: ['Public H1'] } }), documentResponses(), null, apiFactory([
+    textResponse('https://example.com/robots.txt', 404, '', 'text/plain'),
+    textResponse('https://example.com/sitemap.xml', 404, '', 'application/xml'),
+  ]))
+  const review = await auditSeoReadiness('https://example.com', snapshot({ seoInfo: { titleText: 'Review page', titleCount: 1, metaDescriptions: [], canonicalLinks: ['https://canonical.example/page'], robotsMetas: [{ name: 'robots', content: 'noindex,follow' }], htmlLang: '', og: { title: ['Review page'] }, twitter: {}, hreflangs: [{ hreflang: 'bad_code', href: '' }], jsonLdScripts: [], h1Texts: ['Review page'] } }), documentResponses(), null, apiFactory([
+    textResponse('https://example.com/robots.txt', 200, 'User-agent: *\nDisallow: /', 'text/plain'),
+    textResponse('https://example.com/sitemap.xml', 404, '', 'application/xml'),
+  ]))
+  const normal = await auditSeoReadiness('https://example.com', snapshot({ seoInfo: { titleText: 'Normal page', titleCount: 1, metaDescriptions: ['Normal page description for generic search result snippets.'], canonicalLinks: ['https://example.com/'], robotsMetas: [{ name: 'robots', content: 'index,follow' }], htmlLang: 'en', og: {}, twitter: {}, hreflangs: [], jsonLdScripts: ['{"@context":"https://schema.org","@type":"WebPage"}'], h1Texts: ['Normal page'] } }), documentResponses(), null, apiFactory([
+    textResponse('https://example.com/robots.txt', 404, '', 'text/plain'),
+    textResponse('https://example.com/sitemap.xml', 404, '', 'application/xml'),
+  ]))
+
+  assert.equal(problem.items.find((item) => item.category === 'search-meta').status, 'error')
+  assert.equal(review.items.find((item) => item.category === 'indexing').status, 'warn')
+  assert.equal(review.items.find((item) => item.category === 'canonical').status, 'warn')
+  assert.equal(review.items.find((item) => item.category === 'robots-txt').status, 'warn')
+  assert.equal(review.items.find((item) => item.category === 'hreflang').status, 'warn')
+  assert.equal(normal.items.find((item) => item.category === 'structured-data').status, 'ok')
+  assert.equal(normal.items.find((item) => item.category === 'hreflang').status, 'info')
+})
+
+test('phase 3A SEO fixture keeps invalid JSON-LD as objective problem', async () => {
+  const result = await auditSeoReadiness('https://example.com', snapshot({ seoInfo: { titleText: 'Structured page', titleCount: 1, metaDescriptions: ['Structured page description for generic search result snippets.'], canonicalLinks: ['https://example.com/'], robotsMetas: [], htmlLang: 'en', og: {}, twitter: {}, hreflangs: [], jsonLdScripts: ['{invalid json'], h1Texts: ['Structured page'] } }), documentResponses(), null, apiFactory([
+    textResponse('https://example.com/robots.txt', 404, '', 'text/plain'),
+    textResponse('https://example.com/sitemap.xml', 404, '', 'application/xml'),
+  ]))
+
+  assert.equal(result.items.find((item) => item.category === 'structured-data').status, 'error')
+})
+
 test('seo audit warns on duplicate title and meta description', async () => {
   const result = await auditSeoReadiness('https://example.com', snapshot({
     seoInfo: {

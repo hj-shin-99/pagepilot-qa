@@ -261,6 +261,21 @@ export function applySafeClickResult(item, result) {
   if (!result) return item
   const outcome = result.interactionOutcome || (result.changed ? 'ui-change' : 'no-change')
   const evidence = Array.isArray(result.interactionEvidence) ? result.interactionEvidence : []
+  const firstPartyErrorCount = countFirstPartyClickErrors(result)
+  if (firstPartyErrorCount > 0) {
+    return {
+      ...item,
+      status: 'error',
+      category: 'click-runtime-error',
+      actionClassification: 'actual-error',
+      clickExecuted: result.clicked === true,
+      observableChange: result.changed === true,
+      interactionOutcome: 'error',
+      interactionEvidence: evidence.concat(`first-party runtime error ${firstPartyErrorCount}건`),
+      reason: '클릭 과정에서 first-party JavaScript error가 확인되었습니다.',
+      safeClickResult: result,
+    }
+  }
   if (result.clicked && outcome !== 'no-change') {
     return {
       ...item,
@@ -496,9 +511,16 @@ function classifySafeClickFailure(error) {
     return { outcome: 'blocked', reason: message || '클릭이 다른 요소에 가로막혔습니다.' }
   }
   if (/timeout|timed out/i.test(message)) {
-    return { outcome: 'unknown', reason: message || '클릭 제한 시간 안에 동작을 완료하지 못했습니다.' }
+    return { outcome: 'error', reason: message || '클릭 제한 시간 안에 동작을 완료하지 못했습니다.' }
   }
   return { outcome: 'error', reason: message || '클릭 중 예외가 발생했습니다.' }
+}
+
+function countFirstPartyClickErrors(result = {}) {
+  const consoleErrors = Array.isArray(result.consoleErrors) ? result.consoleErrors : []
+  const pageErrors = Array.isArray(result.pageErrors) ? result.pageErrors : []
+  const evidence = Array.isArray(result.interactionEvidence) ? result.interactionEvidence : []
+  return consoleErrors.length + pageErrors.length + evidence.filter((entry) => /first-party|page error|runtime error/i.test(String(entry || ''))).length
 }
 
 function formatInteractionReason(outcome, evidence = []) {

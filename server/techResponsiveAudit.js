@@ -1,5 +1,6 @@
 const RESPONSIVE_AUDIT_TIMEOUT_MS = 6000
 const RESPONSIVE_OVERFLOW_TOLERANCE_PX = 2
+const CLEAR_PAGE_OVERFLOW_PX = 32
 const MAX_RESPONSIVE_EVIDENCE = 6
 
 export const RESPONSIVE_VIEWPORTS = Object.freeze([
@@ -56,6 +57,9 @@ export async function auditResponsiveLayouts(browser, targetUrl, instrumentation
 export function classifyResponsiveViewportObservation(candidate = {}, observation = {}) {
   const issues = []
   let owner = 'UID팀'
+  if (observation.noTarget === true) {
+    return { ...candidate, status: 'info', category: 'no-target', note: '해당 viewport에서 검사 대상 레이아웃 요소가 확인되지 않았습니다.', issues: [], owner }
+  }
   if (String(observation.navigationError || '').trim()) {
     return { ...candidate, status: 'error', category: 'navigation-failed', note: '해당 viewport에서 페이지 접속에 실패했습니다.', issues: [String(observation.navigationError)], owner: '개발팀' }
   }
@@ -67,11 +71,13 @@ export function classifyResponsiveViewportObservation(candidate = {}, observatio
     owner = '개발팀'
     issues.push('해당 viewport에서 주요 콘텐츠가 비어 있거나 렌더링되지 않았을 수 있습니다.')
   }
-  if (Number(observation.overflowAmount || 0) > RESPONSIVE_OVERFLOW_TOLERANCE_PX) issues.push(`가로 overflow ${Math.round(Number(observation.overflowAmount || 0))}px가 감지되었습니다.`)
+  const overflowAmount = Number(observation.overflowAmount || 0)
+  const hasClearPageOverflow = overflowAmount > CLEAR_PAGE_OVERFLOW_PX
+  if (overflowAmount > RESPONSIVE_OVERFLOW_TOLERANCE_PX) issues.push(`가로 overflow ${Math.round(overflowAmount)}px가 감지되었습니다.`)
   if (Number(observation.clippedCount || 0) > 0) issues.push(`viewport 밖으로 벗어난 주요 요소 ${Number(observation.clippedCount || 0)}개가 감지되었습니다.`)
   if (Number(observation.textClipCount || 0) > 0) issues.push(`의미 있는 텍스트 잘림 후보 ${Number(observation.textClipCount || 0)}개가 감지되었습니다.`)
 
-  const status = owner === '개발팀' && issues.length > 0 && (String(observation.navigationError || '').trim() || observation.blankLike === true || observation.mainVisible === false || Number(observation.consoleErrorCount || 0) > 0 || Number(observation.pageErrorCount || 0) > 0)
+  const status = hasClearPageOverflow || owner === '개발팀' && issues.length > 0 && (String(observation.navigationError || '').trim() || observation.blankLike === true || observation.mainVisible === false || Number(observation.consoleErrorCount || 0) > 0 || Number(observation.pageErrorCount || 0) > 0)
     ? 'error'
     : issues.length > 0 ? 'warn' : 'ok'
 

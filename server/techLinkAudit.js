@@ -83,13 +83,16 @@ export function normalizeCheckedLinkResult(link = {}, response = {}) {
   const finalUrl = textOf(response.finalUrl) || link.url || ''
   const redirected = Boolean(finalUrl && link.url && normalizeRequestUrl(finalUrl) !== normalizeRequestUrl(link.url)) || statusCode >= 300 && statusCode < 400
   const finalLinkType = classifyResolvedLinkType(finalUrl, link.baseOrigin || '')
+  const sparseSuccess = isSparseSuccessfulPage(response)
+  const status = getLinkStatus(statusCode, { sparseSuccess })
+  const category = getCheckedLinkCategory({ statusCode, redirected, sparseSuccess })
   return {
     ...link,
     finalUrl,
     statusCode,
-    status: getLinkStatus(statusCode),
-    category: statusCode >= 500 ? 'http-5xx' : statusCode >= 400 ? 'http-4xx' : redirected ? 'redirect' : 'http-ok',
-    note: getLinkNote(statusCode),
+    status,
+    category,
+    note: getLinkNote(statusCode, { sparseSuccess }),
     redirected,
     finalLinkType,
     isInternal: finalLinkType === 'internal',
@@ -109,20 +112,37 @@ export function createCheckedLinkFailure(link = {}, error) {
   }
 }
 
-export function getLinkStatus(statusCode) {
+export function getLinkStatus(statusCode, options = {}) {
   if (!statusCode) return 'error'
-  if (statusCode >= 400) return 'error'
+  if (statusCode === 401 || statusCode === 403) return 'warn'
+  if (statusCode === 404 || statusCode === 410) return 'error'
+  if (statusCode >= 500) return 'error'
+  if (statusCode >= 400) return 'warn'
   if (statusCode >= 300) return 'warn'
+  if (options.sparseSuccess) return 'warn'
   return 'ok'
 }
 
-export function getLinkNote(statusCode) {
+export function getLinkNote(statusCode, options = {}) {
   if (!statusCode) return '응답 상태 확인 실패'
   if (statusCode === 404) return '404 Not Found'
+  if (statusCode === 410) return '410 Gone'
+  if (statusCode === 401 || statusCode === 403) return '인증 또는 접근 제한 응답입니다.'
   if (statusCode >= 500) return '5xx 서버 오류'
   if (statusCode >= 400) return '4xx 응답 확인 필요'
   if (statusCode >= 300) return '리다이렉트 후 응답 확인 완료'
+  if (options.sparseSuccess) return '200 응답이지만 제목 또는 본문 신호가 부족해 오류 페이지 가능성 확인이 필요합니다.'
   return '정상 응답'
+}
+
+function getCheckedLinkCategory({ statusCode, redirected = false, sparseSuccess = false } = {}) {
+  if (statusCode >= 500) return 'http-5xx'
+  if (statusCode === 404 || statusCode === 410) return 'http-4xx'
+  if (statusCode === 401 || statusCode === 403) return 'restricted'
+  if (statusCode >= 400) return 'http-4xx-review'
+  if (sparseSuccess) return 'sparse-success-page'
+  if (redirected) return 'redirect'
+  return 'http-ok'
 }
 
 function normalizeCandidate(target, order, baseUrl) {
@@ -187,10 +207,10 @@ function createClassifiedResultItem(candidate) {
     return { ...base, status: 'error', category: 'missing-navigation-url', note: '이동 목적의 클릭 요소에 URL 또는 action 근거가 없습니다.' }
   }
   if (candidate.classification === 'invalid-navigation-url') {
-    return { ...base, status: 'warn', category: 'invalid-url', note: '링크 주소 형식을 해석하지 못해 실제 이동 목적지 확인이 필요합니다.' }
+    return { ...base, status: 'error', category: 'invalid-url', note: '링크 주소 형식을 해석하지 못했습니다.' }
   }
   if (candidate.classification === 'invalid-url') {
-    return { ...base, status: 'warn', category: 'invalid-url', note: '링크 주소 형식을 해석하지 못해 확인이 필요합니다.' }
+    return { ...base, status: 'error', category: 'invalid-url', note: '링크 주소 형식을 해석하지 못했습니다.' }
   }
   if (candidate.classification === 'same-page-anchor-navigation') {
     return { ...base, status: 'warn', category: 'same-page-anchor', note: '이동 목적 CTA가 페이지 내부 anchor 또는 #로 연결되어 확인이 필요합니다.' }
@@ -208,7 +228,7 @@ function createClassifiedResultItem(candidate) {
     return { ...base, status: 'ok', category: 'url-not-required-ui-control', note: '모달, 탭, 아코디언 등 URL이 필요 없는 UI control로 분류했습니다.' }
   }
   if (candidate.classification === 'special-scheme') {
-    return { ...base, status: 'warn', category: 'special-scheme', note: '전화 또는 메일 실행 링크라 실제 HTTP 요청 없이 유형만 분류했습니다.' }
+    return { ...base, status: 'ok', category: 'special-scheme', note: '전화 또는 메일 실행 링크라 HTTP 오류로 분류하지 않았습니다.' }
   }
   if (candidate.classification === 'same-page-anchor') {
     return { ...base, status: 'ok', category: 'same-page-anchor', note: '같은 페이지 내부 이동 anchor입니다.' }
@@ -348,6 +368,18 @@ function classifyResolvedLinkType(url, baseOrigin = '') {
   } catch {
     return 'invalid'
   }
+}
+
+function isSparseSuccessfulPage(response = {}) {
+  const statusCode = Number(response.statusCode || 0)
+  if (statusCode !== 200) return false
+  const hasTitleSignal = response.title !== undefined || response.pageTitle !== undefined
+  const hasBodySignal = response.bodyTextLength !== undefined || response.visibleTextLength !== undefined || response.visibleElementCount !== undefined
+  if (!hasTitleSignal && !hasBodySignal) return false
+  const title = textOf(response.title || response.pageTitle)
+  const bodyLength = Number(response.bodyTextLength ?? response.visibleTextLength ?? 0)
+  const visibleElementCount = Number(response.visibleElementCount ?? 1)
+  return !title && bodyLength < 20 && visibleElementCount <= 1
 }
 
 function getOrigin(url) {

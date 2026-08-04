@@ -35,6 +35,20 @@ test('image audit excludes offscreen lazy image that is not yet loaded', () => {
   assert.equal(items.length, 0)
 })
 
+test('phase 3A image fixtures separate broken visible images from decorative and unsupported sizing cases', () => {
+  const problem = normalizeImageResults([candidate({ currentSrc: 'https://example.com/broken.webp' })], responseMap({ 'https://example.com/broken.webp': { statusCode: 500, contentType: 'image/webp' } }))[0]
+  const review = normalizeImageResults([candidate({ renderedWidth: 320, renderedHeight: 100, naturalWidth: 1200, naturalHeight: 800, objectFit: 'fill' })], responseMap({ 'https://example.com/hero.webp': { statusCode: 200, contentType: 'image/webp' } }))[0]
+  const normal = normalizeImageResults([candidate()], responseMap({ 'https://example.com/hero.webp': { statusCode: 200, contentType: 'image/webp' } }))[0]
+  const excluded = normalizeImageResults([candidate({ role: 'presentation' })], responseMap())
+  const falsePositive = normalizeImageResults([candidate({ sourceType: 'svg-image', currentSrc: 'https://example.com/icon.svg', src: 'https://example.com/icon.svg', naturalWidth: 0, naturalHeight: 0, renderedWidth: 160, renderedHeight: 40, objectFit: 'fill' })], responseMap({ 'https://example.com/icon.svg': { statusCode: 200, contentType: 'image/svg+xml' } }))[0]
+
+  assert.equal(problem.status, 'error')
+  assert.equal(review.status, 'warn')
+  assert.equal(normal.status, 'ok')
+  assert.equal(excluded.length, 0)
+  assert.equal(falsePositive.status, 'ok')
+})
+
 test('image audit does not overflag aspect ratio under object-fit cover', () => {
   const [item] = normalizeImageResults([candidate({ renderedWidth: 300, renderedHeight: 180, naturalWidth: 1200, naturalHeight: 1200, objectFit: 'cover' })], responseMap({ 'https://example.com/hero.webp': { statusCode: 200, contentType: 'image/webp' } }))
 

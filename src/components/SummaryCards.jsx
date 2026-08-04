@@ -1,8 +1,8 @@
 function SummaryCards({ counts, result }) {
   const metrics = [
     { label: '정상', value: counts.ok, className: 'status-ok' },
-    { label: '오류', value: counts.error, className: 'status-error' },
-    { label: '확인 필요', value: counts.warn, className: 'status-warn' },
+    { label: '문제 확인', value: counts.error, className: 'status-error' },
+    { label: '검토 필요', value: counts.warn, className: 'status-warn' },
     { label: 'HTTP 상태', value: result.httpStatus || '-', className: '' },
     { label: '수집 링크', value: result.counts.anchors, className: '' },
     { label: '버튼', value: result.counts.buttons, className: '' },

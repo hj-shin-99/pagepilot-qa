@@ -1,3 +1,5 @@
+import { getTechQaStatusLabel, normalizeTechQaDisplayText } from './techQa.js'
+
 const MARKUP_ACCESSIBILITY_PRIMARY_IDS = ['meta', 'image-alt', 'external-links']
 const MARKUP_ACCESSIBILITY_DETAIL_IDS = ['meta', 'image-alt', 'external-links', 'headings', 'duplicate-ids', 'forms', 'unlabeled-clickables']
 
@@ -61,8 +63,9 @@ function createClickDetailRows(groups = {}) {
       rowKey: rowId,
       detailTargetId: rowId,
       status,
+      statusLabel: getTechQaStatusLabel({ ...item, status }),
       title: getClickDetailTitle(item),
-      value: getClickDetailValue(item),
+      value: normalizeTechQaDisplayText(getClickDetailValue(item)),
       owner: 'UID팀',
       categoryLabel: 'UI',
     }
@@ -80,7 +83,8 @@ function createLandingDetailRows(groups = {}) {
       rowKey: rowId,
       detailTargetId: rowId,
       title: item.label || '랜딩 페이지',
-      value: formatLandingResult(item),
+      value: normalizeTechQaDisplayText(formatLandingResult(item)),
+      statusLabel: getTechQaStatusLabel(item),
       owner: getLandingOwner(item),
       categoryLabel: 'UI',
     }
@@ -100,8 +104,9 @@ function createInteractionDetailRows(groups = {}, prefix = 'tech-interaction') {
       rowKey: rowId,
       detailTargetId: rowId,
       status: getInteractionDetailStatus(item),
+      statusLabel: getTechQaStatusLabel({ ...item, status: getInteractionDetailStatus(item) }),
       title: getInteractionDetailTitle(item),
-      value: getInteractionDetailValue(item),
+      value: normalizeTechQaDisplayText(getInteractionDetailValue(item)),
       owner: item.owner || 'UID팀',
       categoryLabel: 'UI',
     }
@@ -326,17 +331,20 @@ function getClickDetailTitle(item = {}) {
 }
 
 function getClickDetailValue(item = {}) {
-  if (item.actionClassification === 'actual-error') return item.reason || item.category || '실제 클릭 오류가 확인되었습니다.'
+  if (item.actionClassification === 'actual-error') return item.reason || item.category || '실제 클릭 문제가 확인되었습니다.'
   if (item.actionClassification === 'actionable-warning') return item.reason || item.category || '자동 검사에서 동작 여부를 확정하지 못했습니다.'
-  if (item.status === 'error') return item.reason || item.message || item.category || '오류가 확인되었습니다.'
-  if (item.status === 'warn') return item.reason || item.message || item.category || '확인이 필요한 항목입니다.'
+  if (item.status === 'error') return item.reason || item.message || item.category || '문제가 확인되었습니다.'
+  if (item.status === 'warn') return item.reason || item.message || item.category || '검토가 필요한 항목입니다.'
   return item.reason || item.note || '정상으로 확인되었습니다.'
 }
 
 function formatLandingResult(item = {}) {
-  const status = item.status === 'error' || item.category === 'http-5xx' || item.category === 'http-4xx' || item.category === 'blank-screen'
-    ? '오류'
-    : item.status === 'warn' ? '확인 필요' : '정상'
+  const status = getTechQaStatusLabel({
+    ...item,
+    status: item.status === 'error' || item.category === 'http-5xx' || item.category === 'http-4xx' || item.category === 'blank-screen'
+      ? 'error'
+      : item.status === 'warn' ? 'warn' : 'ok',
+  })
   const parts = []
   parts.push(`${status}${item.statusCode ? ` · HTTP ${item.statusCode}` : ''}`)
   if (item.note) parts.push(item.note)

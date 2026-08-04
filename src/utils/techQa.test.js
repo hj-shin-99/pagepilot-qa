@@ -190,7 +190,7 @@ test('Q all normal result does not use blocking copy and has no priority items',
   assert.equal(view.issueCounts.errorElementCount, 0)
   assert.equal(view.priorityItems.length, 0)
   assert.equal(view.normalCheckItems.length, 2)
-  assert.equal(view.statusMessage, '오류 0개 · 확인 필요 0개입니다.')
+  assert.equal(view.statusMessage, '문제 확인 0개 · 검토 필요 0개입니다.')
 })
 
 test('sections keep planner SEO frontend backend separation', () => {
@@ -210,12 +210,12 @@ test('compact Tech QA summary cards use four meaningful KPI values', () => {
   const view = createTechQaViewModel(result({ links: [link(), link({ status: 'warn', category: 'same-page-anchor', href: '#' })], images: [{ status: 'ok' }], consoleMessages: [] }))
   const labels = view.summaryCards.map((card) => card.label)
 
-  assert.deepEqual(labels, ['페이지 접속', '오류', '확인 필요', '검사 완료'])
+  assert.deepEqual(labels, ['페이지 접속', '문제 확인', '검토 필요', '정상'])
   assert.equal(view.summaryCards.length, 4)
   assert.deepEqual(view.summaryCards.map((card) => card.status), ['ok', 'ok', 'warn', 'info'])
-  assert.equal(view.summaryCards.find((card) => card.label === '확인 필요').value, '1개')
-  assert.equal(view.summaryCards.find((card) => card.label === '확인 필요').detail, '1개 검사에서 발견')
-  assert.equal(view.summaryCards.find((card) => card.label === '검사 완료').value, '링크 2개 · 이미지 1개')
+  assert.equal(view.summaryCards.find((card) => card.label === '검토 필요').value, '1개')
+  assert.equal(view.summaryCards.find((card) => card.label === '검토 필요').detail, '1개 검사에서 발견')
+  assert.equal(view.summaryCards.find((card) => card.label === '정상').value, '링크 2개 · 이미지 1개')
   assert.equal(view.summaryCards.some((card) => `${card.value} ${card.detail || ''}`.includes('고유 요소')), false)
   assert.equal(view.summaryCards.some((card) => `${card.value} ${card.detail || ''}`.includes('근거')), false)
   assert.equal(labels.includes('콘솔'), false)
@@ -315,7 +315,7 @@ test('compact Tech QA source keeps table UI and closed detail policy', () => {
   assert.equal(source.includes('우선 확인 결과 ${display.priorityRows.length}개'), false)
   assert.equal(source.includes('우선 확인 결과 ${display.priorityRows.length}건'), false)
   assert.equal(source.includes('우선 확인 결과가 없습니다.'), false)
-  assert.equal(source.includes('Tech QA 검사가 완료되었습니다. 아래 항목에서 오류 및 확인 필요 결과를 확인해 주세요.'), true)
+  assert.equal(source.includes('Tech QA 검사가 완료되었습니다. 아래 항목에서 문제 확인 및 검토 필요 결과를 확인해 주세요.'), true)
   assert.equal(source.includes('tech-compact-table'), true)
   assert.equal(source.includes('tech-link-table'), true)
   assert.equal(source.includes('tech-owner-badge'), true)
@@ -386,11 +386,11 @@ test('compact Tech QA source keeps table UI and closed detail policy', () => {
 test('Tech QA source defines separated click action display groups', () => {
   const source = fs.readFileSync('src/utils/techQa.js', 'utf8')
 
-  assert.equal(source.includes('실제 오류'), true)
-  assert.equal(source.includes('확인 필요'), true)
+  assert.equal(source.includes('문제 확인'), true)
+  assert.equal(source.includes('검토 필요'), true)
   assert.equal(source.includes('안전상 클릭 생략'), true)
   assert.equal(source.includes('URL이 필요 없는 UI control'), true)
-  assert.equal(source.includes('정상 검증 완료'), true)
+  assert.equal(source.includes('정상'), true)
 })
 
 test('Tech QA priority implementation does not hardcode specific sites or hostname branches', () => {
@@ -470,7 +470,7 @@ test('Tech QA click action priority keeps only actionable click failures', () =>
   const clickItem = view.priorityItems.find((entry) => entry.id === 'click-actions')
 
   assert.equal(clickItem.status, 'error')
-  assert.equal(clickItem.value, '실제 오류 1개 · 확인 필요 2개')
+  assert.equal(clickItem.value, '문제 확인 1개 · 검토 필요 2개')
   assert.equal(clickItem.problemItems.length, 3)
   assert.equal(view.clickActionGroups.actualErrors.length, 1)
   assert.equal(view.clickActionGroups.warnings.length, 2)
@@ -753,8 +753,8 @@ test('count contract E sums warning evidence across meta alt external and consol
   assert.equal(view.issueCounts.warningEvidenceCount, 22)
   assert.equal(view.issueCounts.warningUniqueElementCount, 22)
   assert.equal(view.issueCounts.warningCheckCount, 4)
-  assert.equal(view.checkItems.find((item) => item.id === 'image-alt').value, '총 25개 · alt 확인 필요 5개')
-  assert.equal(view.checkItems.find((item) => item.id === 'external-links').value, '총 20개 · rel 확인 필요 12개')
+  assert.equal(view.checkItems.find((item) => item.id === 'image-alt').value, '총 25개 · alt 검토 필요 5개')
+  assert.equal(view.checkItems.find((item) => item.id === 'external-links').value, '총 20개 · rel 검토 필요 12개')
 })
 
 test('count contract F keeps evidence totals while reducing unique count for cross-check overlaps', () => {
@@ -797,10 +797,10 @@ test('basic diagnostic table keeps normal rows visible without accordion', () =>
 
   assert.deepEqual(view.basicCheckItems.map((item) => item.id), ['access', 'http-status', 'title', 'console-errors', 'images', 'resource-size', 'links', 'missing-href', 'mobile', 'headings', 'duplicate-ids', 'network-failures', 'forms'])
   assert.equal(view.basicCheckItems.every((item) => item.status === 'ok'), true)
-  assert.equal(view.basicCheckItems.find((item) => item.id === 'access').value, '접속 가능 · HTTP 200')
+  assert.equal(view.basicCheckItems.find((item) => item.id === 'access').value, '정상 · HTTP 200')
   assert.equal(view.basicCheckItems.find((item) => item.id === 'images').value, '총 25개 · 실패 0개')
   assert.equal(view.basicCheckItems.find((item) => item.id === 'resource-size').value, '큰 리소스 없음')
-  assert.equal(view.basicCheckItems.find((item) => item.id === 'links').value, '총 10개 · 요청 오류 0개')
+  assert.equal(view.basicCheckItems.find((item) => item.id === 'links').value, '총 10개 · 요청 문제 0개')
 })
 
 test('resource size check remains in basic results and preserves raw evidence for detail rendering', () => {
@@ -857,7 +857,7 @@ test('resource size history fallback stays safe even when detail fields are miss
   const item = view.basicCheckItems.find((entry) => entry.id === 'resource-size')
 
   assert.equal(item.status, 'warn')
-  assert.equal(item.value, '2개 확인 필요')
+  assert.equal(item.value, '2개 검토 필요')
   assert.deepEqual(item.problemItems, [])
 })
 
@@ -885,7 +885,7 @@ test('generic Tech QA display A keeps all basic checks normal with objective cou
   assert.equal(view.issueCounts.errorElementCount, 0)
   assert.equal(view.issueCounts.warningElementCount, 0)
   assert.equal(view.basicCheckItems.find((item) => item.id === 'images').value, '총 25개 · 실패 0개')
-  assert.equal(view.basicCheckItems.find((item) => item.id === 'links').value, '총 102개 · 요청 오류 0개')
+  assert.equal(view.basicCheckItems.find((item) => item.id === 'links').value, '총 102개 · 요청 문제 0개')
 })
 
 test('generic Tech QA display B reports failed image count and preserves image URLs', () => {
@@ -927,11 +927,11 @@ test('generic Tech QA display E and F keeps click error and warning counts align
   }))
 
   assert.equal(warningOnly.checkItems.find((item) => item.id === 'click-actions').status, 'warn')
-  assert.equal(warningOnly.checkItems.find((item) => item.id === 'click-actions').value, '실제 오류 0개 · 확인 필요 1개')
+  assert.equal(warningOnly.checkItems.find((item) => item.id === 'click-actions').value, '문제 확인 0개 · 검토 필요 1개')
   assert.equal(warningOnly.issueCounts.errorElementCount, 0)
   assert.equal(warningOnly.issueCounts.warningElementCount, 1)
   assert.equal(mixed.checkItems.find((item) => item.id === 'click-actions').status, 'error')
-  assert.equal(mixed.checkItems.find((item) => item.id === 'click-actions').value, '실제 오류 2개 · 확인 필요 3개')
+  assert.equal(mixed.checkItems.find((item) => item.id === 'click-actions').value, '문제 확인 2개 · 검토 필요 3개')
   assert.equal(mixed.issueCounts.errorElementCount, 2)
   assert.equal(mixed.issueCounts.warningElementCount, 3)
 })

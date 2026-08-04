@@ -1015,7 +1015,7 @@ test('tech qa screen removes the priority summary card and keeps lower detail se
   assert.equal(source.includes('오류 ${display.priorityCounts.error}건 · 확인 필요 ${display.priorityCounts.warn}건'), false)
   assert.equal(source.includes('display.priorityVisibility.visibleItems'), false)
   assert.equal(source.includes('<PriorityTableRow item={item}'), false)
-  assert.equal(source.includes('Tech QA 검사가 완료되었습니다. 아래 항목에서 오류 및 확인 필요 결과를 확인해 주세요.'), true)
+  assert.equal(source.includes('Tech QA 검사가 완료되었습니다. 아래 항목에서 문제 확인 및 검토 필요 결과를 확인해 주세요.'), true)
   assert.equal(completionIndex > -1 && basicIndex > completionIndex, true)
   assert.equal(source.includes('detail={<IssueDetails item={item} />}'), true)
   assert.equal(source.includes('ResourceSizeDetails'), true)

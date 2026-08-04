@@ -2,17 +2,28 @@ import { isTechCheckEnabled, normalizeStoredTechScanOptions } from '../../shared
 
 export const TECH_STATUS_LABELS = {
   ok: '정상',
-  warn: '확인 필요',
-  error: '오류',
-  info: '참고',
+  warn: '검토 필요',
+  error: '문제 확인',
+  info: '해당 없음',
+  unavailable: '검사 불가',
+}
+
+export const TECH_QA_STATUS_ORDER = ['problem', 'review', 'normal', 'notApplicable', 'unavailable']
+
+export const TECH_QA_STATUS_LABELS = {
+  problem: '문제 확인',
+  review: '검토 필요',
+  normal: '정상',
+  notApplicable: '해당 없음',
+  unavailable: '검사 불가',
 }
 
 const CLICK_ACTION_GROUPS = [
-  { id: 'actualErrors', label: '실제 오류' },
-  { id: 'warnings', label: '확인 필요' },
+  { id: 'actualErrors', label: '문제 확인' },
+  { id: 'warnings', label: '검토 필요' },
   { id: 'safeSkipped', label: '안전상 클릭 생략' },
   { id: 'uiControls', label: 'URL이 필요 없는 UI control' },
-  { id: 'verified', label: '정상 검증 완료' },
+  { id: 'verified', label: '정상' },
 ]
 
 const BASIC_CHECK_ORDER = [
@@ -100,10 +111,10 @@ export function createTechQaViewModel(result = {}) {
   const counts = countStatuses(allItems)
   const issueCounts = createTechQaCounts(checkItems, rawPriorityItems)
   const statusMessage = issueCounts.errorUniqueElementCount > 0
-    ? `오류 ${issueCounts.errorUniqueElementCount}개 · ${issueCounts.errorCheckCount}개 검사에서 발견되었습니다.`
+    ? `문제 확인 ${issueCounts.errorUniqueElementCount}개 · ${issueCounts.errorCheckCount}개 검사에서 발견되었습니다.`
     : issueCounts.warningUniqueElementCount > 0
-      ? `확인 필요 ${issueCounts.warningUniqueElementCount}개 · ${issueCounts.warningCheckCount}개 검사에서 발견되었습니다.`
-      : '오류 0개 · 확인 필요 0개입니다.'
+      ? `검토 필요 ${issueCounts.warningUniqueElementCount}개 · ${issueCounts.warningCheckCount}개 검사에서 발견되었습니다.`
+      : '문제 확인 0개 · 검토 필요 0개입니다.'
 
   return {
     title: result.pageTitle || '페이지 타이틀 없음',
@@ -169,8 +180,8 @@ export function createLinkItems(links = []) {
       section: 'link',
       title: link.label || link.text || link.url || `링크 ${index + 1}`,
       status,
-      statusLabel: TECH_STATUS_LABELS[status],
-      value: link.statusCode ? String(link.statusCode) : link.note || link.category || '확인 필요',
+      statusLabel: getTechQaStatusLabel({ ...link, status }),
+      value: normalizeTechQaDisplayText(link.statusCode ? String(link.statusCode) : link.note || link.category || '검토 필요'),
       description: getLinkDescription(link),
       shortDescription: getShortDescription(getLinkDescription(link)),
       technicalTerm: getLinkTechnicalTerm(link),
@@ -235,6 +246,52 @@ export function countStatuses(items = []) {
   return items.reduce((counts, item) => ({ ...counts, [item.status]: (counts[item.status] || 0) + 1 }), { ok: 0, warn: 0, error: 0 })
 }
 
+export function createEmptyTechQaStatusCounts() {
+  return { problem: 0, review: 0, normal: 0, notApplicable: 0, unavailable: 0 }
+}
+
+export function countTechQaDisplayStatuses(items = []) {
+  return arrayOfObjects(items).reduce((counts, item) => {
+    const status = getTechQaDisplayStatus(item)
+    return { ...counts, [status]: (counts[status] || 0) + 1 }
+  }, createEmptyTechQaStatusCounts())
+}
+
+export function getTechQaDisplayStatus(item = {}) {
+  const normalizedStatus = normalizeVisibilityStatus(item.status)
+  if (normalizedStatus === 'info') return 'notApplicable'
+  if (isUnavailableItem(item)) return 'unavailable'
+  if (normalizedStatus === 'error') return hasOnlyUnavailableEvidence(item) ? 'unavailable' : 'problem'
+  if (normalizedStatus === 'warn') return 'review'
+  return 'normal'
+}
+
+export function getTechQaStatusLabel(item = {}) {
+  return TECH_QA_STATUS_LABELS[getTechQaDisplayStatus(item)] || TECH_QA_STATUS_LABELS.review
+}
+
+export function normalizeTechQaDisplayText(value) {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  return text
+    .replace(/검사 대상 없음/g, TECH_QA_STATUS_LABELS.notApplicable)
+    .replace(/수집됨/g, TECH_QA_STATUS_LABELS.normal)
+    .replace(/확인 필요/g, TECH_QA_STATUS_LABELS.review)
+    .replace(/오류/g, TECH_QA_STATUS_LABELS.problem)
+}
+
+export function formatTechQaStatusCounts(counts = createEmptyTechQaStatusCounts()) {
+  const parts = TECH_QA_STATUS_ORDER
+    .map((status) => ({ status, count: Number(counts[status] || 0) }))
+    .filter((item) => item.count > 0)
+    .map((item) => `${TECH_QA_STATUS_LABELS[item.status]} ${item.count}`)
+  return parts.length > 0 ? parts.join(' · ') : `${TECH_QA_STATUS_LABELS.notApplicable} 1`
+}
+
+export function formatTechQaStatusCountsForItems(items = [], fallbackCounts = null) {
+  return formatTechQaStatusCounts(fallbackCounts || countTechQaDisplayStatuses(items))
+}
+
 export function createTechQaCounts(checkItems = [], priorityItems = []) {
   const countItems = priorityItems.length > 0 ? priorityItems : checkItems.filter(isPriorityItem)
   const evidenceRecords = countItems.flatMap((item) => createEvidenceRecords(item))
@@ -272,8 +329,8 @@ function createCheckItem(check = {}, clickActionGroups = createEmptyClickActionG
     section: definition.section,
     title: definition.label || check.title,
     status,
-    statusLabel: TECH_STATUS_LABELS[status],
-    value: display?.value || getObjectiveCheckValue(check, context, problemItems) || check.value || '',
+    statusLabel: getTechQaStatusLabel({ ...check, status, problemItems }),
+    value: normalizeTechQaDisplayText(display?.value || getObjectiveCheckValue(check, context, problemItems) || check.value || ''),
     description: definition.description,
     shortDescription: getShortDescription(definition.description),
     technicalTerm: check.title || definition.label,
@@ -353,21 +410,21 @@ function markSeenEvidence(record = {}, seenKeysBySeverity = {}) {
 
 function createSummaryCards(result, counts, linkSummary) {
   const imageTotal = Array.isArray(result.images) ? result.images.length : 0
-  const accessStatus = result.accessible ? '정상' : '오류'
+  const accessStatus = result.accessible ? TECH_QA_STATUS_LABELS.normal : TECH_QA_STATUS_LABELS.unavailable
   const errorDetail = counts.errorCheckCount > 0 ? `${counts.errorCheckCount}개 검사에서 발견` : '0개 검사에서 발견'
   const warningDetail = counts.warningCheckCount > 0 ? `${counts.warningCheckCount}개 검사에서 발견` : '0개 검사에서 발견'
   return [
     { label: '페이지 접속', value: `${accessStatus} · HTTP ${result.httpStatus || '응답 없음'}`, status: result.accessible ? 'ok' : 'error' },
-    { label: '오류', value: `${counts.errorUniqueElementCount}개`, detail: errorDetail, status: counts.errorUniqueElementCount > 0 ? 'error' : 'ok' },
-    { label: '확인 필요', value: `${counts.warningUniqueElementCount}개`, detail: warningDetail, status: counts.warningUniqueElementCount > 0 ? 'warn' : 'ok' },
-    { label: '검사 완료', value: `링크 ${linkSummary.total}개 · 이미지 ${imageTotal}개`, detail: `정상 검사 ${counts.normalCheckCount}개 항목`, status: 'info' },
+    { label: TECH_QA_STATUS_LABELS.problem, value: `${counts.errorUniqueElementCount}개`, detail: errorDetail, status: counts.errorUniqueElementCount > 0 ? 'error' : 'ok' },
+    { label: TECH_QA_STATUS_LABELS.review, value: `${counts.warningUniqueElementCount}개`, detail: warningDetail, status: counts.warningUniqueElementCount > 0 ? 'warn' : 'ok' },
+    { label: TECH_QA_STATUS_LABELS.normal, value: `링크 ${linkSummary.total}개 · 이미지 ${imageTotal}개`, detail: `정상 검사 ${counts.normalCheckCount}개 항목`, status: 'info' },
   ]
 }
 
 function createClickActionDisplay(groups, check = {}) {
   const problemItems = groups.actualErrors.concat(groups.warnings)
   const status = groups.actualErrors.length > 0 ? 'error' : groups.warnings.length > 0 ? 'warn' : 'ok'
-  const value = problemItems.length > 0 ? `실제 오류 ${groups.actualErrors.length}개 · 확인 필요 ${groups.warnings.length}개` : check.value && normalizeStatus(check.status) === 'ok' ? check.value : `실제 오류 0개 · 확인 필요 0개`
+  const value = problemItems.length > 0 ? `문제 확인 ${groups.actualErrors.length}개 · 검토 필요 ${groups.warnings.length}개` : check.value && normalizeStatus(check.status) === 'ok' ? normalizeTechQaDisplayText(check.value) : `문제 확인 0개 · 검토 필요 0개`
   return { status, value, problemItems }
 }
 
@@ -461,33 +518,33 @@ function getObjectiveCheckValue(check = {}, context = {}, problemItems = []) {
   const items = arrayOfObjects(check.items)
   const problemCount = problemItems.length
 
-  if (check.id === 'access') return `${result.accessible === false ? '접속 실패' : '접속 가능'} · HTTP ${result.httpStatus || check.statusCode || '응답 없음'}`
+  if (check.id === 'access') return `${result.accessible === false ? '검사 불가' : '정상'} · HTTP ${result.httpStatus || check.statusCode || '응답 없음'}`
   if (check.id === 'http-status') return `HTTP ${result.httpStatus || check.value || '응답 없음'}`
-  if (check.id === 'title') return check.value ? `수집됨 · ${check.value}` : result.pageTitle ? `수집됨 · ${result.pageTitle}` : '비어 있음'
+  if (check.id === 'title') return check.value ? `정상 · ${check.value}` : result.pageTitle ? `정상 · ${result.pageTitle}` : '비어 있음'
   if (check.id === 'console-errors') return formatConsoleCheckValue(check, items)
   if (check.id === 'images') return `총 ${getImageTotal(check, result, items)}개 · 실패 ${getProblemCount(check, problemItems)}개`
   if (check.id === 'resource-size') {
     if (problemCount > 0) return `기준 초과 ${problemCount}개`
-    if (normalizeStatus(check.status) === 'warn') return check.value || '확인 필요'
+    if (normalizeStatus(check.status) === 'warn') return check.value || '검토 필요'
     return '큰 리소스 없음'
   }
-  if (check.id === 'links') return `총 ${getLinkTotal(check, linkSummary)}개 · 요청 오류 ${Number(linkSummary.error || 0)}개`
-  if (check.id === 'missing-href') return `총 ${getButtonTotal(result, check)}개 · URL 확인 필요 ${problemCount}개`
+  if (check.id === 'links') return `총 ${getLinkTotal(check, linkSummary)}개 · 요청 문제 ${Number(linkSummary.error || 0)}개`
+  if (check.id === 'missing-href') return `총 ${getButtonTotal(result, check)}개 · URL 검토 필요 ${problemCount}개`
   if (check.id === 'mobile') return formatMobileCheckValue(check, result)
-  if (check.id === 'headings') return check.value ? `${check.value} · 확인 필요 ${problemCount}개` : `확인 필요 ${problemCount}개`
+  if (check.id === 'headings') return check.value ? `${check.value} · 검토 필요 ${problemCount}개` : `검토 필요 ${problemCount}개`
   if (check.id === 'duplicate-ids') return `중복 ID ${problemCount}개`
   if (check.id === 'network-failures') return `실패 요청 ${problemCount}개`
-  if (check.id === 'forms') return check.value ? `${check.value} · 확인 필요 ${problemCount}개` : `확인 필요 ${problemCount}개`
-  if (check.id === 'meta') return `총 ${getGenericTotal(check, problemCount)}개 항목 확인 필요`
-  if (check.id === 'image-alt') return `총 ${getImageTotal(check, result, items)}개 · alt 확인 필요 ${problemCount}개`
-  if (check.id === 'external-links') return `총 ${getGenericTotal(check, problemCount)}개 · rel 확인 필요 ${problemCount}개`
-  if (check.id === 'scroll-interaction') return check.meta?.noTarget ? '검사 대상 없음' : `오류 ${Number(check.meta?.errorCount || 0)}개 · 확인 필요 ${Number(check.meta?.warningCount || 0)}개`
-  if (check.id === 'responsive-layout') return check.meta?.noTarget ? '검사 대상 없음' : `오류 ${Number(check.meta?.errorCount || 0)}개 · 확인 필요 ${Number(check.meta?.warningCount || 0)}개`
-  if (check.id === 'download-resource') return check.meta?.noTarget ? '검사 대상 없음' : `오류 ${Number(check.meta?.errorCount || 0)}개 · 확인 필요 ${Number(check.meta?.warningCount || 0)}개`
-  if (check.id === 'cookie-security') return check.meta?.noTarget ? '검사 대상 없음' : `오류 ${Number(check.meta?.errorCount || 0)}개 · 확인 필요 ${Number(check.meta?.warningCount || 0)}개`
-  if (check.id === 'image-rendering') return check.meta?.noTarget ? '검사 대상 없음' : `오류 ${Number(check.meta?.errorCount || 0)}개 · 확인 필요 ${Number(check.meta?.warningCount || 0)}개`
-  if (check.id === 'performance-resource') return check.meta?.noTarget ? '검사 대상 없음' : `오류 ${Number(check.meta?.errorCount || 0)}개 · 확인 필요 ${Number(check.meta?.warningCount || 0)}개`
-  if (check.id === 'seo-readiness') return check.meta?.noTarget ? '검사 대상 없음' : `오류 ${Number(check.meta?.errorCount || 0)}개 · 확인 필요 ${Number(check.meta?.warningCount || 0)}개`
+  if (check.id === 'forms') return check.value ? `${check.value} · 검토 필요 ${problemCount}개` : `검토 필요 ${problemCount}개`
+  if (check.id === 'meta') return `총 ${getGenericTotal(check, problemCount)}개 항목 검토 필요`
+  if (check.id === 'image-alt') return `총 ${getImageTotal(check, result, items)}개 · alt 검토 필요 ${problemCount}개`
+  if (check.id === 'external-links') return `총 ${getGenericTotal(check, problemCount)}개 · rel 검토 필요 ${problemCount}개`
+  if (check.id === 'scroll-interaction') return check.meta?.noTarget ? '해당 없음' : `문제 확인 ${Number(check.meta?.errorCount || 0)}개 · 검토 필요 ${Number(check.meta?.warningCount || 0)}개`
+  if (check.id === 'responsive-layout') return check.meta?.noTarget ? '해당 없음' : `문제 확인 ${Number(check.meta?.errorCount || 0)}개 · 검토 필요 ${Number(check.meta?.warningCount || 0)}개`
+  if (check.id === 'download-resource') return check.meta?.noTarget ? '해당 없음' : `문제 확인 ${Number(check.meta?.errorCount || 0)}개 · 검토 필요 ${Number(check.meta?.warningCount || 0)}개`
+  if (check.id === 'cookie-security') return check.meta?.noTarget ? '해당 없음' : `문제 확인 ${Number(check.meta?.errorCount || 0)}개 · 검토 필요 ${Number(check.meta?.warningCount || 0)}개`
+  if (check.id === 'image-rendering') return check.meta?.noTarget ? '해당 없음' : `문제 확인 ${Number(check.meta?.errorCount || 0)}개 · 검토 필요 ${Number(check.meta?.warningCount || 0)}개`
+  if (check.id === 'performance-resource') return check.meta?.noTarget ? '해당 없음' : `문제 확인 ${Number(check.meta?.errorCount || 0)}개 · 검토 필요 ${Number(check.meta?.warningCount || 0)}개`
+  if (check.id === 'seo-readiness') return check.meta?.noTarget ? '해당 없음' : `문제 확인 ${Number(check.meta?.errorCount || 0)}개 · 검토 필요 ${Number(check.meta?.warningCount || 0)}개`
   return ''
 }
 
@@ -850,19 +907,52 @@ function getStatusRank(status) {
   return 2
 }
 
+function hasOnlyUnavailableEvidence(item = {}) {
+  const entries = arrayOfObjects(item.problemItems).length > 0 ? arrayOfObjects(item.problemItems) : arrayOfObjects(item.raw?.items)
+  return entries.length > 0 && entries.every((entry) => isUnavailableItem(entry))
+}
+
+function isUnavailableItem(item = {}) {
+  const rawStatus = String(item.status || '').trim().toLowerCase()
+  if (rawStatus === 'unavailable' || item.status === '검사 불가') return true
+  if (item.id === 'access' && (item.raw?.accessible === false || item.accessible === false || normalizeStatus(item.status) === 'error')) return true
+
+  const statusCode = Number(item.statusCode ?? item.raw?.statusCode ?? item.value)
+  if ([0, 401, 403, 408, 429].includes(statusCode)) return true
+
+  const text = [
+    item.category,
+    item.errorCode,
+    item.reason,
+    item.note,
+    item.message,
+    item.navigationError,
+    item.loadWarning,
+    item.raw?.category,
+    item.raw?.errorCode,
+    item.raw?.reason,
+    item.raw?.note,
+    item.raw?.message,
+    item.raw?.navigationError,
+    item.raw?.loadWarning,
+  ].filter(Boolean).join(' ')
+
+  return /timeout|timed\s*out|net::|network|dns|tls|ssl|connection|err_|request[-\s]?failed|navigation[-\s]?failed|load[-\s]?failed|restricted|access[-\s]?denied|forbidden|unauthorized|login|auth/i.test(text)
+}
+
 function normalizeStatus(status) {
-  if (status === 'error' || status === '오류') return 'error'
-  if (status === 'warn' || status === 'warning' || status === 'check' || status === '확인 필요') return 'warn'
+  if (status === 'error' || status === '오류' || status === '문제 확인') return 'error'
+  if (status === 'warn' || status === 'warning' || status === 'check' || status === '확인 필요' || status === '검토 필요') return 'warn'
   return 'ok'
 }
 
 function normalizeVisibilityStatus(status) {
-  if (status === 'info' || status === '참고') return 'info'
+  if (status === 'info' || status === '참고' || status === '해당 없음') return 'info'
   return normalizeStatus(status)
 }
 
 function normalizeInteractionItemStatus(status) {
-  if (status === 'info' || status === 'skipped' || status === '참고' || status === '생략') return 'info'
+  if (status === 'info' || status === 'skipped' || status === '참고' || status === '생략' || status === '해당 없음') return 'info'
   return normalizeStatus(status)
 }
 

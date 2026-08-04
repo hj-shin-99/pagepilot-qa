@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { createLinkItems, createTechQaViewModel, getSectionVisibility, getVisibleLinkGroups } from './techQa.js'
-import { createTechDetailRows, createTechPanelDisplayModel, resolveTechQaEngine } from './techQaPanelView.js'
+import { createTechDetailRows, createTechPanelDisplayModel, createTechQaDetailViewModel, resolveTechQaEngine } from './techQaPanelView.js'
 
 test('A normal internal links show first five and preserve all twelve', () => {
   const view = createTechQaViewModel(result({ links: Array.from({ length: 12 }, (_, index) => link({ label: `Link ${index + 1}`, url: `https://example.com/${index + 1}` })) }))
@@ -340,8 +340,8 @@ test('compact Tech QA source keeps table UI and closed detail policy', () => {
   assert.equal(source.includes('<details className="detail-card tech-detail-accordion" open>'), false)
   assert.equal(source.includes('문제 예시:'), false)
   assert.equal(source.includes('담당 권장:'), false)
-  assert.equal(source.includes('검사 목적'), true)
-  assert.equal(source.includes('검사 결과'), true)
+  assert.equal(source.includes('발견 내용'), true)
+  assert.equal(source.includes('판단 근거'), true)
   assert.equal(source.includes('문제 및 확인 항목'), false)
   assert.equal(source.includes('담당 팀에서 확인할 내용'), false)
   assert.equal(source.includes('기술 정보 보기'), true)
@@ -372,10 +372,10 @@ test('compact Tech QA source keeps table UI and closed detail policy', () => {
   assert.equal(source.includes('검사 근거 오류'), false)
   assert.equal(source.includes('쉬운 설명'), false)
   assert.equal(source.includes('error message'), false)
-  assert.equal(source.includes('label="영향"'), false)
+  assert.equal(source.includes('label="영향"'), true)
   assert.equal(source.includes('selector/위치'), false)
   assert.equal(source.includes('확인할 요소'), true)
-  assert.equal(source.includes('확인할 내용'), true)
+  assert.equal(source.includes('권장 조치'), true)
   assert.equal(source.includes('리소스 및 네트워크'), false)
   assert.equal(source.includes('우선 확인 팀'), false)
   assert.equal(source.includes('UID팀'), false)
@@ -959,7 +959,7 @@ test('generic Tech QA display H and I keep raw selector out of default copy but 
   assert.equal(source.includes('selector/위치'), false)
   assert.equal(source.includes('label="selector"'), true)
   assert.equal(source.includes('label="raw failure"'), true)
-  assert.equal(source.includes('label="영향"'), false)
+  assert.equal(source.includes('label="영향"'), true)
 })
 
 test('compact Tech QA CSS uses table rows instead of large repeated cards', () => {
@@ -1015,6 +1015,119 @@ test('priority detail rows can be recreated from display detail rows without los
   assert.equal('priorityRows' in display, false)
   assert.equal('priorityCounts' in display, false)
   assert.equal('priorityVisibility' in display, false)
+})
+
+test('Tech QA phase 2 detail view model explains problem results without changing status counts', () => {
+  const view = createTechQaViewModel(result({
+    links: [link({ label: 'Missing', status: 'error', statusCode: 404, category: 'http-4xx', url: 'https://example.com/missing' })],
+  }))
+  const row = createTechDetailRows(view).linkRows[0]
+
+  assert.equal(row.displayStatus, '문제 확인')
+  assert.equal(row.finding, '요청한 URL이 HTTP 404 상태를 반환했습니다.')
+  assert.equal(row.reason, '자동 요청 결과 status 404가 확인되었습니다.')
+  assert.equal(row.impact, '사용자가 해당 링크를 열면 페이지를 찾을 수 없을 수 있습니다.')
+  assert.deepEqual(row.verifySteps, ['표시된 URL을 새 탭에서 엽니다.', '정상 페이지가 표시되는지 확인합니다.'])
+  assert.equal(row.recommendation, '링크 주소 또는 대상 페이지의 배포 상태를 확인하세요.')
+  assert.equal(row.technicalEvidence.some((entry) => entry.label === 'HTTP status' && entry.value === '404'), true)
+  assert.equal(view.linkSummary.error, 1)
+  assert.equal(view.linkSummary.warn, 0)
+  assert.equal(view.linkSummary.ok, 0)
+})
+
+test('Tech QA phase 2 review detail explains why direct confirmation is needed', () => {
+  const view = createTechQaViewModel(result({
+    links: [link({ label: 'Anchor CTA', status: 'warn', statusCode: undefined, category: 'same-page-anchor', href: '#', url: '#' })],
+  }))
+  const row = createTechDetailRows(view).linkRows[0]
+
+  assert.equal(row.displayStatus, '검토 필요')
+  assert.equal(row.finding, '링크 대상이 임시 값인 #으로 설정되어 있습니다.')
+  assert.equal(row.reason.includes('직접 확인이 필요'), true)
+  assert.equal(row.impact, '의도된 UI 제어일 수도 있어 자동 검사만으로 오류를 확정할 수 없습니다.')
+  assert.equal(row.recommendation.includes('정상 UI 제어라면 수정이 필요하지 않습니다.'), true)
+})
+
+test('Tech QA phase 2 normal detail does not claim absolute integrity', () => {
+  const row = createTechDetailRows(createTechQaViewModel(result({ checks: [check({ id: 'access', status: 'ok' })] }))).basicRows[0]
+
+  assert.equal(row.displayStatus, '정상')
+  assert.equal(row.finding, '현재 검사 조건에서 정상 응답 또는 기대 신호를 확인했습니다.')
+  assert.equal(row.finding.includes('문제가 전혀 없습니다'), false)
+  assert.equal(row.reason.includes('실패 신호가 수집되지 않았습니다'), true)
+})
+
+test('Tech QA phase 2 not applicable detail keeps target absence reason', () => {
+  const detail = createTechQaDetailViewModel({ id: 'modal-interaction', status: 'info', meta: { noTarget: true } })
+
+  assert.equal(detail.displayStatus, '해당 없음')
+  assert.equal(detail.finding, '현재 페이지에서 이 검사 대상 요소가 확인되지 않았습니다.')
+  assert.equal(detail.reason, '검사 메타 정보에서 noTarget 신호가 확인되었습니다.')
+})
+
+test('Tech QA phase 2 unavailable detail distinguishes existing failure signals', () => {
+  const timeout = createTechQaDetailViewModel({ status: 'error', category: 'timeout', message: 'timeout exceeded' })
+  const network = createTechQaDetailViewModel({ status: 'error', category: 'request-failed', message: 'net::ERR_NAME_NOT_RESOLVED' })
+  const login = createTechQaDetailViewModel({ status: 'error', statusCode: 401, message: 'login required' })
+
+  assert.equal(timeout.displayStatus, '검사 불가')
+  assert.equal(timeout.finding.includes('timeout'), true)
+  assert.equal(network.displayStatus, '검사 불가')
+  assert.equal(network.finding.includes('network'), true)
+  assert.equal(login.displayStatus, '검사 불가')
+  assert.equal(login.finding.includes('login required'), true)
+})
+
+test('Tech QA phase 2 detail evidence hides missing technical fields', () => {
+  const detail = createTechQaDetailViewModel({ status: 'warn', value: '검토 필요' })
+  const labels = detail.technicalEvidence.map((entry) => entry.label)
+
+  assert.equal(labels.includes('selector'), false)
+  assert.equal(labels.includes('URL'), false)
+  assert.equal(labels.includes('HTTP status'), false)
+  assert.equal(labels.includes('raw value'), true)
+})
+
+test('Tech QA phase 2 detail UI keeps inline closed expansion behavior', () => {
+  const source = fs.readFileSync('src/components/TechQaPanel.jsx', 'utf8')
+
+  assert.equal(source.includes('function TechExplanationDetails'), true)
+  assert.equal(source.includes('<Meta label="발견 내용"'), true)
+  assert.equal(source.includes('<Meta label="판단 근거"'), true)
+  assert.equal(source.includes('<Meta label="영향"'), true)
+  assert.equal(source.includes('<dt>확인 방법</dt>'), true)
+  assert.equal(source.includes('<Meta label="권장 조치"'), true)
+  assert.equal(source.includes('function TechnicalEvidenceDetails'), true)
+  assert.equal(source.includes('open={isOpen}'), true)
+  assert.equal(source.includes('aria-expanded={isOpen}'), true)
+})
+
+test('Tech QA phase 2 detail view remains safe for restored history-shaped rows', () => {
+  const view = createTechQaViewModel(result({ checks: [check({ id: 'resource-size', status: 'warn', value: '2개 확인 필요', items: undefined })] }))
+  const row = createTechDetailRows(view).basicRows.find((item) => item.id === 'resource-size')
+
+  assert.equal(row.displayStatus, '검토 필요')
+  assert.equal(Boolean(row.finding), true)
+  assert.equal(Boolean(row.reason), true)
+  assert.equal(Array.isArray(row.verifySteps), true)
+  assert.equal(Array.isArray(row.technicalEvidence), true)
+})
+
+test('Tech QA phase 2 does not change API payload scan options visual QA or progress contracts', () => {
+  const panelSource = fs.readFileSync('src/components/TechQaPanel.jsx', 'utf8')
+  const viewSource = fs.readFileSync('src/utils/techQaPanelView.js', 'utf8')
+  const appSource = fs.readFileSync('src/App.jsx', 'utf8')
+  const streamSource = fs.readFileSync('src/utils/qaRunStream.js', 'utf8')
+  const scanOptionsSource = fs.readFileSync('shared/techScanOptions.js', 'utf8')
+
+  assert.equal(panelSource.includes('/api/qa/run'), false)
+  assert.equal(viewSource.includes('/api/qa/run'), false)
+  assert.equal(appSource.includes('<VisualQaPanel'), true)
+  assert.equal(appSource.includes("fetch('/api/qa/run'"), true)
+  assert.equal(streamSource.includes("fetchFn('/api/qa/run-stream'"), true)
+  assert.equal(scanOptionsSource.includes('TECH_SCAN_OPTION_DEFINITIONS'), true)
+  assert.equal(scanOptionsSource.includes('finding'), false)
+  assert.equal(scanOptionsSource.includes('recommendation'), false)
 })
 
 function result(overrides = {}) {

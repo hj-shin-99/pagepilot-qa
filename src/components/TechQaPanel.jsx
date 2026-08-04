@@ -317,9 +317,7 @@ function MarkupCheckDetails({ item }) {
   const problemItems = Array.isArray(item.problemItems) && item.problemItems.length > 0 ? item.problemItems : item.raw?.items || []
   return (
     <div className="tech-markup-detail">
-      <dl className="tech-issue-meta">
-        <Meta label="검사 결과" value={formatMarkupCheckResult(item, problemItems)} />
-      </dl>
+      <TechExplanationDetails item={{ ...item, summary: formatMarkupCheckResult(item, problemItems) }} />
       {problemItems.length > 0 ? <ProblemElementList items={problemItems} owner={item.owner} /> : <p className="tech-normal-note">검토 필요 요소가 없습니다.</p>}
     </div>
   )
@@ -431,11 +429,14 @@ function ClickActionRow({ item }) {
       className={`tech-click-issue-row tech-click-row tech-row-details tech-row-with-details ${getStatusClass(item.status)}`}
       summaryClassName="tech-click-row-summary"
       detail={(
-        <div className="tech-problem-elements is-single">
-          <ol>
-            <ProblemElementCard entry={item} owner={item.owner || getUidOwner()} />
-          </ol>
-        </div>
+        <>
+          <TechExplanationDetails item={item} />
+          <div className="tech-problem-elements is-single">
+            <ol>
+              <ProblemElementCard entry={item} owner={item.owner || getUidOwner()} />
+            </ol>
+          </div>
+        </>
       )}
     >
         <span className={`status-badge ${getStatusClass(item.status)}`}>{getDisplayStatusLabel(item)}</span>
@@ -586,18 +587,8 @@ function LandingPageRow({ item }) {
 function LandingPageDetails({ item }) {
   return (
     <>
-      <dl className="tech-issue-meta">
-        <Meta label="검사 목적" value="클릭 후 최종 랜딩 페이지가 정상적으로 열리는지 확인합니다." />
-        <Meta label="검사 결과" value={formatLandingResult(item)} />
-        <Meta label="요청 URL" value={item.requestedUrl} />
-        <Meta label="최종 URL" value={item.finalUrl} />
-        <Meta label="페이지 title" value={item.pageTitle || 'title 없음'} />
-        <Meta label="리다이렉트" value={item.redirected ? '있음' : '없음'} />
-        <Meta label="새 창 여부" value={item.openedInNewWindow ? '새 창/새 탭' : '현재 창'} />
-        <Meta label="콘텐츠 신호" value={`visible ${item.visibleElementCount || 0} · body child ${item.bodyChildCount || 0} · text ${item.bodyTextLength || 0}`} />
-        <Meta label="문제 신호" value={formatLandingErrorSignals(item)} />
-      </dl>
-      <div className="tech-problem-elements is-single">
+      <TechExplanationDetails item={{ ...item, summary: item.summary || formatLandingResult(item) }} />
+      {Array.isArray(item.sources) && item.sources.length > 0 ? <div className="tech-problem-elements is-single">
         <strong>연결된 원본 클릭 {Array.isArray(item.sources) ? item.sources.length : 0}개</strong>
         <ol>
           {(item.sources || []).map((source, index) => (
@@ -616,7 +607,7 @@ function LandingPageDetails({ item }) {
             </li>
           ))}
         </ol>
-      </div>
+      </div> : null}
     </>
   )
 }
@@ -624,93 +615,7 @@ function LandingPageDetails({ item }) {
 function InteractionAuditDetails({ item }) {
   return (
     <>
-      <dl className="tech-issue-meta">
-        <Meta label="검사 목적" value={item.description} />
-        <Meta label="검사 결과" value={item.value || item.note || item.reason} />
-        <Meta label="유형" value={formatInteractionCategory(item)} />
-        <Meta label="field type" value={item.inputType || item.type || item.tagName} />
-        <Meta label="name" value={item.name} />
-        <Meta label="required" value={formatBoolean(item.required)} />
-        <Meta label="disabled" value={formatBoolean(item.disabled)} />
-        <Meta label="readonly" value={formatBoolean(item.readOnly)} />
-        <Meta label="autocomplete" value={item.autocomplete} />
-        <Meta label="validation state" value={formatValidationState(item.validationState)} />
-        <Meta label="validation message" value={item.validationMessage} />
-        <Meta label="aria-invalid" value={item.ariaInvalid} />
-        <Meta label="submit attempted" value={formatBoolean(item.submitAttempted)} />
-        <Meta label="submit blocked" value={formatBoolean(item.submitBlocked)} />
-        <Meta label="request methods" value={formatRequestMethods(item.requestMethods)} />
-        <Meta label="viewport" value={item.type} />
-        <Meta label="overflow amount" value={item.overflowAmount} />
-        <Meta label="status code" value={item.statusCode} />
-        <Meta label="final URL" value={item.finalUrl} />
-        <Meta label="content-type" value={item.contentType} />
-        <Meta label="content-length" value={item.contentLength} />
-        <Meta label="transfer size" value={item.transferSize} />
-        <Meta label="encoded size" value={item.encodedSize} />
-        <Meta label="duration ms" value={item.requestDurationMs || item.durationMs} />
-        <Meta label="cache-control" value={item.cacheControl} />
-        <Meta label="etag" value={item.etag} />
-        <Meta label="last-modified" value={item.lastModified} />
-        <Meta label="request count" value={item.requestCount} />
-        <Meta label="content-disposition" value={item.contentDisposition} />
-        <Meta label="filename" value={item.filename} />
-        <Meta label="source count" value={item.sourceCount} />
-        <Meta label="title length" value={item.titleLength} />
-        <Meta label="description length" value={item.descriptionLength} />
-        <Meta label="title text" value={item.titleText} />
-        <Meta label="meta description" value={item.metaDescription} />
-        <Meta label="H1 text" value={item.h1Text} />
-        <Meta label="canonical URL" value={item.canonicalUrl} />
-        <Meta label="robots meta" value={item.robotsMeta} />
-        <Meta label="X-Robots-Tag" value={item.xRobotsTag} />
-        <Meta label="html lang" value={item.htmlLang} />
-        <Meta label="og:title" value={item.ogTitle} />
-        <Meta label="og:description" value={item.ogDescription} />
-        <Meta label="og:image" value={item.ogImage} />
-        <Meta label="twitter:card" value={item.twitterCard} />
-        <Meta label="preview" value={item.preview} />
-        <Meta label="cookie domain" value={item.domain} />
-        <Meta label="cookie path" value={item.path} />
-        <Meta label="sameSite" value={item.sameSite} />
-        <Meta label="secure" value={formatBoolean(item.secure)} />
-        <Meta label="httpOnly" value={formatBoolean(item.httpOnly)} />
-        <Meta label="session cookie" value={formatBoolean(item.session)} />
-        <Meta label="first/third party" value={item.party} />
-        <Meta label="hostOnly" value={formatBoolean(item.hostOnly)} />
-        <Meta label="expires" value={item.expiresAt} />
-        <Meta label="source origin" value={item.sourceOrigin} />
-        <Meta label="value length" value={item.valueLength} />
-        <Meta label="banner hints" value={Array.isArray(item.bannerHints) ? item.bannerHints.join(' · ') : ''} />
-        <Meta label="src" value={item.src} />
-        <Meta label="currentSrc" value={item.currentSrc} />
-        <Meta label="natural size" value={formatImageSize(item.naturalWidth, item.naturalHeight)} />
-        <Meta label="rendered size" value={formatImageSize(item.renderedWidth, item.renderedHeight)} />
-        <Meta label="client size" value={formatImageSize(item.clientWidth, item.clientHeight)} />
-        <Meta label="object-fit" value={item.objectFit} />
-        <Meta label="visible count" value={item.visibleCount} />
-        <Meta label="selectors" value={Array.isArray(item.selectors) ? item.selectors.join(' | ') : ''} />
-        <Meta label="rendered sizes" value={Array.isArray(item.renderedSizeList) ? item.renderedSizeList.join(' | ') : ''} />
-        <Meta label="near bottom" value={formatBoolean(item.nearBottom)} />
-        <Meta label="overflow hidden" value={formatBoolean(item.overflowHidden)} />
-        <Meta label="lazy images" value={item.lazyImageCount} />
-        <Meta label="unresolved lazy images" value={item.unresolvedLazyImageCount} />
-        <Meta label="broken lazy images" value={item.brokenLazyImageCount} />
-        <Meta label="fixed elements" value={item.fixedElementCount} />
-        <Meta label="blocking fixed elements" value={item.blockingFixedElementCount} />
-        <Meta label="panel selector" value={item.panelSelector || item.dialogSelector} />
-        <Meta label="aria-haspopup" value={item.ariaHaspopup} />
-        <Meta label="aria-expanded" value={item.ariaExpanded} />
-        <Meta label="accessible name" value={item.accessibleName} />
-        <Meta label="close button" value={formatBoolean(item.hasCloseButton)} />
-        <Meta label="ESC close" value={formatBoolean(item.escClosed)} />
-        <Meta label="backdrop close" value={formatBoolean(item.backdropClosed)} />
-        <Meta label="focus moved" value={formatBoolean(item.focusMovedInside)} />
-        <Meta label="focus return" value={formatBoolean(item.focusReturned)} />
-        <Meta label="scroll lock" value={formatBoolean(item.scrollLocked)} />
-        <Meta label="selector" value={item.selector || item.representativeSelector} />
-        <Meta label="section" value={item.section} />
-      </dl>
+      <TechExplanationDetails item={item} />
       {Array.isArray(item.issues) && item.issues.length > 0 ? (
         <div className="tech-problem-elements is-single">
           <strong>검토 필요 사유 {item.issues.length}개</strong>
@@ -719,7 +624,6 @@ function InteractionAuditDetails({ item }) {
           </ol>
         </div>
       ) : null}
-      <TechnicalInfo raw={item} />
     </>
   )
 }
@@ -832,18 +736,6 @@ function formatLandingResult(item = {}) {
   return parts.join(' · ')
 }
 
-function formatLandingErrorSignals(item = {}) {
-  const signals = []
-  if (item.browserErrorPage) signals.push('브라우저 문제 화면')
-  if (item.loadWarning) signals.push(item.loadWarning)
-  if (item.navigationError) signals.push(item.navigationError)
-  if (Number(item.criticalConsoleErrorCount || 0) > 0) signals.push(`치명적 script error ${item.criticalConsoleErrorCount}건`)
-  if (Number(item.advisoryConsoleErrorCount || 0) > 0) signals.push(`console error ${item.advisoryConsoleErrorCount}건`)
-  if (Number(item.thirdPartyConsoleErrorCount || 0) > 0) signals.push(`third-party ${item.thirdPartyConsoleErrorCount}건`)
-  if (item.unexpectedRedirect) signals.push('예기치 않은 최종 도메인/프로토콜 이동')
-  return signals.length > 0 ? signals.join(' · ') : '명확한 문제 신호 없음'
-}
-
 function formatLandingSourceOutcome(source = {}) {
   const outcome = String(source.interactionOutcome || '').trim()
   if (outcome === 'new-window') return '새 창 열림'
@@ -943,33 +835,6 @@ function formatInteractionCategory(item = {}) {
   return item.category || item.inputType || item.type || item.kindHint || item.tagName || '-'
 }
 
-function formatValidationState(validationState = {}) {
-  if (!validationState || typeof validationState !== 'object') return ''
-  const parts = []
-  if (validationState.valid === true) parts.push('valid')
-  if (validationState.valueMissing === true) parts.push('valueMissing')
-  if (validationState.typeMismatch === true) parts.push('typeMismatch')
-  if (validationState.patternMismatch === true) parts.push('patternMismatch')
-  return parts.join(' · ')
-}
-
-function formatBoolean(value) {
-  if (value === true) return '예'
-  if (value === false) return '아니오'
-  return ''
-}
-
-function formatRequestMethods(value) {
-  return Array.isArray(value) && value.length > 0 ? value.join(', ') : ''
-}
-
-function formatImageSize(width, height) {
-  const numericWidth = Number(width || 0)
-  const numericHeight = Number(height || 0)
-  if (numericWidth <= 0 || numericHeight <= 0) return ''
-  return `${Math.round(numericWidth)}x${Math.round(numericHeight)}`
-}
-
 function getLargeResourceThreshold(item = {}) {
   const detail = String(item.raw?.detail || '').trim()
   return detail.includes('1MB') ? '1MB 이상' : ''
@@ -989,18 +854,12 @@ function OwnerBadge({ owner }) {
 
 function IssueDetails({ item }) {
   if (item.id === 'resource-size') return <ResourceSizeDetails item={item} />
-  if (item.status === 'ok') return <NormalIssueDetails item={item} />
-  if (item.type === 'link') return <SingleProblemDetails item={item} />
   const problemItems = item.problemItems || item.raw?.items
   const hasProblemItems = Array.isArray(problemItems) && problemItems.length > 0
   return (
     <>
-      <dl className="tech-issue-meta">
-        <Meta label="검사 목적" value={item.description} />
-        <Meta label="검사 결과" value={formatCurrentResult(item)} />
-        {hasProblemItems ? null : <Meta label="확인할 내용" value={formatTeamAction(item)} />}
-      </dl>
-      {hasProblemItems ? <ProblemElementList items={problemItems} owner={item.owner} /> : <TechnicalInfo raw={item.raw} />}
+      <TechExplanationDetails item={item} />
+      {hasProblemItems ? <ProblemElementList items={problemItems} owner={item.owner} /> : null}
     </>
   )
 }
@@ -1014,11 +873,7 @@ function ResourceSizeDetails({ item }) {
     : hasProblemItems ? `검토 필요 · 기준 초과 ${problemItems.length}개` : item.value || getDisplayStatusLabel(item)
   return (
     <>
-      <dl className="tech-issue-meta">
-        <Meta label="검사 목적" value={item.description} />
-        <Meta label="검사 결과" value={resultText} />
-        <Meta label="판정 기준" value={threshold} />
-      </dl>
+      <TechExplanationDetails item={{ ...item, summary: resultText }} />
       {hasProblemItems ? <LargeResourceList items={problemItems} threshold={threshold} /> : <p className="tech-normal-note">{item.status === 'ok' ? '1MB 이상으로 수집된 리소스가 없습니다.' : item.raw?.detail || item.value || '세부 리소스 데이터가 없습니다.'}</p>}
     </>
   )
@@ -1052,100 +907,46 @@ function LargeResourceList({ items, threshold }) {
   )
 }
 
-function SingleProblemDetails({ item }) {
+function TechExplanationDetails({ item = {} }) {
+  const verifySteps = Array.isArray(item.verifySteps) ? item.verifySteps.slice(0, 3) : []
   return (
-    <div className="tech-problem-elements is-single">
-      <ol>
-        <ProblemElementCard entry={{ ...item.raw, title: item.title, owner: item.owner }} owner={item.owner} />
-      </ol>
+    <div className="tech-explanation-detail">
+      <dl className="tech-issue-meta">
+        <Meta label="발견 내용" value={item.finding || '자동 검사 결과가 기록되었습니다.'} />
+        <Meta label="판단 근거" value={item.reason || '수집된 검사 결과를 기준으로 표시했습니다.'} />
+        <Meta label="영향" value={item.impact || '직접적인 영향은 자동 검사에서 확인되지 않았습니다.'} />
+        {verifySteps.length > 0 ? (
+          <div>
+            <dt>확인 방법</dt>
+            <dd>
+              <ol className="tech-detail-steps">
+                {verifySteps.map((step) => <li key={step}>{step}</li>)}
+              </ol>
+            </dd>
+          </div>
+        ) : null}
+        <Meta label="권장 조치" value={item.recommendation || '필요 시 담당자가 실제 화면 상태를 확인해 주세요.'} />
+      </dl>
+      <TechnicalEvidenceDetails items={item.technicalEvidence} />
     </div>
   )
 }
 
-function NormalIssueDetails({ item }) {
+function TechnicalEvidenceDetails({ items }) {
+  if (!Array.isArray(items) || items.length === 0) return null
   return (
-    <div className="tech-normal-details">
-      <p>{formatNormalDetail(item)}</p>
-    </div>
-  )
-}
-
-function formatCurrentResult(item = {}) {
-  return `${getDisplayStatusLabel(item)}${item.value ? ` · ${item.value}` : ''}`
-}
-
-function formatTeamAction(item = {}) {
-  if (item.status === 'ok') return '-'
-  return `${item.owner || '담당 팀'}에서 해당 항목을 확인해 주세요.`
-}
-
-function formatNormalDetail(item = {}) {
-  if (item.id === 'access') return `페이지 접속에 성공했습니다.${item.value ? ` ${item.value.replace(/^접속 가능\s*·\s*/, '')}` : ''}`
-  if (item.id === 'images') return `${item.value || '이미지 로딩이 정상입니다.'}`
-  if (item.id === 'resource-size') return '1MB 이상으로 수집된 리소스가 없습니다.'
-  return `${item.title || '검사 항목'}: ${item.value || '정상'}`
-}
-
-function TechnicalInfo({ raw }) {
-  const evidence = formatTechnicalEvidence(raw)
-  if (!evidence) return null
-  return (
-    <details className="tech-row-details">
+    <details className="tech-row-details tech-evidence-details">
       <summary>기술 정보 보기</summary>
       <dl className="tech-issue-meta">
-        <Meta label="기술 정보" value={evidence} />
+        {items.map((entry) => (
+          <div key={`${entry.label}-${entry.value}`}>
+            <dt>{entry.label}</dt>
+            <dd><code>{entry.value}</code></dd>
+          </div>
+        ))}
       </dl>
     </details>
   )
-}
-
-function formatTechnicalEvidence(raw = {}) {
-  return [
-    raw?.technicalTerm || raw?.category ? `technical: ${raw.technicalTerm || raw.category}` : '',
-    raw?.linkType ? `link type: ${raw.linkType}` : '',
-    raw?.tagName || raw?.kind ? `element: ${raw.tagName || raw.kind}` : '',
-    raw?.role ? `role: ${raw.role}` : '',
-    raw?.text || raw?.ariaLabel || raw?.label ? `text/aria-label: ${raw.text || raw.ariaLabel || raw.label}` : '',
-    raw?.selector ? `selector: ${raw.selector}` : '',
-    raw?.section ? `section: ${raw.section}` : '',
-    raw?.domPath ? `DOM path: ${raw.domPath}` : '',
-    raw?.href || raw?.url ? `href/url: ${raw.href || raw.url}` : '',
-    raw?.currentSrc || raw?.src ? `image src: ${raw.currentSrc || raw.src}` : '',
-    raw?.finalUrl ? `final URL: ${raw.finalUrl}` : '',
-    raw?.domain ? `domain: ${raw.domain}` : '',
-    raw?.path ? `path: ${raw.path}` : '',
-    raw?.sameSite ? `sameSite: ${raw.sameSite}` : '',
-    raw?.contentType ? `content-type: ${raw.contentType}` : '',
-    raw?.contentEncoding ? `content-encoding: ${raw.contentEncoding}` : '',
-    raw?.cacheControl ? `cache-control: ${raw.cacheControl}` : '',
-    raw?.etag ? `etag: ${raw.etag}` : '',
-    raw?.lastModified ? `last-modified: ${raw.lastModified}` : '',
-    raw?.requestCount ? `request-count: ${raw.requestCount}` : '',
-    raw?.durationMs ? `duration-ms: ${raw.durationMs}` : '',
-    raw?.canonicalUrl ? `canonical: ${raw.canonicalUrl}` : '',
-    raw?.htmlLang ? `html-lang: ${raw.htmlLang}` : '',
-    raw?.xRobotsTag ? `x-robots-tag: ${raw.xRobotsTag}` : '',
-    raw?.robotsMeta ? `robots-meta: ${raw.robotsMeta}` : '',
-    raw?.objectFit ? `object-fit: ${raw.objectFit}` : '',
-    raw?.redirected !== undefined ? `redirected: ${raw.redirected}` : '',
-    raw?.requestUrl ? `request URL: ${raw.requestUrl}` : '',
-    raw?.actionType || raw?.actionEvidence ? `action: ${raw.actionType || raw.actionEvidence}` : '',
-    raw?.interactionOutcome ? `interaction outcome: ${raw.interactionOutcome}` : '',
-    raw?.source ? `source: ${raw.source}` : '',
-    raw?.viewportState ? `viewport: ${raw.viewportState}` : '',
-    raw?.visible !== undefined ? `visible: ${raw.visible}` : '',
-    raw?.enabled !== undefined ? `enabled: ${raw.enabled}` : '',
-    raw?.pointerEvents ? `pointer-events: ${raw.pointerEvents}` : '',
-    raw?.hitTestStatus ? `hit-test: ${raw.hitTestStatus}` : '',
-    raw?.hitTargetSelector ? `hit target: ${raw.hitTargetSelector}` : '',
-    raw?.overlaySelector ? `overlay: ${raw.overlaySelector}` : '',
-    raw?.clickExecuted !== undefined ? `click executed: ${raw.clickExecuted}` : '',
-    raw?.observableChange !== undefined ? `observed change: ${raw.observableChange}` : '',
-    raw?.pageTitle ? `page title: ${raw.pageTitle}` : '',
-    raw?.safeClickResult?.error || raw?.message ? `raw failure: ${raw.safeClickResult?.error || raw.message}` : '',
-    raw?.statusCode ?? raw?.status ? `status: ${raw.statusCode ?? raw.status}` : '',
-    raw?.repeatCount ? `repeatCount: ${raw.repeatCount}` : '',
-  ].filter(Boolean).join(' · ')
 }
 
 function ProblemElementList({ items, owner }) {

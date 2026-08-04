@@ -115,6 +115,20 @@ test('cookie audit source safety avoids mutation APIs and site hardcoding', () =
   assert.equal(/BMW|BMWFS|NAVER/.test(source), false)
 })
 
+test('cookie audit phase 3-b fixtures cover status boundaries and unspecified SameSite false positive', () => {
+  const [problem] = auditCookieItems([cookie({ name: 'tracking', secure: false, sameSite: 'None' })], evidence())
+  const [review] = auditCookieItems([cookie({ name: 'session_token', secure: true, httpOnly: false, expires: -1 })], evidence())
+  const [normal] = auditCookieItems([cookie({ name: 'sid', secure: true, httpOnly: true, sameSite: 'Lax' })], evidence())
+  const notApplicable = COOKIE_AUDIT_TEST_ONLY.createCookieAuditMeta([], { candidateCount: 0, noTarget: true })
+  const [previousFalsePositive] = auditCookieItems([cookie({ name: 'theme', sameSite: '', secure: true, httpOnly: false })], evidence())
+
+  assert.equal(problem.status, 'error')
+  assert.equal(review.status, 'warn')
+  assert.equal(normal.status, 'ok')
+  assert.equal(notApplicable.noTarget, true)
+  assert.equal(previousFalsePositive.status, 'ok')
+})
+
 function evidence(overrides = {}) {
   return {
     targetUrl: 'https://www.example.com',

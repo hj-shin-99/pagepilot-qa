@@ -97,6 +97,20 @@ test('download audit helpers expose extension and mime matching rules', () => {
   assert.equal(DOWNLOAD_AUDIT_TEST_ONLY.normalizeDownloadAuditCandidate({ label: 'Export', href: '/export', url: 'https://example.com/export', method: 'POST' }, 'https://example.com', 0).skipReason.includes('POST'), true)
 })
 
+test('download audit phase 3-b fixtures cover status boundaries and HEAD zero-length false positive', () => {
+  const problem = classifyDownloadInspection(candidate(), { statusCode: 404, contentType: 'application/pdf', contentLength: 12 })
+  const review = classifyDownloadInspection(candidate(), { statusCode: 403, contentType: 'application/pdf', contentLength: null })
+  const normal = classifyDownloadInspection(candidate(), { statusCode: 200, contentType: 'application/pdf', contentLength: 2048 })
+  const excluded = classifyDownloadInspection(candidate({ skipReason: '정적 HTTP 검사 대상이 아닌 링크입니다.' }), { skipped: true })
+  const previousFalsePositive = classifyDownloadInspection(candidate(), { method: 'HEAD', statusCode: 200, contentType: 'application/pdf', contentDisposition: 'attachment; filename="file.pdf"', contentLength: 0 })
+
+  assert.equal(problem.status, 'error')
+  assert.equal(review.status, 'warn')
+  assert.equal(normal.status, 'ok')
+  assert.equal(excluded.status, 'info')
+  assert.equal(previousFalsePositive.status, 'warn')
+})
+
 function candidate(overrides = {}) {
   return {
     auditId: 'download-1',

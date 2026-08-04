@@ -63,6 +63,9 @@ export function classifyHoverObservation(candidate = {}, observation = {}) {
   }
 
   const kind = observation.kind || candidate.kindHint || 'ui-change'
+  if (kind === 'tooltip' && textOf(candidate.titleAttr) && !textOf(candidate.panelSelector) && observation.changed !== true) {
+    return { ...candidate, status: 'info', category: 'native-tooltip', note: '브라우저 기본 title tooltip은 DOM 변화로 확인할 수 없어 참고 항목으로 분류했습니다.' }
+  }
   if (observation.clipped === true) {
     return { ...candidate, status: 'warn', category: 'clipped', note: '노출된 패널이 viewport 밖으로 잘리거나 일부가 가려졌을 수 있습니다.' }
   }

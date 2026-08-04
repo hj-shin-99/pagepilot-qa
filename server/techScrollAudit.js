@@ -138,7 +138,9 @@ export function createScrollAuditItems(summary = {}) {
 
   const stickyIssues = []
   let stickyStatus = 'ok'
-  if (Number(last.blockingFixedElementCount || 0) > 0 || Number(last.fixedCoverageRatio || 0) >= BLOCKING_OVERLAY_RATIO) {
+  const blockingFixedElementCount = Number(last.blockingFixedElementCount || 0)
+  const hasBlockingFixedEvidence = blockingFixedElementCount > 0 || (last.blockingFixedElementCount === undefined && Number(last.fixedCoverageRatio || 0) >= BLOCKING_OVERLAY_RATIO)
+  if (hasBlockingFixedEvidence) {
     stickyStatus = 'warn'
     stickyIssues.push('고정 요소가 콘텐츠를 과도하게 가릴 가능성이 있습니다.')
   } else {

@@ -65,6 +65,20 @@ test('form audit meta reports no target safely', () => {
   assert.equal(meta.inspectedCount, 0)
 })
 
+test('form audit phase 3-b fixtures cover status boundaries and disabled required false positive', () => {
+  const problem = classifyFormAuditItem(candidate({ required: true, hasSubmitButton: true }), { submitAttempted: true, submitBlocked: false, networkRequestCount: 1 })
+  const review = classifyFormAuditItem(candidate({ staticIssues: ['label 또는 접근성 이름이 없습니다.'] }), {})
+  const normal = classifyFormAuditItem(candidate({ inputType: 'email', required: true, hasSubmitButton: true }), { requiredChecked: true, emailChecked: true, submitAttempted: true, validationState: { valueMissing: true, typeMismatch: true } })
+  const excluded = classifyFormAuditItem(candidate({ inputType: 'file', skipReason: '파일 input은 안전 정책상 조작하지 않습니다.' }), { skipped: true })
+  const previousFalsePositive = classifyFormAuditItem(candidate({ required: true, disabled: true, hasSubmitButton: true }), {})
+
+  assert.equal(problem.status, 'error')
+  assert.equal(review.status, 'warn')
+  assert.equal(normal.status, 'ok')
+  assert.equal(excluded.status, 'info')
+  assert.equal(previousFalsePositive.status, 'ok')
+})
+
 function candidate(overrides = {}) {
   return {
     auditId: 'form-1',

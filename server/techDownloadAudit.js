@@ -98,8 +98,14 @@ export function classifyDownloadInspection(candidate = {}, inspection = {}) {
   }
 
   if (contentLength === 0) {
-    status = 'error'
-    issues.push('0 byte 다운로드 응답이 감지되었습니다.')
+    const method = String(inspection.method || '').toUpperCase()
+    if (method === 'HEAD' && /attachment/i.test(contentDisposition)) {
+      status = status === 'error' ? 'error' : 'warn'
+      issues.push('HEAD 응답의 Content-Length가 0이라 실제 파일 크기 확인이 필요합니다.')
+    } else {
+      status = 'error'
+      issues.push('0 byte 다운로드 응답이 감지되었습니다.')
+    }
   }
 
   if (hasDownloadMimeMismatch(candidate.expectedExtension, contentType)) {
@@ -219,6 +225,7 @@ async function requestDownloadHeaders(api, url, method = 'HEAD') {
     const contentLength = Number(headers['content-length'] || headers['Content-Length'])
     return {
       statusCode: response.status(),
+      method,
       finalUrl: typeof response.url === 'function' ? response.url() : url,
       contentType,
       contentDisposition,

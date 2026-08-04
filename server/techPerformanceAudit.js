@@ -15,6 +15,7 @@ const SMALL_TEXT_RESOURCE_BYTES = 1024
 const LONG_CACHE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 const RENDER_BLOCKING_SCRIPT_BYTES = 60 * 1024
 const RENDER_BLOCKING_TOTAL_BYTES = 180 * 1024
+const PERFORMANCE_MEASUREMENT_NOTE = '성능 수치는 검사 환경, 네트워크 상태, 캐시 상태에 따라 달라질 수 있습니다.'
 const STATIC_DUPLICATE_TYPES = new Set(['script', 'stylesheet', 'image', 'font'])
 const TEXT_RESOURCE_TYPES = new Set(['document', 'script', 'stylesheet', 'fetch', 'xhr', 'other'])
 
@@ -100,7 +101,7 @@ function createOverallResourceItem(evidence = {}) {
     type: 'performance',
     status: transferBytes > LARGE_TOTAL_TRANSFER_BYTES ? 'warn' : 'ok',
     note: resourceCount > 0 ? `리소스 ${resourceCount}개 · 총 전송 ${formatBytes(transferBytes)}` : '리소스 전송량을 계산할 수 없었습니다.',
-    issues: lines,
+    issues: lines.concat(PERFORMANCE_MEASUREMENT_NOTE),
     owner: 'UID팀',
     sourceCount: resourceCount,
     contentLength: transferBytes || null,
@@ -149,6 +150,7 @@ function createSlowResourceItem(evidence = {}) {
 function createCompressionItem(evidence = {}) {
   const missingCompression = evidence.resources
     .filter((resource) => TEXT_RESOURCE_TYPES.has(resource.resourceType))
+    .filter((resource) => hasCompressibleContentType(resource.contentType))
     .filter((resource) => Number(resource.encodedBytes || resource.transferBytes || 0) > SMALL_TEXT_RESOURCE_BYTES)
     .filter((resource) => !/\b(br|gzip|deflate|zstd)\b/i.test(String(resource.contentEncoding || '')))
     .filter((resource) => !/image\//i.test(String(resource.contentType || '')))
@@ -359,6 +361,11 @@ function hasStrongCachePolicy(resource = {}) {
   if (maxAgeMatch && Number(maxAgeMatch[1]) >= LONG_CACHE_MAX_AGE_SECONDS) return true
   if (resource.etag || resource.lastModified || resource.expires) return true
   return false
+}
+
+function hasCompressibleContentType(contentType = '') {
+  const text = String(contentType || '').toLowerCase()
+  return /text\//.test(text) || /javascript|json|xml|svg|html|css/.test(text)
 }
 
 function looksFingerprintedAsset(url = '') {

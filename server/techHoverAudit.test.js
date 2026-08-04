@@ -55,6 +55,21 @@ test('hover audit meta reports no target safely', () => {
   assert.equal(meta.candidateCount, 0)
 })
 
+test('hover audit phase 3-b fixtures cover status boundaries and native tooltip false positive', () => {
+  const problem = classifyHoverObservation(candidate(), { blocked: true, error: 'hover failed' })
+  const review = classifyHoverObservation(candidate(), { changed: false, restored: true })
+  const normal = classifyHoverObservation(candidate({ kindHint: 'dropdown' }), { changed: true, restored: true, kind: 'dropdown' })
+  const notApplicable = HOVER_AUDIT_TEST_ONLY.createHoverAuditMeta([], { candidateCount: 0, noTarget: true })
+  const previousFalsePositive = classifyHoverObservation(candidate({ kindHint: 'tooltip', panelSelector: '', titleAttr: 'More information' }), { changed: false, restored: true, kind: 'tooltip' })
+
+  assert.equal(problem.status, 'error')
+  assert.equal(review.status, 'warn')
+  assert.equal(normal.status, 'ok')
+  assert.equal(notApplicable.noTarget, true)
+  assert.equal(previousFalsePositive.status, 'info')
+  assert.equal(previousFalsePositive.category, 'native-tooltip')
+})
+
 function candidate(overrides = {}) {
   return {
     auditId: 'hover-1',

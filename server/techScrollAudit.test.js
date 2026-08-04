@@ -91,3 +91,17 @@ test('scroll audit growth pass guard only continues on meaningful bottom growth'
   assert.equal(SCROLL_AUDIT_TEST_ONLY.shouldContinueScrollGrowthPass([{ scrollHeight: 1000, nearBottom: true }, { scrollHeight: 1080, nearBottom: true }]), true)
   assert.equal(SCROLL_AUDIT_TEST_ONLY.shouldContinueScrollGrowthPass([{ scrollHeight: 1000, nearBottom: false }, { scrollHeight: 1080, nearBottom: false }]), false)
 })
+
+test('scroll audit phase 3-b fixtures cover status boundaries and non-blocking fixed false positive', () => {
+  const problem = createScrollAuditItems({ initial: { canScroll: true, scrollHeight: 2200, viewportHeight: 720, scrollY: 0 }, observations: [{ canScroll: true, scrollHeight: 2200, viewportHeight: 720, scrollY: 0, nearBottom: false }], restored: { scrollY: 0 } })
+  const review = createScrollAuditItems({ initial: { canScroll: true, scrollHeight: 2200, viewportHeight: 720, scrollY: 0 }, observations: [{ canScroll: true, scrollHeight: 2200, viewportHeight: 720, scrollY: 1480, nearBottom: true, lazyImageCount: 1, unresolvedLazyImageCount: 1, fixedElementCount: 0, blockingFixedElementCount: 0, fixedCoverageRatio: 0 }], restored: { scrollY: 0 } })
+  const normal = createScrollAuditItems({ initial: { canScroll: true, scrollHeight: 2200, viewportHeight: 720, scrollY: 0 }, observations: [{ canScroll: true, scrollHeight: 2200, viewportHeight: 720, scrollY: 1480, nearBottom: true, lazyImageCount: 0, fixedElementCount: 0, blockingFixedElementCount: 0, fixedCoverageRatio: 0 }], restored: { scrollY: 0 } })
+  const notApplicable = SCROLL_AUDIT_TEST_ONLY.createScrollAuditMeta([], { candidateCount: 0, noTarget: true })
+  const previousFalsePositive = createScrollAuditItems({ initial: { canScroll: true, scrollHeight: 2200, viewportHeight: 720, scrollY: 0 }, observations: [{ canScroll: true, scrollHeight: 2200, viewportHeight: 720, scrollY: 1480, nearBottom: true, lazyImageCount: 0, fixedElementCount: 1, blockingFixedElementCount: 0, fixedCoverageRatio: 0.45 }], restored: { scrollY: 0 } })
+
+  assert.equal(problem[0].status, 'error')
+  assert.equal(review[1].status, 'warn')
+  assert.equal(normal.every((item) => item.status === 'ok'), true)
+  assert.equal(notApplicable.noTarget, true)
+  assert.equal(previousFalsePositive[2].status, 'ok')
+})

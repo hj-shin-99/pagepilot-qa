@@ -84,7 +84,7 @@ export function classifyFormAuditItem(candidate = {}, observation = {}) {
     else if (candidate.hasPattern === true) issues.push('전화번호 또는 pattern validation 반응을 확인하지 못했습니다.')
   }
 
-  if (submitAttempted !== true && candidate.hasSubmitButton === true && candidate.required === true) issues.push('빈 상태 submit 반응을 확인하지 못했습니다.')
+  if (submitAttempted !== true && candidate.hasSubmitButton === true && candidate.required === true && isInteractiveFormControl(candidate)) issues.push('빈 상태 submit 반응을 확인하지 못했습니다.')
   if (candidate.hasSubmitButton === false && candidate.kind !== 'form-control') issues.push('submit 역할 버튼이 없습니다.')
   if (networkRequestCount > 0) issues.push('실제 네트워크 전송 시도가 감지되었습니다.')
 
@@ -473,6 +473,10 @@ function incrementAuditCount(instrumentation, key) {
 
 function textOf(value) {
   return String(value || '').trim()
+}
+
+function isInteractiveFormControl(candidate = {}) {
+  return candidate.disabled !== true && candidate.readOnly !== true && candidate.inputType !== 'file'
 }
 
 export const FORM_AUDIT_TEST_ONLY = {

@@ -68,6 +68,20 @@ test('modal audit meta reports no target safely', () => {
   assert.equal(meta.candidateCount, 0)
 })
 
+test('modal audit phase 3-b fixtures cover status boundaries and non-scroll page lock false positive', () => {
+  const problem = classifyModalObservation(candidate(), { opened: false, error: 'dialog-not-visible' })
+  const review = classifyModalObservation(candidate(), { opened: true, visibleDialogCount: 1, accessibleName: '', hasCloseButton: true, escClosed: true, focusMovedInside: true, focusReturned: true, scrollLocked: true, closable: true })
+  const normal = classifyModalObservation(candidate(), { opened: true, visibleDialogCount: 1, accessibleName: 'Details', hasCloseButton: true, escClosed: true, focusMovedInside: true, focusReturned: true, scrollLocked: true, closable: true })
+  const notApplicable = MODAL_AUDIT_TEST_ONLY.createModalAuditMeta([], { candidateCount: 0, noTarget: true })
+  const previousFalsePositive = classifyModalObservation(candidate(), { opened: true, visibleDialogCount: 1, accessibleName: 'Details', hasCloseButton: true, escClosed: true, focusMovedInside: true, focusReturned: true, scrollLocked: false, scrollLockApplicable: false, closable: true })
+
+  assert.equal(problem.status, 'error')
+  assert.equal(review.status, 'warn')
+  assert.equal(normal.status, 'ok')
+  assert.equal(notApplicable.noTarget, true)
+  assert.equal(previousFalsePositive.status, 'ok')
+})
+
 function candidate(overrides = {}) {
   return {
     auditId: 'modal-1',

@@ -83,7 +83,7 @@ export function classifyModalObservation(candidate = {}, observation = {}) {
   if (observation.escClosed !== true) warnings.push('ESC 닫기 동작을 확인하지 못했습니다.')
   if (observation.focusMovedInside !== true) warnings.push('포커스가 모달 내부로 이동하지 않았습니다.')
   if (observation.focusReturned !== true) warnings.push('모달 종료 후 트리거 포커스 복귀를 확인하지 못했습니다.')
-  if (observation.scrollLocked !== true) warnings.push('body scroll lock을 확인하지 못했습니다.')
+  if (observation.scrollLockApplicable !== false && observation.scrollLocked !== true) warnings.push('body scroll lock을 확인하지 못했습니다.')
   if (observation.backdropChecked === true && observation.backdropClosed !== true) warnings.push('backdrop 클릭 닫기 동작이 불명확합니다.')
 
   return {
@@ -229,6 +229,7 @@ async function inspectModalCandidate(page, targetUrl, candidate) {
     focusMovedInside: openState.focusMovedInside,
     focusReturned: postCloseState.focusReturned,
     scrollLocked: openState.scrollLocked,
+    scrollLockApplicable: openState.pageCanScroll === true,
     closable,
     consoleErrorCount: consoleErrors.length,
     pageErrorCount: pageErrors.length,
@@ -304,6 +305,7 @@ async function readModalState(page, candidate) {
       focusMovedInside: Boolean(dialog && activeElement instanceof HTMLElement && dialog.contains(activeElement)),
       focusReturned: Boolean(trigger && activeElement instanceof HTMLElement && activeElement === trigger),
       scrollLocked: isScrollLocked(),
+      pageCanScroll: Math.max(document.documentElement.scrollHeight || 0, document.body?.scrollHeight || 0) > (window.innerHeight || document.documentElement.clientHeight || 0) + 4,
       dialogRect: dialogRect ? { x: dialogRect.x, y: dialogRect.y, width: dialogRect.width, height: dialogRect.height } : null,
     }
 
@@ -343,7 +345,7 @@ async function readModalState(page, candidate) {
       if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(value)
       return String(value || '').replace(/[^a-zA-Z0-9_-]/g, '\\$&')
     }
-  }, candidate).catch(() => ({ visibleDialogCount: 0, accessibleName: '', closeButtonSelector: '', focusMovedInside: false, focusReturned: false, scrollLocked: false, dialogRect: null }))
+  }, candidate).catch(() => ({ visibleDialogCount: 0, accessibleName: '', closeButtonSelector: '', focusMovedInside: false, focusReturned: false, scrollLocked: false, pageCanScroll: false, dialogRect: null }))
 }
 
 function incrementAuditCount(instrumentation, key) {

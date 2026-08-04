@@ -165,6 +165,21 @@ test('performance audit source does not use lighthouse or site-specific hardcodi
   assert.equal(PERFORMANCE_AUDIT_TEST_ONLY.normalizeResourceType('xmlhttprequest'), 'fetch')
 })
 
+test('performance audit phase 3-b fixtures cover status boundaries and missing header false positive', () => {
+  const problem = auditPerformanceResources('https://example.com', snapshot({ performanceInfo: { resources: [], renderBlockingCandidates: [] } }), responses([{ url: 'https://example.com/app.js', resourceType: 'script', statusCode: 500 }]))
+  const review = auditPerformanceResources('https://example.com', snapshot({ performanceInfo: { resources: [resource({ url: 'https://example.com/large.js', resourceType: 'script', transferSize: 360000, encodedBodySize: 360000 })], renderBlockingCandidates: [] } }), responses())
+  const normal = auditPerformanceResources('https://example.com', snapshot({ performanceInfo: { resources: [resource({ url: 'https://example.com/app.js', resourceType: 'script', transferSize: 90000, encodedBodySize: 90000 })], renderBlockingCandidates: [] } }), responses([{ url: 'https://example.com/app.js', resourceType: 'script', contentType: 'application/javascript', contentEncoding: 'br', statusCode: 200 }]))
+  const notApplicable = auditPerformanceResources('https://example.com', snapshot(), responses())
+  const previousFalsePositive = auditPerformanceResources('https://example.com', snapshot({ performanceInfo: { resources: [resource({ url: 'https://example.com/app.js', resourceType: 'script', transferSize: 90000, encodedBodySize: 90000 })], renderBlockingCandidates: [] } }), responses([{ url: 'https://example.com/app.js', resourceType: 'script', statusCode: 200 }]))
+
+  assert.equal(problem.items.find((item) => item.category === 'failed-resource').status, 'error')
+  assert.equal(review.items.find((item) => item.category === 'large-resource').status, 'warn')
+  assert.equal(normal.items.find((item) => item.category === 'compression').status, 'ok')
+  assert.equal(notApplicable.meta.noTarget, true)
+  assert.equal(previousFalsePositive.items.find((item) => item.category === 'compression').status, 'ok')
+  assert.equal(previousFalsePositive.items.find((item) => item.category === 'overview').issues.some((issue) => issue.includes('검사 환경')), true)
+})
+
 function snapshot(overrides = {}) {
   return {
     performanceInfo: { resources: [], renderBlockingCandidates: [] },

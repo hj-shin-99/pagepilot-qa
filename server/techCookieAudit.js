@@ -166,7 +166,7 @@ function normalizeCookieResult(cookie = {}, index = 0, evidence = {}, conflicts 
     issues.push('third-party 쿠키가 감지되어 출처와 필요성을 참고로 확인해 주세요.')
   }
 
-  if (status === 'ok' && sameSite === 'Unspecified') {
+  if (status === 'ok' && sameSite === 'Unspecified' && likelySensitive) {
     status = 'warn'
     issues.push('SameSite 속성을 명확히 확인하지 못했습니다.')
   }

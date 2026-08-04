@@ -9,11 +9,12 @@ const UPSCALE_TOLERANCE_RATIO = 0.75
 const OVERSIZE_TOLERANCE_RATIO = 4
 const DISTORTION_TOLERANCE_RATIO = 0.12
 
-export async function auditImages(browser, targetUrl, instrumentation = null) {
+export async function auditImages(browser, targetUrl, instrumentation = null, contextOptions = {}) {
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
     viewport: { width: 1280, height: 720 },
     serviceWorkers: 'block',
+    ...contextOptions,
   })
 
   try {

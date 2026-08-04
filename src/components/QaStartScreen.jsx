@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import DeviceScanSelector from './DeviceScanSelector'
 import TechScanOptions from './TechScanOptions'
 import { isValidFigmaUrl } from '../utils/scanSession'
 
@@ -11,6 +12,7 @@ function QaStartScreen({
   isScanning,
   isWebUrlReady,
   techScanOptions,
+  devices,
   onUrlChange,
   onFigmaUrlChange,
   onOpenHistory,
@@ -18,6 +20,7 @@ function QaStartScreen({
   onUrlBlur,
   onUrlConfirm,
   onTechScanOptionsChange,
+  onDevicesChange,
 }) {
   const isFigmaUrlReady = isValidFigmaUrl(figmaUrl.trim())
   const isWebUrlInvalid = Boolean(inputError)
@@ -66,7 +69,7 @@ function QaStartScreen({
       <header className="start-header" aria-label="PagePilot QA">
         <span className="start-brand">
           <strong>PagePilot QA</strong>
-          <span className="start-version">v0.6.0</span>
+          <span className="start-version">v0.7.0</span>
         </span>
         <button className="start-history-button" type="button" onClick={onOpenHistory}>History</button>
       </header>
@@ -125,6 +128,11 @@ function QaStartScreen({
                   </div>
 
                   <div className="start-step start-step-options">
+                    <DeviceScanSelector
+                      devices={devices}
+                      isScanning={!isWebUrlReady || isScanning}
+                      onDevicesChange={onDevicesChange}
+                    />
                     <TechScanOptions
                       isScanning={!isWebUrlReady || isScanning}
                       techScanOptions={techScanOptions}

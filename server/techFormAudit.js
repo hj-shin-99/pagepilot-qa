@@ -1,11 +1,12 @@
 const FORM_AUDIT_TIMEOUT_MS = 6000
 const MAX_FORM_CANDIDATES = 18
 
-export async function auditForms(browser, targetUrl, instrumentation = null) {
+export async function auditForms(browser, targetUrl, instrumentation = null, contextOptions = {}) {
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
     viewport: { width: 1280, height: 720 },
     serviceWorkers: 'block',
+    ...contextOptions,
   })
 
   try {

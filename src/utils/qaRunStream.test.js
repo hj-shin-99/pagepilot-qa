@@ -14,6 +14,7 @@ test('appendNdjsonChunk parses complete lines and carries partial JSON forward',
 
 test('requestQaRunStream reads progress events and returns final qa result', async () => {
   const progressEvents = []
+  const requests = []
   const response = createStreamResponse([
     '{"type":"progress","stage":"web_collect","completedUnits":0,"totalUnits":2,"message":"start"}\n{"type":"progress",',
     '"stage":"result_prepare","completedUnits":2,"totalUnits":2,"message":"done"}\n',
@@ -24,14 +25,19 @@ test('requestQaRunStream reads progress events and returns final qa result', asy
     webUrl: 'https://example.com',
     figmaUrl: '',
     scanOptions: { url: false },
+    devices: ['mobile', 'mobile', 'invalid'],
     onProgress: (event) => progressEvents.push(event),
-    fetchFn: async () => response,
+    fetchFn: async (url, options) => {
+      requests.push({ url, options })
+      return response
+    },
   })
 
   assert.deepEqual(progressEvents.map((event) => event.stage), ['web_collect', 'result_prepare'])
   assert.equal(result.tech.status, 'success')
   assert.equal(result.shouldSaveCombined, false)
   assert.equal(result.webUrl, 'https://example.com')
+  assert.deepEqual(JSON.parse(requests[0].options.body).devices, ['mobile'])
 })
 
 test('requestQaRunStream marks missing stream support as json-fallback eligible', async () => {

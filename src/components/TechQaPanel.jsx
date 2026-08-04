@@ -3,13 +3,20 @@ import { createEmptyTechQaStatusCounts, createTechQaViewModel, formatTechQaStatu
 import { createTechPanelDisplayModel, getBasicCheckDetailId, getMarkupDetailId } from '../utils/techQaPanelView'
 import { formatScanTime } from '../utils/report'
 import { createTechQaTitle } from '../utils/techTitle'
+import { createDeviceDescriptor, formatDeviceViewport, normalizeDeviceIds } from '../../shared/deviceProfiles.js'
 
 const MARKUP_ACCESSIBILITY_PRIMARY_IDS = ['meta', 'image-alt', 'external-links']
 const MARKUP_ACCESSIBILITY_DETAIL_IDS = ['meta', 'image-alt', 'external-links', 'headings', 'duplicate-ids', 'forms', 'unlabeled-clickables']
 
 function TechQaPanel({ result }) {
-  const view = createTechQaViewModel(result)
-  const display = createTechPanelDisplayModel(result, view)
+  const deviceEntries = createTechDeviceEntries(result)
+  const defaultDeviceId = getDefaultActiveDeviceId(deviceEntries)
+  const [activeDeviceId, setActiveDeviceId] = useState(defaultDeviceId)
+  const resolvedActiveDeviceId = deviceEntries.some((entry) => entry.deviceId === activeDeviceId) ? activeDeviceId : defaultDeviceId
+  const activeDeviceEntry = deviceEntries.find((entry) => entry.deviceId === resolvedActiveDeviceId) || deviceEntries[0]
+  const activeResult = activeDeviceEntry?.result || result
+  const view = createTechQaViewModel(activeResult)
+  const display = createTechPanelDisplayModel(activeResult, view)
   const linkGroups = getVisibleLinkGroups(display.detailRows.linkRows)
   const markupItems = createMarkupAccessibilityItems(display.detailRows.markupRows)
   const techTitle = createTechQaTitle(view.title)
@@ -17,12 +24,17 @@ function TechQaPanel({ result }) {
 
   return (
     <section className="section-stack tech-qa-panel tech-qa-compact">
+      <DeviceSwitcher entries={deviceEntries} activeDeviceId={activeDeviceEntry?.deviceId} onDeviceChange={setActiveDeviceId} />
+      {activeDeviceEntry?.status === 'error' ? <DeviceFailure entry={activeDeviceEntry} /> : null}
+      {activeDeviceEntry?.status === 'error' ? null : (
+      <>
       <header className="audit-header tech-qa-header">
         <div className="audit-header-top">
           <div>
-            <p className="eyebrow">Tech QA Report · {formatScanTime(result.scannedAt)}</p>
+            <p className="eyebrow">Tech QA Report · {formatScanTime(activeResult.scannedAt)}</p>
             <h2>{techTitle}</h2>
             <p className="target-url">{view.targetUrl}</p>
+            <p className="panel-note relaxed-note">{formatActiveDeviceMeta(activeDeviceEntry)}</p>
           </div>
         </div>
         <div className="summary-box">{formatTechStatusMessage(display)}</div>
@@ -191,12 +203,80 @@ function TechQaPanel({ result }) {
           <strong>raw selector, request, count</strong>
         </summary>
         <div className="tech-accordion-body">
-          <DeveloperInfo view={view} result={result} scanOptions={scanOptions} />
-          <RawDetails view={view} result={result} scanOptions={scanOptions} />
+          <DeveloperInfo view={view} result={activeResult} scanOptions={scanOptions} />
+          <RawDetails view={view} result={activeResult} scanOptions={scanOptions} />
         </div>
       </details>
+      </>
+      )}
     </section>
   )
+}
+
+function DeviceSwitcher({ entries, activeDeviceId, onDeviceChange }) {
+  if (!Array.isArray(entries) || entries.length <= 1) return <div className="tech-device-switcher"><span className="tech-device-meta">{formatActiveDeviceMeta(entries?.[0])}</span></div>
+  return (
+    <div className="tech-device-switcher" aria-label="Tech QA 기기 결과 선택">
+      <div className="tech-device-tabs" role="tablist" aria-label="검사 기기">
+        {entries.map((entry) => (
+          <button
+            className={`tech-device-tab ${entry.deviceId === activeDeviceId ? 'is-active' : ''} ${entry.status === 'error' ? 'is-error' : ''}`}
+            type="button"
+            role="tab"
+            aria-selected={entry.deviceId === activeDeviceId}
+            key={entry.deviceId}
+            onClick={() => onDeviceChange(entry.deviceId)}
+          >
+            {entry.deviceLabel}
+          </button>
+        ))}
+      </div>
+      <span className="tech-device-meta">{formatActiveDeviceMeta(entries.find((entry) => entry.deviceId === activeDeviceId) || entries[0])}</span>
+    </div>
+  )
+}
+
+function DeviceFailure({ entry }) {
+  return (
+    <article className="detail-card tech-device-failure-card" aria-label={`${entry.deviceLabel} 검사 불가`}>
+      <span className="status-badge status-unavailable">검사 불가</span>
+      <h3>{entry.deviceLabel} 환경을 검사할 수 없습니다.</h3>
+      <p className="panel-note relaxed-note">{entry.error || '해당 기기 환경의 Tech QA를 완료하지 못했습니다.'}</p>
+      <p className="panel-note relaxed-note">실패 사유: {entry.errorType || 'unknown'}</p>
+    </article>
+  )
+}
+
+function createTechDeviceEntries(result = {}) {
+  const entries = Array.isArray(result.deviceResults) && result.deviceResults.length > 0
+    ? result.deviceResults
+    : [{ ...createDeviceDescriptor(result.deviceId || 'desktop'), status: 'success', result, error: '', errorType: '' }]
+  return entries.map((entry) => {
+    const descriptor = createDeviceDescriptor(entry.deviceId || 'desktop')
+    return {
+      ...descriptor,
+      ...entry,
+      viewport: entry.viewport || descriptor.viewport,
+      deviceLabel: entry.deviceLabel || descriptor.deviceLabel,
+      status: entry.status === 'error' ? 'error' : 'success',
+      result: entry.result && typeof entry.result === 'object' ? entry.result : null,
+    }
+  })
+}
+
+function getDefaultActiveDeviceId(entries = []) {
+  const normalizedDevices = normalizeDeviceIds(entries.map((entry) => entry.deviceId))
+  if (normalizedDevices.includes('desktop')) return 'desktop'
+  return entries[0]?.deviceId || 'desktop'
+}
+
+function formatActiveDeviceMeta(entry = {}) {
+  if (!entry?.deviceId) return formatDeviceViewport('desktop')
+  const viewport = entry.viewport || {}
+  const width = Number(viewport.width || 0)
+  const height = Number(viewport.height || 0)
+  const size = width > 0 && height > 0 ? `${width} × ${height}` : formatDeviceViewport(entry.deviceId).split(' · ')[1]
+  return `${entry.deviceLabel || entry.deviceId} · ${size}${entry.hasTouch ? ' · Touch' : ''}`
 }
 
 function TechCompletionCard({ completion }) {

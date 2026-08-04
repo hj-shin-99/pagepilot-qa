@@ -126,14 +126,14 @@ export function summarizeClickActionAudit(items = [], meta = {}) {
   }
 }
 
-export async function auditClickableActions(browser, targetUrl, candidates = [], instrumentation = null) {
+export async function auditClickableActions(browser, targetUrl, candidates = [], instrumentation = null, contextOptions = {}) {
   const classified = (Array.isArray(candidates) ? candidates : []).map(classifyClickableCandidate)
   const safeCandidates = classified.filter((item) => item.safeClickEligible && item.actionClassification !== 'safe-click-skipped' && item.actionClassification !== 'verified-working').slice(0, MAX_SAFE_CLICK_CANDIDATES)
   let safeClickAttemptCount = 0
   const safeResults = new Map()
 
   if (safeCandidates.length > 0) {
-    const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1280, height: 720 }, serviceWorkers: 'block' })
+    const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1280, height: 720 }, serviceWorkers: 'block', ...contextOptions })
     try {
       await context.route('**/*', async (route) => {
         if (route.request().method().toUpperCase() === 'POST') {

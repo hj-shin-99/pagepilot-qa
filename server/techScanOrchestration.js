@@ -57,6 +57,7 @@ export async function runOptionalTechAudits({
   auditPerformanceResources,
   auditSeoReadiness,
   onProgress,
+  contextOptions = {},
 }) {
   const normalizedOptions = normalizeTechScanOptions(techScanOptions)
   const safeSnapshot = snapshot && typeof snapshot === 'object' ? snapshot : { clickableCandidates: [], interactionTargets: [], links: [] }
@@ -74,7 +75,7 @@ export async function runOptionalTechAudits({
   let seoAuditResult = createSkippedInteractionAuditResult()
 
   if (normalizedOptions.click) {
-    clickActionAuditResult = await auditClickableActions(browser, targetUrl, safeSnapshot.clickableCandidates || [], instrumentation).catch((error) => ({
+    clickActionAuditResult = await auditClickableActions(browser, targetUrl, safeSnapshot.clickableCandidates || [], instrumentation, contextOptions).catch((error) => ({
       items: [],
       meta: { candidateCount: safeSnapshot.clickableCandidates?.length || 0, safeClickAttemptCount: 0, safeClickLimit: 0, error: error instanceof Error ? error.message : 'click audit failed' },
     }))
@@ -83,7 +84,7 @@ export async function runOptionalTechAudits({
 
   if (normalizedOptions.landing) {
     const landingSources = normalizedOptions.click ? clickActionAuditResult.items : createLandingAuditSourceItems(safeSnapshot.interactionTargets)
-    landingAuditResult = await auditLandingPages(browser, targetUrl, landingSources, instrumentation).catch((error) => ({
+    landingAuditResult = await auditLandingPages(browser, targetUrl, landingSources, instrumentation, contextOptions).catch((error) => ({
       items: [],
       meta: {
         candidateCount: 0,
@@ -101,7 +102,7 @@ export async function runOptionalTechAudits({
   }
 
   if (normalizedOptions.form) {
-    formAuditResult = await auditForms(browser, targetUrl, instrumentation).catch((error) => ({
+    formAuditResult = await auditForms(browser, targetUrl, instrumentation, contextOptions).catch((error) => ({
       items: [],
       meta: {
         candidateCount: 0,
@@ -118,7 +119,7 @@ export async function runOptionalTechAudits({
   }
 
   if (normalizedOptions.hover) {
-    hoverAuditResult = await auditHoverInteractions(browser, targetUrl, instrumentation).catch((error) => ({
+    hoverAuditResult = await auditHoverInteractions(browser, targetUrl, instrumentation, contextOptions).catch((error) => ({
       items: [],
       meta: {
         candidateCount: 0,
@@ -136,7 +137,7 @@ export async function runOptionalTechAudits({
 
   if (normalizedOptions.modal) {
     const modalClickItems = normalizedOptions.click ? clickActionAuditResult.items : []
-    modalAuditResult = await auditModalInteractions(browser, targetUrl, modalClickItems, instrumentation).catch((error) => ({
+    modalAuditResult = await auditModalInteractions(browser, targetUrl, modalClickItems, instrumentation, contextOptions).catch((error) => ({
       items: [],
       meta: {
         candidateCount: 0,
@@ -153,7 +154,7 @@ export async function runOptionalTechAudits({
   }
 
   if (normalizedOptions.scroll) {
-    scrollAuditResult = await auditScrollInteractions(browser, targetUrl, instrumentation).catch((error) => ({
+    scrollAuditResult = await auditScrollInteractions(browser, targetUrl, instrumentation, contextOptions).catch((error) => ({
       items: [],
       meta: {
         candidateCount: 0,
@@ -204,7 +205,7 @@ export async function runOptionalTechAudits({
   }
 
   if (normalizedOptions.cookie) {
-    cookieAuditResult = await auditCookies(browser, targetUrl, instrumentation).catch((error) => ({
+    cookieAuditResult = await auditCookies(browser, targetUrl, instrumentation, contextOptions).catch((error) => ({
       items: [],
       meta: {
         candidateCount: 0,
@@ -221,7 +222,7 @@ export async function runOptionalTechAudits({
   }
 
   if (normalizedOptions.image) {
-    imageAuditResult = await auditImages(browser, targetUrl, instrumentation).catch((error) => ({
+    imageAuditResult = await auditImages(browser, targetUrl, instrumentation, contextOptions).catch((error) => ({
       items: [],
       meta: {
         candidateCount: 0,

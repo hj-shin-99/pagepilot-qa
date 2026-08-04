@@ -1,4 +1,5 @@
 import { normalizeTechScanOptions, TECH_SCAN_OPTION_KEYS } from '../shared/techScanOptions.js'
+import { getDeviceProfile, normalizeDeviceIds } from '../shared/deviceProfiles.js'
 
 export const QA_PROGRESS_STAGES = Object.freeze({
   WEB_COLLECT: 'web_collect',
@@ -45,21 +46,32 @@ const TECH_PROGRESS_OPTION_KEYS = Object.freeze([
   'url',
 ])
 
-export function createQaProgressPlan({ figmaUrl = '', scanOptions } = {}) {
+export function createQaProgressPlan({ figmaUrl = '', scanOptions, devices } = {}) {
   const normalizedScanOptions = normalizeTechScanOptions(scanOptions)
-  const techUnits = TECH_PROGRESS_OPTION_KEYS
+  const normalizedDevices = normalizeDeviceIds(devices)
+  const techUnitKeys = TECH_PROGRESS_OPTION_KEYS
     .filter((key) => TECH_SCAN_OPTION_KEYS.includes(key))
     .filter((key) => normalizedScanOptions[key] === true)
-    .map((key) => ({
-      key: `tech_${key}`,
+  const deviceUnits = normalizedDevices.flatMap((deviceId) => {
+    const profile = getDeviceProfile(deviceId)
+    return BASE_PROGRESS_UNITS.map((unit) => ({
+      ...unit,
+      key: `${deviceId}:${unit.key}`,
+      deviceId,
+      deviceLabel: profile.label,
+      message: normalizedDevices.length > 1 ? `${profile.label} 환경의 ${unit.message}` : unit.message,
+    })).concat(techUnitKeys.map((key) => ({
+      key: `${deviceId}:tech_${key}`,
       stage: QA_PROGRESS_STAGES.TECH_AUDIT,
       scope: `tech:${key}`,
-      message: '선택한 Tech QA 항목을 점검하고 있습니다.',
-    }))
+      deviceId,
+      deviceLabel: profile.label,
+      message: normalizedDevices.length > 1 ? `${profile.label} 환경의 선택한 Tech QA 항목을 점검하고 있습니다.` : '선택한 Tech QA 항목을 점검하고 있습니다.',
+    })))
+  })
 
   const units = [
-    ...BASE_PROGRESS_UNITS,
-    ...techUnits,
+    ...deviceUnits,
     ...(figmaUrl ? VISUAL_PROGRESS_UNITS : []),
     FINAL_PROGRESS_UNIT,
   ]
@@ -71,8 +83,8 @@ export function createQaProgressPlan({ figmaUrl = '', scanOptions } = {}) {
   }
 }
 
-export function createQaProgressReporter({ figmaUrl = '', scanOptions, onProgress } = {}) {
-  const plan = createQaProgressPlan({ figmaUrl, scanOptions })
+export function createQaProgressReporter({ figmaUrl = '', scanOptions, devices, onProgress } = {}) {
+  const plan = createQaProgressPlan({ figmaUrl, scanOptions, devices })
   const unitsByKey = new Map(plan.units.map((unit) => [unit.key, unit]))
   const completedKeys = new Set()
   let started = false
@@ -89,13 +101,16 @@ export function createQaProgressReporter({ figmaUrl = '', scanOptions, onProgres
       completedUnits: 0,
       totalUnits: plan.totalUnits,
       message: firstUnit.message,
+      deviceId: firstUnit.deviceId,
+      deviceLabel: firstUnit.deviceLabel,
     })
   }
 
   function complete(unitKey, overrides = {}) {
-    const unit = unitsByKey.get(unitKey)
-    if (!unit || completedKeys.has(unitKey)) return
-    completedKeys.add(unitKey)
+    const normalizedUnitKey = unitsByKey.has(unitKey) ? unitKey : `desktop:${unitKey}`
+    const unit = unitsByKey.get(normalizedUnitKey)
+    if (!unit || completedKeys.has(normalizedUnitKey)) return
+    completedKeys.add(normalizedUnitKey)
     emitQaProgress(onProgress, {
       type: 'progress',
       stage: unit.stage,

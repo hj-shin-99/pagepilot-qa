@@ -1,3 +1,5 @@
+import { normalizeDeviceIds } from '../../shared/deviceProfiles.js'
+
 const HISTORY_KEY = 'pagepilot-qa-history-v3'
 const LEGACY_HISTORY_KEY = 'pagepilot-qa-history-v2'
 const MAX_HISTORY_ITEMS = 10
@@ -78,6 +80,7 @@ function sanitizeHistoryItem(item, index = 0) {
     url,
     webUrl: url,
     figmaUrl,
+    devices: normalizeDeviceIds(item.devices || result?.devices || tech?.devices),
     scannedAt,
     createdAt: getValidDate(item.createdAt || scannedAt),
     summary: getString(item.summary),
@@ -166,6 +169,7 @@ function sanitizeSessionBranch(branch) {
     summary: getString(branch.summary),
     compactResult: branch.compactResult && typeof branch.compactResult === 'object' ? branch.compactResult : null,
     scanOptions: branch.scanOptions && typeof branch.scanOptions === 'object' ? branch.scanOptions : null,
+    devices: normalizeDeviceIds(branch.devices || branch.compactResult?.devices),
     error: getString(branch.error),
   }
 }

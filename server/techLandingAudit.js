@@ -5,7 +5,7 @@ const ACCESS_LIMIT_PATTERN = /(access denied|forbidden|not authorized|unauthoriz
 const REDIRECT_FAILURE_PATTERN = /(redirect|too many redirects|ERR_TOO_MANY_REDIRECTS|maximum redirects)/i
 const CRITICAL_CONSOLE_PATTERN = /(ReferenceError|TypeError|SyntaxError|RangeError|ChunkLoadError|Hydration|hydration|cannot read properties|failed to fetch dynamically imported module|route|router|render|mount|unhandled)/i
 
-export async function auditLandingPages(browser, targetUrl, clickItems = [], instrumentation = null) {
+export async function auditLandingPages(browser, targetUrl, clickItems = [], instrumentation = null, contextOptions = {}) {
   const candidates = createLandingAuditCandidates(clickItems, targetUrl)
   if (candidates.length === 0) {
     return {
@@ -18,6 +18,7 @@ export async function auditLandingPages(browser, targetUrl, clickItems = [], ins
     ignoreHTTPSErrors: true,
     viewport: { width: 1280, height: 720 },
     serviceWorkers: 'block',
+    ...contextOptions,
   })
 
   if (instrumentation && typeof instrumentation === 'object') {

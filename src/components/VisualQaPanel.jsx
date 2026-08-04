@@ -15,7 +15,7 @@ import { createCoreVisualIssues } from '../utils/visualDisplayHierarchy.js'
 import { createVisualIssueGroups } from '../utils/visualIssueGroups.js'
 import { createVisualQaTitle } from '../utils/visualTitle'
 
-function VisualQaPanel({ result, aiReview, aiReviewState = 'idle', pageTitle }) {
+function VisualQaPanel({ result, aiReview, aiReviewState = 'idle', pageTitle, deviceNote = '' }) {
   const cards = createVisualIssueCards(result)
   const meta = result.meta || {}
   const aiHints = result.aiHints || {}
@@ -48,6 +48,7 @@ function VisualQaPanel({ result, aiReview, aiReviewState = 'idle', pageTitle }) 
             <p className="eyebrow">Visual QA Report · {formatDate(meta.createdAt)}</p>
             <h2>{visualTitle}</h2>
             <p className="target-url">{meta.webUrl}</p>
+            {deviceNote ? <p className="panel-note relaxed-note">{deviceNote}</p> : null}
           </div>
         </div>
         <div className="summary-box">{formatIssueCountSummary(coreGroupMeta.groupedIssueCount ?? coreIssues.length)}</div>

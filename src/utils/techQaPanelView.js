@@ -1,3 +1,4 @@
+import { formatDeviceList } from '../../shared/deviceProfiles.js'
 import { getTechQaStatusLabel, normalizeTechQaDisplayText } from './techQa.js'
 
 const MARKUP_ACCESSIBILITY_PRIMARY_IDS = ['meta', 'image-alt', 'external-links']
@@ -430,6 +431,7 @@ function hasObjectKeys(value) {
 }
 
 function getEnvironmentLabel(result = {}) {
+  if (Array.isArray(result.devices) && result.devices.length > 0) return formatDeviceList(result.devices)
   const hasDesktop = Number(result.meta?.desktopPageCount || 0) > 0 || result.accessible !== undefined || result.httpStatus !== undefined
   const hasMobile = Number(result.meta?.mobilePageCount || 0) > 0 || Boolean(result.mobile)
   if (hasDesktop && hasMobile) return 'Desktop + Mobile'

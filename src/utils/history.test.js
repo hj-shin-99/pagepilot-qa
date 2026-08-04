@@ -41,6 +41,7 @@ test('history reads legacy items without type safely', () => {
   const items = loadHistoryItems()
   assert.equal(items[0].type, 'tech')
   assert.equal(items[1].type, 'visual')
+  assert.deepEqual(items[0].devices, ['desktop'])
 })
 
 test('history stores and restores combined sessions', () => {
@@ -76,6 +77,7 @@ test('history stores and restores combined sessions', () => {
   assert.equal(item.tech.status, 'error')
   assert.equal(item.tech.error, 'failed')
   assert.equal(item.tech.scanOptions.url, false)
+  assert.deepEqual(item.devices, ['desktop'])
   assert.equal(item.aiReview.meta.openAiCalled, true)
   assert.equal(item.aiReview.meta.model, 'gpt-4.1-mini')
   assert.equal(item.aiReview.review.releaseDecision, 'caution')
@@ -92,7 +94,7 @@ test('history deletes one item without changing stored item schema', () => {
 
   assert.equal(remaining.length, 1)
   assert.equal(remaining[0].id, 't1')
-  assert.deepEqual(Object.keys(remaining[0]), ['type', 'id', 'url', 'webUrl', 'figmaUrl', 'scannedAt', 'createdAt', 'summary', 'totalIssueCount', 'counts', 'topIssueSummaries', 'designImageFilenames', 'result', 'visual', 'tech', 'aiReview'])
+  assert.deepEqual(Object.keys(remaining[0]), ['type', 'id', 'url', 'webUrl', 'figmaUrl', 'devices', 'scannedAt', 'createdAt', 'summary', 'totalIssueCount', 'counts', 'topIssueSummaries', 'designImageFilenames', 'result', 'visual', 'tech', 'aiReview'])
   assert.equal(loadHistoryItems()[0].id, 't1')
 })
 
@@ -146,4 +148,30 @@ test('history preserves new tech result fields without storing raw cookie values
   assert.equal(stored.includes('seoItems'), true)
   assert.equal(stored.includes('SECRET_TOKEN_VALUE_123'), false)
   assert.equal(stored.includes('<urlset>'), false)
+})
+
+test('history preserves selected devices and device results additively', () => {
+  installLocalStorage()
+  saveHistoryItem({
+    type: 'tech',
+    id: 'devices-1',
+    url: 'https://example.com',
+    scannedAt: '2026-01-07T00:00:00.000Z',
+    devices: ['desktop', 'mobile'],
+    counts: { total: 0, high: 0 },
+    topIssueSummaries: ['Tech'],
+    result: {
+      targetUrl: 'https://example.com',
+      devices: ['desktop', 'mobile'],
+      deviceResults: [
+        { deviceId: 'desktop', status: 'success', result: { targetUrl: 'https://example.com', pageTitle: 'Desktop' } },
+        { deviceId: 'mobile', status: 'error', errorType: 'timeout', error: '해당 기기 환경을 검사할 수 없습니다. (timeout)' },
+      ],
+    },
+  })
+
+  const [item] = loadHistoryItems()
+  assert.deepEqual(item.devices, ['desktop', 'mobile'])
+  assert.equal(item.result.deviceResults.length, 2)
+  assert.equal(item.result.deviceResults[1].errorType, 'timeout')
 })

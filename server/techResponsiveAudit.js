@@ -1,13 +1,11 @@
+import { getDeviceProfiles } from '../shared/deviceProfiles.js'
+
 const RESPONSIVE_AUDIT_TIMEOUT_MS = 6000
 const RESPONSIVE_OVERFLOW_TOLERANCE_PX = 2
 const CLEAR_PAGE_OVERFLOW_PX = 32
 const MAX_RESPONSIVE_EVIDENCE = 6
 
-export const RESPONSIVE_VIEWPORTS = Object.freeze([
-  { label: 'Desktop', width: 1440, height: 900 },
-  { label: 'Tablet', width: 768, height: 1024 },
-  { label: 'Mobile', width: 390, height: 844 },
-])
+export const RESPONSIVE_VIEWPORTS = Object.freeze(getDeviceProfiles(['desktop', 'tablet', 'mobile']).map((profile) => ({ label: profile.label, width: profile.viewport.width, height: profile.viewport.height })))
 
 export async function auditResponsiveLayouts(browser, targetUrl, instrumentation = null) {
   const items = []

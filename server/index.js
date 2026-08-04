@@ -38,6 +38,7 @@ import { createVisualVisionService } from './visualVisionService.js'
 import { createWebVisualAnalysis } from './webVisualAnalysis.js'
 import { extractVisibleWebTextElements } from './webText.js'
 import { normalizeTechScanOptions } from '../shared/techScanOptions.js'
+import { createBrowserContextOptions, getDeviceProfile } from '../shared/deviceProfiles.js'
 
 const PORT = Number(process.env.PORT || 3001)
 const AI_QA_MODEL = getAiQaModel()
@@ -1933,17 +1934,11 @@ async function scanUrl(targetUrl, options = {}) {
   let seoAuditResult
 
   try {
-    const context = await browser.newContext({
-      ignoreHTTPSErrors: true,
-      viewport: DESKTOP_DESIGN_VIEWPORT,
-      deviceScaleFactor: DESKTOP_SCREENSHOT_SCALE,
-      permissions: [],
-      serviceWorkers: 'block',
-    })
+    const context = await browser.newContext(createBrowserContextOptions(scanOptions.deviceId))
     await blockPostRequests(context)
 
     const page = await context.newPage()
-    incrementInstrumentationCount(scanOptions.instrumentation, 'desktopPageCount')
+    incrementInstrumentationCount(scanOptions.instrumentation, scanOptions.deviceId === 'mobile' ? 'mobilePageCount' : scanOptions.deviceId === 'tablet' ? 'tabletPageCount' : 'desktopPageCount')
     incrementPlaywrightRunCount(scanOptions.instrumentation)
     attachCollectors(page, consoleMessages, failedImageRequests, failedResourceRequests, badResourceResponses, (scanOptions.techScanOptions.performance || scanOptions.techScanOptions.seo) ? resourceResponses : null)
 
@@ -1995,6 +1990,7 @@ async function scanUrl(targetUrl, options = {}) {
       auditPerformanceResources,
       auditSeoReadiness,
       onProgress: scanOptions.onProgress,
+      contextOptions: createBrowserContextOptions(scanOptions.deviceId),
     }))
   } finally {
     await browser.close()
@@ -2112,17 +2108,28 @@ async function scanUrl(targetUrl, options = {}) {
     consoleAudit: consoleAudit.meta,
     counts: snapshot.counts,
     mobile: safeMobileResult,
+    device: {
+      deviceId: scanOptions.deviceProfile.id,
+      deviceLabel: scanOptions.deviceProfile.label,
+      viewport: scanOptions.deviceProfile.viewport,
+      hasTouch: scanOptions.deviceProfile.hasTouch,
+      isMobile: scanOptions.deviceProfile.isMobile,
+      deviceScaleFactor: scanOptions.deviceProfile.deviceScaleFactor,
+    },
     ...(visualPayloadData ? { visualPayloadData } : {}),
   }
 }
 
 function normalizeScanUrlOptions(options = {}) {
+  const deviceId = typeof options.deviceId === 'string' ? options.deviceId : 'desktop'
   return {
     includeVisualPayloadData: options.includeVisualPayloadData === true,
     includeMobile: options.includeMobile !== false,
     techScanOptions: normalizeTechScanOptions(options.techScanOptions),
     instrumentation: options.instrumentation && typeof options.instrumentation === 'object' ? options.instrumentation : null,
     onProgress: typeof options.onProgress === 'function' ? options.onProgress : null,
+    deviceId,
+    deviceProfile: getDeviceProfile(deviceId),
   }
 }
 
@@ -2289,6 +2296,7 @@ async function safeWebScreenshot(page) {
     const pageSize = await page.evaluate(() => ({
       width: Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth || 0),
       height: Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0),
+      deviceScaleFactor: window.devicePixelRatio || 1,
     }))
     const buffer = await page.screenshot({ fullPage: true, type: 'png' })
 
@@ -2298,7 +2306,7 @@ async function safeWebScreenshot(page) {
       width: viewport.width,
       height: pageSize.height,
       viewport,
-      deviceScaleFactor: DESKTOP_SCREENSHOT_SCALE,
+      deviceScaleFactor: pageSize.deviceScaleFactor,
       fullPage: true,
       capped: false,
       capturedAt: new Date().toISOString(),
@@ -3485,14 +3493,8 @@ async function safeDomSnapshot(page, targetUrl, options = {}) {
 }
 
 async function scanMobile(browser, targetUrl, instrumentation) {
-  const context = await browser.newContext({
-    ignoreHTTPSErrors: true,
-    viewport: { width: 390, height: 844 },
-    isMobile: true,
-    hasTouch: true,
-    permissions: [],
-    serviceWorkers: 'block',
-  })
+  const mobileProfile = getDeviceProfile('mobile')
+  const context = await browser.newContext(createBrowserContextOptions('mobile'))
   await blockPostRequests(context)
 
   try {
@@ -3516,7 +3518,7 @@ async function scanMobile(browser, targetUrl, instrumentation) {
     return {
       accessible: Boolean(response && response.ok()),
       statusCode: response?.status() ?? null,
-      viewport: { width: 390, height: 844 },
+      viewport: { ...mobileProfile.viewport },
       ...widthInfo,
       note: response?.ok() ? '모바일 viewport 접속 가능' : '모바일 viewport 응답 확인 필요',
     }
@@ -3524,9 +3526,9 @@ async function scanMobile(browser, targetUrl, instrumentation) {
     return {
       accessible: false,
       statusCode: null,
-      viewport: { width: 390, height: 844 },
-      viewportWidth: 390,
-      documentWidth: 390,
+      viewport: { ...mobileProfile.viewport },
+      viewportWidth: mobileProfile.viewport.width,
+      documentWidth: mobileProfile.viewport.width,
       hasHorizontalOverflow: false,
       note: error instanceof Error ? error.message : '모바일 viewport 접속 실패',
     }
@@ -4153,12 +4155,13 @@ function createEmptyWebScreenshot() {
 }
 
 function createMobileFallback() {
+  const mobileProfile = getDeviceProfile('mobile')
   return {
     accessible: false,
     statusCode: null,
-    viewport: { width: 390, height: 844 },
-    viewportWidth: 390,
-    documentWidth: 390,
+    viewport: { ...mobileProfile.viewport },
+    viewportWidth: mobileProfile.viewport.width,
+    documentWidth: mobileProfile.viewport.width,
     hasHorizontalOverflow: false,
     note: '모바일 검사를 실행하지 못했습니다.',
   }

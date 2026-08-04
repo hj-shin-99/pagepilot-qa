@@ -5,11 +5,12 @@ const COOKIE_AUDIT_NETWORK_IDLE_TIMEOUT_MS = 2500
 const MAX_COOKIE_ITEMS = 40
 const LONG_LIVED_COOKIE_DAYS = 400
 
-export async function auditCookies(browser, targetUrl, instrumentation = null) {
+export async function auditCookies(browser, targetUrl, instrumentation = null, contextOptions = {}) {
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
     viewport: { width: 1280, height: 720 },
     serviceWorkers: 'block',
+    ...contextOptions,
   })
 
   try {

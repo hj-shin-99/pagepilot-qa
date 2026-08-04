@@ -4,11 +4,12 @@ const MAX_SCROLL_GROWTH_PASSES = 2
 const BLOCKING_OVERLAY_RATIO = 0.35
 const SCROLL_BOTTOM_TOLERANCE_PX = 24
 
-export async function auditScrollInteractions(browser, targetUrl, instrumentation = null) {
+export async function auditScrollInteractions(browser, targetUrl, instrumentation = null, contextOptions = {}) {
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
     viewport: { width: 1280, height: 720 },
     serviceWorkers: 'block',
+    ...contextOptions,
   })
 
   try {

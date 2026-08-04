@@ -13,13 +13,15 @@ export function appendNdjsonChunk(buffer, chunk) {
   return { buffer: nextBuffer, events }
 }
 
-export async function requestQaRunStream({ webUrl, figmaUrl, scanOptions, onProgress, fetchFn = fetch }) {
+import { normalizeDeviceIds } from '../../shared/deviceProfiles.js'
+
+export async function requestQaRunStream({ webUrl, figmaUrl, scanOptions, devices, onProgress, fetchFn = fetch }) {
   let response
   try {
     response = await fetchFn('/api/qa/run-stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ webUrl, figmaUrl, scanOptions }),
+      body: JSON.stringify({ webUrl, figmaUrl, scanOptions, devices: normalizeDeviceIds(devices) }),
     })
   } catch (error) {
     throw createFallbackError(error)
@@ -86,6 +88,7 @@ export async function requestQaRunStream({ webUrl, figmaUrl, scanOptions, onProg
     ...result,
     webUrl,
     figmaUrl,
+    devices: normalizeDeviceIds(result.devices || devices),
     shouldSaveCombined: Boolean(figmaUrl),
   }
 }

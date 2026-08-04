@@ -3,11 +3,12 @@ const MAX_MODAL_CANDIDATES = 10
 const MODAL_TRIGGER_PATTERN = /(modal|dialog|popup|layer|overlay)/i
 const MODAL_TRIGGER_KO_PATTERN = /(모달|팝업|레이어|오버레이|대화상자)/i
 
-export async function auditModalInteractions(browser, targetUrl, clickItems = [], instrumentation = null) {
+export async function auditModalInteractions(browser, targetUrl, clickItems = [], instrumentation = null, contextOptions = {}) {
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
     viewport: { width: 1280, height: 720 },
     serviceWorkers: 'block',
+    ...contextOptions,
   })
 
   try {

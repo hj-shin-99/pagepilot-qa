@@ -1,11 +1,12 @@
 const HOVER_AUDIT_TIMEOUT_MS = 5000
 const MAX_HOVER_CANDIDATES = 12
 
-export async function auditHoverInteractions(browser, targetUrl, instrumentation = null) {
+export async function auditHoverInteractions(browser, targetUrl, instrumentation = null, contextOptions = {}) {
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
     viewport: { width: 1280, height: 720 },
     serviceWorkers: 'block',
+    ...contextOptions,
   })
 
   try {

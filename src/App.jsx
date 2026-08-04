@@ -9,6 +9,7 @@ import { createTechQaViewModel } from './utils/techQa'
 import { createDefaultTechScanOptions, normalizeStoredTechScanOptions, normalizeTechScanOptions } from '../shared/techScanOptions.js'
 import { getScanStageFromQaProgressEvent, getScanningResultReadyTransitionMs, SCAN_RESULT_READY_TRANSITION_MS } from './utils/scanningStages'
 import { requestQaRunStream } from './utils/qaRunStream'
+import { DEFAULT_DEVICE_IDS, normalizeDeviceIds } from '../shared/deviceProfiles.js'
 import EmptyState from './components/EmptyState'
 import HistoryPanel from './components/HistoryPanel'
 import QaStartScreen from './components/QaStartScreen'
@@ -37,6 +38,7 @@ function App() {
   const [historyItems, setHistoryItems] = useState(() => loadHistoryItems())
   const [selectedHistoryId, setSelectedHistoryId] = useState('')
   const [techScanOptions, setTechScanOptions] = useState(() => createDefaultTechScanOptions())
+  const [devices, setDevices] = useState(() => [...DEFAULT_DEVICE_IDS])
   const minimumScanningTimerRef = useRef(null)
 
   const isScanning = visualScanState === 'loading' || techScanState === 'loading' || aiReviewState === 'loading'
@@ -119,7 +121,8 @@ function App() {
 
     let session
     try {
-      session = await requestQaRun(webUrl, frameUrl, techScanOptions, (progressEvent) => {
+      const selectedDevices = normalizeDeviceIds(devices)
+      session = await requestQaRun(webUrl, frameUrl, techScanOptions, selectedDevices, (progressEvent) => {
         setScanProgressEvent(progressEvent)
         setScanStage(getScanStageFromQaProgressEvent(progressEvent, { combined: Boolean(frameUrl) }))
       })
@@ -128,6 +131,7 @@ function App() {
       session = {
         webUrl,
         figmaUrl: frameUrl,
+        devices: normalizeDeviceIds(devices),
         shouldSaveCombined: Boolean(frameUrl),
         tech: { status: 'error', result: null, error: message },
         visual: frameUrl ? { status: 'error', result: null, error: message } : { status: 'skipped', result: null, error: null },
@@ -191,6 +195,7 @@ function App() {
       setVisualResult(item.visual?.compactResult || null)
       setTechResult(item.tech?.compactResult || null)
       setTechScanOptions(resolveHistoryScanOptions(item.tech?.compactResult || item.tech))
+      setDevices(resolveHistoryDevices(item.tech?.compactResult || item.tech || item))
       setVisualScanState(item.visual?.status || 'skipped')
       setTechScanState(item.tech?.status || 'idle')
       setVisualScanError(item.visual?.error || '')
@@ -204,6 +209,7 @@ function App() {
     if (!item.result) {
       setVisualResult(null)
       setTechResult(null)
+      setDevices(resolveHistoryDevices(item))
       setVisualScanState('idle')
       setTechScanState('idle')
       setActiveTab('history')
@@ -214,6 +220,7 @@ function App() {
       setVisualResult(null)
       setTechResult(item.result)
       setTechScanOptions(resolveHistoryScanOptions(item.result))
+      setDevices(resolveHistoryDevices(item.result || item))
       setVisualScanState('skipped')
       setTechScanState('success')
       setActiveTab('tech')
@@ -222,6 +229,7 @@ function App() {
 
     setVisualResult(item.result)
     setTechResult(null)
+    setDevices(resolveHistoryDevices(item.result || item))
     setVisualScanState('success')
     setTechScanState('idle')
     setActiveTab('visual')
@@ -247,6 +255,7 @@ function App() {
     clearResultState()
     setUrl('')
     setFigmaUrl('')
+    setDevices([...DEFAULT_DEVICE_IDS])
     setIsWebUrlConfirmed(false)
     setHasWebUrlBlurred(false)
     setSelectedHistoryId('')
@@ -302,6 +311,7 @@ function App() {
             aiReview={aiReview}
             aiReviewState={aiReviewState}
             pageTitle={techResult?.pageTitle}
+            deviceNote={getVisualDeviceNote(techResult)}
           />
         ) : activeTab === 'visual'
           ? <EmptyState scanState={visualScanState} scanError={visualScanError} mode="visual" combined={techScanState === 'loading'} scanStage={scanStage} scanProgressEvent={scanProgressEvent} />
@@ -321,6 +331,7 @@ function App() {
         isScanning={isScanning}
         isWebUrlReady={isWebUrlReady}
         techScanOptions={techScanOptions}
+        devices={devices}
         url={url}
         onFigmaUrlChange={(value) => {
           setFigmaUrl(value)
@@ -329,6 +340,7 @@ function App() {
         onOpenHistory={() => setActiveTab('history')}
         onStartScan={handleStartScan}
         onTechScanOptionsChange={setTechScanOptions}
+        onDevicesChange={(nextDevices) => setDevices(normalizeDeviceIds(nextDevices))}
         onUrlBlur={handleUrlBlur}
         onUrlConfirm={handleUrlConfirm}
         onUrlChange={(value) => {
@@ -427,9 +439,9 @@ function waitForResultReadyTransition({
   })
 }
 
-async function requestQaRun(webUrl, figmaUrl, scanOptions, onProgress) {
+async function requestQaRun(webUrl, figmaUrl, scanOptions, devices, onProgress) {
   try {
-    return await requestQaRunStream({ webUrl, figmaUrl, scanOptions, onProgress })
+    return await requestQaRunStream({ webUrl, figmaUrl, scanOptions, devices, onProgress })
   } catch (error) {
     if (!error?.fallbackToJson) throw error
   }
@@ -437,7 +449,7 @@ async function requestQaRun(webUrl, figmaUrl, scanOptions, onProgress) {
   const response = await fetch('/api/qa/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ webUrl, figmaUrl, scanOptions }),
+    body: JSON.stringify({ webUrl, figmaUrl, scanOptions, devices: normalizeDeviceIds(devices) }),
   })
   const payload = await readJsonResponse(response)
   if (!response.ok) throw new Error(payload?.message || `통합 검사 요청에 실패했습니다. (${response.status})`)
@@ -445,6 +457,7 @@ async function requestQaRun(webUrl, figmaUrl, scanOptions, onProgress) {
     ...payload,
     webUrl,
     figmaUrl,
+    devices: normalizeDeviceIds(devices),
     shouldSaveCombined: Boolean(figmaUrl),
   }
 }
@@ -472,6 +485,7 @@ function createTechHistoryItem(result) {
     url: result.targetUrl,
     scannedAt: result.scannedAt,
     summary: createResultSummary(result),
+    devices: normalizeDeviceIds(result.devices),
     totalIssueCount,
     counts: {
       total: totalIssueCount,
@@ -506,6 +520,7 @@ function createCombinedHistoryItem(session) {
     url: session.webUrl,
     webUrl: session.webUrl,
     figmaUrl: session.figmaUrl,
+    devices: normalizeDeviceIds(session.devices || techResult?.devices),
     scannedAt: createdAt,
     createdAt,
     summary: createCombinedSummary(session, visualSummary, techSummary),
@@ -534,6 +549,7 @@ function createCombinedHistoryItem(session) {
       summary: techSummary,
       compactResult: techResult ? createCompactTechResult(techResult) : null,
       scanOptions: techResult ? normalizeTechScanOptions(techResult.scanOptions) : normalizeTechScanOptions(),
+      devices: normalizeDeviceIds(techResult?.devices || session.devices),
       error: session.tech.error || '',
     },
   }
@@ -607,6 +623,24 @@ function createCompactTechResult(result) {
     mobile: result.mobile || { viewport: { width: 0, height: 0 }, statusCode: null, note: '' },
     linkAudit: result.linkAudit || {},
     scanOptions: normalizeTechScanOptions(result.scanOptions),
+    devices: normalizeDeviceIds(result.devices),
+    device: result.device || null,
+    deviceId: result.deviceId || result.device?.deviceId || '',
+    deviceLabel: result.deviceLabel || result.device?.deviceLabel || '',
+    viewport: result.viewport || result.device?.viewport || null,
+    hasTouch: result.hasTouch === true || result.device?.hasTouch === true,
+    isMobile: result.isMobile === true || result.device?.isMobile === true,
+    deviceResults: Array.isArray(result.deviceResults) ? result.deviceResults.map((entry) => ({
+      deviceId: entry.deviceId,
+      deviceLabel: entry.deviceLabel,
+      viewport: entry.viewport,
+      hasTouch: entry.hasTouch === true,
+      isMobile: entry.isMobile === true,
+      status: entry.status,
+      errorType: entry.errorType || '',
+      error: entry.error || '',
+      result: entry.result && typeof entry.result === 'object' ? createCompactTechResult({ ...entry.result, deviceResults: [] }) : null,
+    })) : [],
     clickActions: Array.isArray(result.clickActions) ? result.clickActions : [],
     clickActionAudit: result.clickActionAudit || {},
     scrollInteractions: Array.isArray(result.scrollInteractions) ? result.scrollInteractions : [],
@@ -637,6 +671,17 @@ function createCompactTechResult(result) {
 
 function resolveHistoryScanOptions(result) {
   return normalizeStoredTechScanOptions(result?.scanOptions, result)
+}
+
+function resolveHistoryDevices(result) {
+  return normalizeDeviceIds(result?.devices)
+}
+
+function getVisualDeviceNote(techResult) {
+  const selectedDevices = normalizeDeviceIds(techResult?.devices)
+  return selectedDevices.length > 1 || selectedDevices[0] !== 'desktop'
+    ? 'Visual QA는 입력한 Figma 시안을 기준으로 Desktop 화면만 비교했습니다.'
+    : ''
 }
 
 export default App

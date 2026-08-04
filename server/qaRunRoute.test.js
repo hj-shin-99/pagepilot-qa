@@ -35,6 +35,7 @@ function createDependencies(overrides = {}) {
     },
     async scanUrl(url, options) {
       calls.scanUrl += 1
+      calls.scanArgsList = [...(calls.scanArgsList || []), { url, options }]
       calls.scanArgs = { url, options }
       if (options.instrumentation) {
         options.instrumentation.browserLaunchCount = 1
@@ -42,8 +43,9 @@ function createDependencies(overrides = {}) {
         options.instrumentation.mobilePageCount = options.includeMobile ? 1 : 0
       }
       if (overrides.scanThrows) throw new Error('scan failed')
-      scanResult.scanOptions = options.techScanOptions
-      return scanResult
+      const result = typeof overrides.scanResultFactory === 'function' ? overrides.scanResultFactory(url, options, calls.scanUrl) : scanResult
+      result.scanOptions = options.techScanOptions
+      return result
     },
     isWebScanNavigationFailure(result) {
       return !result?.httpStatus && Boolean(result?.navigationError)
@@ -71,6 +73,7 @@ test('/api/qa/run builder calls scanUrl once and reuses scanResult for visual', 
   const result = await buildQaRunResponse({ webUrl: 'https://example.com', figmaUrl: 'https://www.figma.com/design/a?node-id=1-2', scanOptions: { url: false, click: true } }, dependencies)
 
   assert.equal(calls.scanUrl, 1)
+  assert.equal(calls.scanArgs.options.deviceId, 'desktop')
   assert.equal(calls.scanArgs.options.includeVisualPayloadData, true)
   assert.equal(calls.scanArgs.options.includeMobile, true)
   assert.deepEqual(calls.scanArgs.options.techScanOptions, {
@@ -90,7 +93,8 @@ test('/api/qa/run builder calls scanUrl once and reuses scanResult for visual', 
     markup: true,
   })
   assert.equal(calls.visual, 1)
-  assert.equal(calls.visualScanResult, scanResult)
+  assert.equal(calls.visualScanResult.targetUrl, scanResult.targetUrl)
+  assert.equal(calls.visualScanResult.deviceId, 'desktop')
   assert.equal(result.tech.status, 'success')
   assert.equal(result.tech.result.scanOptions.url, false)
   assert.equal(result.visual.status, 'success')
@@ -99,6 +103,8 @@ test('/api/qa/run builder calls scanUrl once and reuses scanResult for visual', 
   assert.equal(result.meta.desktopPageCount, 1)
   assert.equal(result.meta.mobilePageCount, 1)
   assert.equal(result.meta.openAiCalled, false)
+  assert.deepEqual(result.devices, ['desktop'])
+  assert.equal(result.deviceResults.length, 1)
 })
 
 test('/api/qa/run builder skips visual when figmaUrl is empty', async () => {
@@ -110,6 +116,7 @@ test('/api/qa/run builder skips visual when figmaUrl is empty', async () => {
   assert.equal(calls.visual, 0)
   assert.equal(result.tech.status, 'success')
   assert.equal(result.visual.status, 'skipped')
+  assert.deepEqual(result.devices, ['desktop'])
 })
 
 test('/api/qa/run builder defaults missing or invalid scan options to full selection', async () => {
@@ -221,6 +228,73 @@ test('/api/qa/run builder emits monotonic selected-unit progress without changin
   assert.deepEqual(events.map((event) => event.completedUnits), [0, 1, 2, 3, 4])
   assert.equal(events.every((event) => event.totalUnits === 4), true)
   assert.deepEqual(events.map((event) => event.stage), ['web_collect', 'web_collect', 'page_structure', 'tech_audit', 'result_prepare'])
+  assert.equal(events[0].deviceId, 'desktop')
+})
+
+test('/api/qa/run builder runs selected devices independently and preserves partial failures', async () => {
+  const { calls, dependencies } = createDependencies({
+    scanResultFactory(url, options) {
+      if (options.deviceId === 'tablet') throw new Error('Timeout 15000ms exceeded')
+      return {
+        targetUrl: url,
+        scannedAt: '2026-07-13T00:00:00.000Z',
+        pageTitle: options.deviceId,
+        httpStatus: 200,
+        accessible: true,
+        navigationError: '',
+        checks: [],
+        links: [],
+        images: [],
+        counts: { anchors: 0, buttons: 0 },
+      }
+    },
+  })
+
+  const result = await buildQaRunResponse({ webUrl: 'https://example.com', figmaUrl: '', devices: ['mobile', 'desktop', 'tablet'] }, dependencies)
+
+  assert.deepEqual(calls.scanArgsList.map((entry) => entry.options.deviceId), ['desktop', 'tablet', 'mobile'])
+  assert.equal(result.tech.status, 'success')
+  assert.deepEqual(result.devices, ['desktop', 'tablet', 'mobile'])
+  assert.equal(result.deviceResults.length, 3)
+  assert.equal(result.deviceResults.find((entry) => entry.deviceId === 'tablet').status, 'error')
+  assert.equal(result.deviceResults.find((entry) => entry.deviceId === 'mobile').status, 'success')
+  assert.equal(result.tech.result.deviceResults.length, 3)
+})
+
+test('/api/qa/run builder falls back legacy missing devices to desktop only', async () => {
+  const { calls, dependencies } = createDependencies()
+
+  await buildQaRunResponse({ webUrl: 'https://example.com', figmaUrl: '', devices: [] }, dependencies)
+
+  assert.deepEqual(calls.scanArgsList.map((entry) => entry.options.deviceId), ['desktop'])
+})
+
+test('/api/qa/run builder keeps Visual QA desktop-only when desktop was not selected', async () => {
+  const { calls, dependencies } = createDependencies({
+    scanResultFactory(url, options) {
+      return {
+        targetUrl: url,
+        scannedAt: '2026-07-13T00:00:00.000Z',
+        pageTitle: options.deviceId,
+        httpStatus: 200,
+        accessible: true,
+        navigationError: '',
+        checks: [],
+        links: [],
+        images: [],
+        counts: { anchors: 0, buttons: 0 },
+        visualPayloadData: options.includeVisualPayloadData ? { textNodes: [{ text: 'Desktop' }] } : null,
+      }
+    },
+  })
+
+  const result = await buildQaRunResponse({ webUrl: 'https://example.com', figmaUrl: 'https://www.figma.com/design/a?node-id=1-2', devices: ['mobile'] }, dependencies)
+
+  assert.deepEqual(calls.scanArgsList.map((entry) => entry.options.deviceId), ['mobile', 'desktop'])
+  assert.equal(calls.visual, 1)
+  assert.equal(calls.visualScanResult.deviceId, 'desktop')
+  assert.deepEqual(result.devices, ['mobile'])
+  assert.equal(result.deviceResults.length, 1)
 })
 
 test('/api/qa/run builder ignores progress callback failures', async () => {

@@ -35,7 +35,7 @@ function EmptyState({ scanState, scanError, mode = 'visual', combined = false, s
     scanStage: displayedScanStage,
   }) : 0)
   const currentStatusText = isScanning ? scanStages[actualActiveStageIndex] : ''
-  const stageRows = isScanning ? createStageRows(scanStages, displayedActiveStageIndex) : []
+  const stageRows = isScanning ? createStageRows(scanStages, displayedActiveStageIndex, currentStatusText) : []
 
   useEffect(() => () => {
     if (stageTransitionTimerRef.current !== null) window.clearTimeout(stageTransitionTimerRef.current)
@@ -211,14 +211,14 @@ function EmptyState({ scanState, scanError, mode = 'visual', combined = false, s
   )
 }
 
-function createStageRows(scanStages, displayedActiveStageIndex) {
+function createStageRows(scanStages, displayedActiveStageIndex, currentStatusText = '') {
   return [
     { id: 'scan-stage-placeholder-before', className: 'scan-stage-row is-placeholder', isPlaceholder: true, text: '' },
     ...scanStages.map((stage, index) => ({
       id: `scan-stage-${index}`,
       className: `scan-stage-row ${getStageClassName(index, displayedActiveStageIndex)}`,
       isPlaceholder: false,
-      text: stage,
+      text: index === displayedActiveStageIndex && currentStatusText ? currentStatusText : stage,
     })),
     { id: 'scan-stage-placeholder-after', className: 'scan-stage-row is-placeholder', isPlaceholder: true, text: '' },
   ]

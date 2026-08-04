@@ -104,6 +104,40 @@ test('optional tech audit orchestration runs landing without click audit by usin
   assert.deepEqual(createLandingAuditSourceItems([{ label: 'CTA', url: 'https://example.com/next', target: '_blank' }])[0].interactionOutcome, 'new-window')
 })
 
+test('optional tech audit orchestration passes device context options to browser-based audits', async () => {
+  const received = []
+  const contextOptions = { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }
+  await runOptionalTechAudits({
+    browser: {},
+    targetUrl: 'https://example.com',
+    snapshot: { clickableCandidates: [{ selector: '#cta' }], interactionTargets: [], links: [] },
+    techScanOptions: { url: false, click: true, landing: false, form: true, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, performance: false, seo: false, markup: false },
+    instrumentation: {},
+    contextOptions,
+    auditClickableActions: async (browser, targetUrl, candidates, instrumentation, options) => {
+      received.push(options)
+      return { items: [], meta: {} }
+    },
+    auditLandingPages: async () => ({ items: [], meta: {} }),
+    auditForms: async (browser, targetUrl, instrumentation, options) => {
+      received.push(options)
+      return { items: [], meta: {} }
+    },
+    auditHoverInteractions: async () => ({ items: [], meta: {} }),
+    auditModalInteractions: async () => ({ items: [], meta: {} }),
+    auditScrollInteractions: async () => ({ items: [], meta: {} }),
+    auditResponsiveLayouts: async () => ({ items: [], meta: {} }),
+    auditDownloadResources: async () => ({ items: [], meta: {} }),
+    auditCookies: async () => ({ items: [], meta: {} }),
+    auditImages: async () => ({ items: [], meta: {} }),
+    auditPerformanceResources: async () => ({ items: [], meta: {} }),
+    auditSeoReadiness: async () => ({ items: [], meta: {} }),
+  })
+
+  assert.equal(received.length, 2)
+  assert.equal(received.every((options) => options.viewport.width === 390 && options.hasTouch === true && options.isMobile === true), true)
+})
+
 test('url audit normalization path skips requests when url option is disabled', async () => {
   const result = await runUrlAudit({
     enabled: false,

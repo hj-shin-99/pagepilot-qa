@@ -15,7 +15,7 @@ import { createCoreVisualIssues } from '../utils/visualDisplayHierarchy.js'
 import { createVisualIssueGroups } from '../utils/visualIssueGroups.js'
 import { createVisualQaTitle } from '../utils/visualTitle'
 
-function VisualQaPanel({ result, aiReview, aiReviewState = 'idle', pageTitle, deviceNote = '' }) {
+function VisualQaPanel({ result, aiReview, aiReviewState = 'idle', pageTitle, deviceNote = '', onNewScan }) {
   const cards = createVisualIssueCards(result)
   const meta = result.meta || {}
   const aiHints = result.aiHints || {}
@@ -54,7 +54,7 @@ function VisualQaPanel({ result, aiReview, aiReviewState = 'idle', pageTitle, de
         <div className="summary-box">{formatIssueCountSummary(coreGroupMeta.groupedIssueCount ?? coreIssues.length)}</div>
       </header>
 
-      <AiMultimodalComplete aiReview={aiReview} />
+      <AiMultimodalComplete aiReview={aiReview} totalDurationMs={meta.totalDurationMs} />
 
       <article className="detail-card visual-image-card-primary">
         <div className="section-title-row">
@@ -184,12 +184,24 @@ function VisualQaPanel({ result, aiReview, aiReviewState = 'idle', pageTitle, de
           <KeyValue label="처리 시간" value={formatDuration(aiReview?.meta?.aiReviewDurationMs)} />
         </div>
       </details>
+
+      <ResultFooterAction onNewScan={onNewScan} />
     </section>
   )
 }
 
-function AiMultimodalComplete({ aiReview }) {
+function ResultFooterAction({ onNewScan }) {
+  if (typeof onNewScan !== 'function') return null
+  return (
+    <div className="result-bottom-action">
+      <button className="result-new-scan-button" type="button" onClick={onNewScan}>새 검사 시작</button>
+    </div>
+  )
+}
+
+function AiMultimodalComplete({ aiReview, totalDurationMs }) {
   const meta = aiReview?.meta || {}
+  const durationMeta = createVisualDurationMeta(meta.aiReviewDurationMs, totalDurationMs ?? meta.totalDurationMs)
   return (
     <article className="detail-card ai-multimodal-complete">
       <div className="section-title-row">
@@ -206,10 +218,24 @@ function AiMultimodalComplete({ aiReview }) {
       </ol>
       <div className="ai-complete-meta">
         <KeyValue label="모델" value={meta.model || (meta.openAiCalled ? '사용' : '미사용')} />
-        <KeyValue label="처리 시간" value={formatDuration(meta.aiReviewDurationMs)} />
+        {durationMeta ? <KeyValue label={durationMeta.label} value={durationMeta.value} /> : null}
       </div>
     </article>
   )
+}
+
+function createVisualDurationMeta(visualDurationMs, totalDurationMs) {
+  const visualDuration = formatDuration(visualDurationMs)
+  const totalDuration = formatDuration(totalDurationMs)
+  const hasVisualDuration = visualDuration !== '-'
+  const hasTotalDuration = totalDuration !== '-'
+
+  if (hasVisualDuration && hasTotalDuration) {
+    return { label: 'Visual 처리 시간 / 총 검사 시간', value: `${visualDuration} / ${totalDuration}` }
+  }
+  if (hasVisualDuration) return { label: 'Visual 처리 시간', value: visualDuration }
+  if (hasTotalDuration) return { label: '총 검사 시간', value: totalDuration }
+  return null
 }
 
 function AiVisionSummary({ aiReview, state, finalIssueCount }) {

@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { deleteHistoryItem, loadHistoryItems, saveHistoryItem } from './history.js'
+import { createHistoryCardSummary, createHistoryDetailMeta, createHistoryItemId, getHistoryDisplayStatus, sortHistoryItems } from './history.js'
+import { clearHistoryItems, countHistoryItems, deleteHistoryItem, loadHistoryItems, migrateLegacyHistory, resetHistoryStorageForTests, saveHistoryItem } from './historyStorage.js'
 
 function installLocalStorage() {
   const store = new Map()
@@ -20,158 +21,227 @@ function installLocalStorage() {
   }
 }
 
-test('history stores visual and tech type separately', () => {
+async function resetStorage() {
   installLocalStorage()
-  saveHistoryItem({ type: 'visual', id: 'v1', url: 'https://example.com', figmaUrl: 'https://figma.com/design/a', scannedAt: '2026-01-01T00:00:00.000Z', counts: { total: 1, high: 1 }, topIssueSummaries: ['Visual'], result: { meta: { webUrl: 'https://example.com' } } })
-  saveHistoryItem({ type: 'tech', id: 't1', url: 'https://example.com', scannedAt: '2026-01-02T00:00:00.000Z', counts: { total: 2, high: 0 }, topIssueSummaries: ['Tech'], result: { targetUrl: 'https://example.com', durationMs: 18234 } })
+  resetHistoryStorageForTests()
+  await clearHistoryItems()
+  localStorage.clear()
+  resetHistoryStorageForTests()
+}
 
-  const items = loadHistoryItems()
-  assert.deepEqual(items.map((item) => item.type), ['tech', 'visual'])
-  assert.equal(items[0].result.durationMs, 18234)
-  assert.equal(items[1].figmaUrl, 'https://figma.com/design/a')
-})
-
-test('history reads legacy items without type safely', () => {
-  installLocalStorage()
-  localStorage.setItem('pagepilot-qa-history-v3', JSON.stringify([
-    { id: 'legacy-tech', url: 'https://example.com', scannedAt: '2026-01-01T00:00:00.000Z', counts: { error: 1, warn: 1 }, topIssueSummaries: ['Legacy'], result: { targetUrl: 'https://example.com', scannedAt: '2026-01-01T00:00:00.000Z' } },
-    { id: 'legacy-visual', url: 'https://example.com', figmaUrl: 'https://figma.com/design/a', scannedAt: '2026-01-01T00:00:00.000Z', counts: { total: 0 }, topIssueSummaries: ['Legacy Visual'], result: { meta: { webUrl: 'https://example.com' }, comparison: {} } },
-  ]))
-
-  const items = loadHistoryItems()
-  assert.equal(items[0].type, 'tech')
-  assert.equal(items[1].type, 'visual')
-  assert.deepEqual(items[0].devices, ['desktop'])
-})
-
-test('history stores and restores combined sessions', () => {
-  installLocalStorage()
-  saveHistoryItem({
-    type: 'combined',
-    id: 'c1',
-    webUrl: 'https://example.com',
-    figmaUrl: 'https://www.figma.com/design/a',
-    createdAt: '2026-01-03T00:00:00.000Z',
-    counts: { total: 3, high: 1 },
-    topIssueSummaries: ['Combined'],
-    aiReview: {
-      meta: { openAiCalled: true, model: 'gpt-4.1-mini', fallbackUsed: false },
-      review: {
-        releaseDecision: 'caution',
-        summary: '확인 필요 항목이 있습니다.',
-        mustFix: [],
-        verify: [{ category: 'media', title: '미디어 확인', description: '의도 확인', evidence: ['video'], severity: 'warning' }],
-        developerNotes: [{ category: 'tech', title: '개발 확인', description: '확인', evidence: [], severity: 'check' }],
-        visualDifferences: [{ area: 'Main Visual', category: 'Media', title: 'Hero KV 비주얼 차이', summary: '이미지와 영상 차이', figmaValue: 'Image', webValue: 'Video', severity: 'warning', confidence: 'high', order: 0 }],
-        clientReplyDraft: '확인 후 진행하겠습니다.',
-      },
-    },
-    visual: { status: 'success', summary: 'Visual ok', compactResult: { meta: { webUrl: 'https://example.com' } } },
-    tech: { status: 'error', summary: 'Tech failed', compactResult: null, scanOptions: { url: false, click: true, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, performance: false, seo: false, markup: true }, error: 'failed' },
-  })
-
-  const [item] = loadHistoryItems()
-  assert.equal(item.type, 'combined')
-  assert.equal(item.url, 'https://example.com')
-  assert.equal(item.visual.status, 'success')
-  assert.equal(item.tech.status, 'error')
-  assert.equal(item.tech.error, 'failed')
-  assert.equal(item.tech.scanOptions.url, false)
-  assert.deepEqual(item.devices, ['desktop'])
-  assert.equal(item.aiReview.meta.openAiCalled, true)
-  assert.equal(item.aiReview.meta.model, 'gpt-4.1-mini')
-  assert.equal(item.aiReview.review.releaseDecision, 'caution')
-  assert.equal(item.aiReview.review.verify[0].title, '미디어 확인')
-  assert.equal(item.aiReview.review.visualDifferences[0].title, 'Hero KV 비주얼 차이')
-})
-
-test('history deletes one item without changing stored item schema', () => {
-  installLocalStorage()
-  saveHistoryItem({ type: 'tech', id: 't1', url: 'https://a.example', scannedAt: '2026-01-01T00:00:00.000Z', counts: { total: 1, high: 0 }, topIssueSummaries: ['A'], result: { targetUrl: 'https://a.example' } })
-  saveHistoryItem({ type: 'visual', id: 'v1', url: 'https://b.example', figmaUrl: 'https://figma.com/design/b', scannedAt: '2026-01-02T00:00:00.000Z', counts: { total: 2, high: 1 }, topIssueSummaries: ['B'], result: { meta: { webUrl: 'https://b.example' } } })
-
-  const remaining = deleteHistoryItem('v1')
-
-  assert.equal(remaining.length, 1)
-  assert.equal(remaining[0].id, 't1')
-  assert.deepEqual(Object.keys(remaining[0]), ['type', 'id', 'url', 'webUrl', 'figmaUrl', 'devices', 'scannedAt', 'createdAt', 'summary', 'totalIssueCount', 'counts', 'topIssueSummaries', 'designImageFilenames', 'result', 'visual', 'tech', 'aiReview'])
-  assert.equal(loadHistoryItems()[0].id, 't1')
-})
-
-test('history keeps tech scan options when stored and defaults legacy results to full selection', () => {
-  installLocalStorage()
-  saveHistoryItem({
+function createTechItem(id, index, overrides = {}) {
+  const scannedAt = `2026-01-${String(index).padStart(2, '0')}T00:00:00.000Z`
+  return {
     type: 'tech',
-    id: 't2',
-    url: 'https://example.com',
-    scannedAt: '2026-01-04T00:00:00.000Z',
-    counts: { total: 1, high: 0 },
+    id,
+    url: `https://${id}.example`,
+    scannedAt,
+    totalDurationMs: 20000 + index,
+    devices: ['desktop'],
+    counts: { total: 2, high: 1 },
     topIssueSummaries: ['Tech'],
     result: {
-      targetUrl: 'https://example.com',
-        scanOptions: { url: true, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, performance: false, seo: false, markup: true },
-      },
-    })
-  localStorage.setItem('pagepilot-qa-history-v3', JSON.stringify([
-    ...loadHistoryItems(),
-    { id: 'legacy-tech-options', url: 'https://legacy.example', scannedAt: '2026-01-05T00:00:00.000Z', counts: { total: 0 }, topIssueSummaries: ['Legacy'], result: { targetUrl: 'https://legacy.example' } },
-  ]))
-
-  const items = loadHistoryItems()
-  assert.equal(items[0].result.scanOptions.click, false)
-  assert.equal(items[1].result.scanOptions, undefined)
-})
-
-test('history preserves new tech result fields without storing raw cookie values', () => {
-  installLocalStorage()
-  saveHistoryItem({
-    type: 'tech',
-    id: 't3',
-    url: 'https://example.com',
-    scannedAt: '2026-01-06T00:00:00.000Z',
-    counts: { total: 1, high: 0 },
-    topIssueSummaries: ['Tech'],
-    result: {
-      targetUrl: 'https://example.com',
+      targetUrl: `https://${id}.example`,
+      scannedAt,
+      durationMs: 12000 + index,
+      totalDurationMs: 20000 + index,
+      pageTitle: id,
+      checks: [{ id: 'access', status: 'ok' }],
+      links: [{ url: `https://${id}.example/a`, status: 'ok' }],
+      images: [],
+      consoleMessages: [],
+      devices: ['desktop'],
       scanOptions: { url: true, click: true, landing: true, form: true, hover: true, modal: true, scroll: true, responsive: true, download: true, cookie: true, image: true, performance: true, seo: true, markup: true },
-      cookieItems: [{ label: 'sid', valueLength: 32 }],
-      imageItems: [{ label: 'hero.webp', sourceCount: 2 }],
-      performanceItems: [{ label: '대형 리소스', sourceCount: 3 }],
-      seoItems: [{ label: 'robots.txt', preview: 'User-agent: * | Allow: /' }],
+      ...overrides.result,
     },
-  })
+    ...overrides,
+  }
+}
 
-  const stored = localStorage.getItem('pagepilot-qa-history-v3')
-  assert.equal(stored.includes('cookieItems'), true)
-  assert.equal(stored.includes('imageItems'), true)
-  assert.equal(stored.includes('performanceItems'), true)
-  assert.equal(stored.includes('seoItems'), true)
-  assert.equal(stored.includes('SECRET_TOKEN_VALUE_123'), false)
-  assert.equal(stored.includes('<urlset>'), false)
+function createCombinedItem(id, index) {
+  const scannedAt = `2026-02-${String(index).padStart(2, '0')}T00:00:00.000Z`
+  const techResult = createTechItem(`${id}-tech`, index, { devices: ['desktop', 'tablet', 'mobile'], result: { devices: ['desktop', 'tablet', 'mobile'], deviceResults: [
+    { deviceId: 'desktop', status: 'success', result: createTechItem(`${id}-desktop`, index).result },
+    { deviceId: 'tablet', status: 'success', result: createTechItem(`${id}-tablet`, index).result },
+    { deviceId: 'mobile', status: 'success', result: createTechItem(`${id}-mobile`, index).result },
+  ] } }).result
+  return {
+    type: 'combined',
+    id,
+    url: `https://${id}.example`,
+    webUrl: `https://${id}.example`,
+    figmaUrl: `https://www.figma.com/design/${id}`,
+    scannedAt,
+    createdAt: scannedAt,
+    devices: ['desktop', 'tablet', 'mobile'],
+    totalDurationMs: 42000 + index,
+    visual: { status: 'success', summary: 'Visual ok', compactResult: { meta: { webUrl: `https://${id}.example`, totalDurationMs: 42000 + index }, comparison: { differenceCount: 2, differences: [{ area: 'Main Visual', category: 'Text', figmaText: 'A', webText: 'B' }] } }, error: '' },
+    tech: { status: 'success', summary: 'Tech ok', compactResult: techResult, scanOptions: techResult.scanOptions, devices: ['desktop', 'tablet', 'mobile'], error: '' },
+    aiReview: { meta: { openAiCalled: true, model: 'gpt-5.6-terra', fallbackUsed: false, aiReviewDurationMs: 3200, totalDurationMs: 42000 + index }, review: { releaseDecision: 'caution', summary: '확인 필요', mustFix: [], verify: [], developerNotes: [], visualDifferences: [], clientReplyDraft: '' } },
+  }
+}
+
+test('indexeddb history keeps final counts 1,2,3,4,5,5', async () => {
+  await resetStorage()
+  const finalCounts = []
+  let sixthSave = null
+
+  for (let index = 1; index <= 6; index += 1) {
+    const save = await saveHistoryItem(createTechItem(`item-${index}`, index))
+    finalCounts.push(save.finalCount)
+    if (index === 6) sixthSave = save
+  }
+
+  assert.deepEqual(finalCounts, [1, 2, 3, 4, 5, 5])
+  assert.equal(sixthSave.beforeCount, 5)
+  assert.equal(sixthSave.afterInsertCount, 6)
+  assert.equal(sixthSave.trimmedCount, 1)
+  assert.equal(sixthSave.finalCount, 5)
+  assert.deepEqual((await loadHistoryItems()).map((item) => item.id), ['item-6', 'item-5', 'item-4', 'item-3', 'item-2'])
 })
 
-test('history preserves selected devices and device results additively', () => {
-  installLocalStorage()
-  saveHistoryItem({
-    type: 'tech',
-    id: 'devices-1',
-    url: 'https://example.com',
-    scannedAt: '2026-01-07T00:00:00.000Z',
-    devices: ['desktop', 'mobile'],
-    counts: { total: 0, high: 0 },
-    topIssueSummaries: ['Tech'],
-    result: {
-      targetUrl: 'https://example.com',
-      devices: ['desktop', 'mobile'],
-      deviceResults: [
-        { deviceId: 'desktop', status: 'success', result: { targetUrl: 'https://example.com', pageTitle: 'Desktop' } },
-        { deviceId: 'mobile', status: 'error', errorType: 'timeout', error: '해당 기기 환경을 검사할 수 없습니다. (timeout)' },
-      ],
-    },
+test('indexeddb history creates unique ids for same URL saves', async () => {
+  await resetStorage()
+  const incomingIds = []
+
+  for (let index = 1; index <= 6; index += 1) {
+    const save = await saveHistoryItem({ type: 'tech', url: 'https://same.example', scannedAt: '2026-01-01T00:00:00.000Z', result: { targetUrl: 'https://same.example', scannedAt: '2026-01-01T00:00:00.000Z' } })
+    incomingIds.push(save.savedItemId)
+  }
+
+  assert.equal(new Set(incomingIds).size, 6)
+  assert.deepEqual((await loadHistoryItems()).map((item) => item.id), incomingIds.slice(1).reverse())
+})
+
+test('indexeddb history serializes parallel saves and keeps latest five', async () => {
+  await resetStorage()
+  const saves = await Promise.all(Array.from({ length: 6 }, (_, index) => saveHistoryItem(createTechItem(`parallel-${index + 1}`, index + 1))))
+
+  assert.equal(saves.every((save) => save.ok), true)
+  assert.equal(await countHistoryItems(), 5)
+  assert.deepEqual((await loadHistoryItems()).map((item) => item.id), ['parallel-6', 'parallel-5', 'parallel-4', 'parallel-3', 'parallel-2'])
+})
+
+test('history load returns five items after six saves', async () => {
+  await resetStorage()
+  for (let index = 1; index <= 6; index += 1) await saveHistoryItem(createTechItem(`reload-${index}`, index))
+
+  const items = await loadHistoryItems()
+
+  assert.equal(items.length, 5)
+  assert.deepEqual(items.map((item) => item.id), ['reload-6', 'reload-5', 'reload-4', 'reload-3', 'reload-2'])
+})
+
+test('indexeddb history deletes one item and clear all empties store', async () => {
+  await resetStorage()
+  await saveHistoryItem(createTechItem('delete-1', 1))
+  await saveHistoryItem(createTechItem('delete-2', 2))
+
+  const remaining = await deleteHistoryItem('delete-2')
+
+  assert.deepEqual(remaining.map((item) => item.id), ['delete-1'])
+  assert.equal(await countHistoryItems(), 1)
+  assert.deepEqual(await clearHistoryItems(), [])
+  assert.equal(await countHistoryItems(), 0)
+})
+
+test('indexeddb history migrates latest five legacy localStorage items once', async () => {
+  await resetStorage()
+  localStorage.setItem('pagepilot-qa-history-v3', JSON.stringify(Array.from({ length: 6 }, (_, index) => createTechItem(`legacy-${index + 1}`, index + 1))))
+
+  const migration = await migrateLegacyHistory()
+  const items = await loadHistoryItems()
+
+  assert.equal(migration.ok, true)
+  assert.equal(migration.migratedCount, 5)
+  assert.deepEqual(items.map((item) => item.id), ['legacy-6', 'legacy-5', 'legacy-4', 'legacy-3', 'legacy-2'])
+  assert.equal(localStorage.getItem('pagepilot-qa-history-v3'), '[]')
+})
+
+test('indexeddb migration ignores damaged legacy entries and keeps valid items', async () => {
+  await resetStorage()
+  localStorage.setItem('pagepilot-qa-history-v3', JSON.stringify([
+    null,
+    { id: 'damaged', summary: 'Failed to fetch timeout', counts: {} },
+    createTechItem('valid-legacy', 2),
+  ]))
+
+  const migration = await migrateLegacyHistory()
+  const items = await loadHistoryItems()
+
+  assert.equal(migration.ok, true)
+  assert.equal(items.some((item) => item.id === 'valid-legacy'), true)
+  assert.equal(items.some((item) => item.id === 'damaged'), true)
+})
+
+test('history stores and restores combined session data without raw payloads', async () => {
+  await resetStorage()
+  await saveHistoryItem({
+    ...createCombinedItem('combined-1', 1),
+    tech: { ...createCombinedItem('combined-1', 1).tech, compactResult: { ...createCombinedItem('combined-1', 1).tech.compactResult, rawResponse: 'raw server response', debug: { raw: 'debug raw' }, networkRequests: [{ url: 'https://secret.example' }], cookieItems: [{ name: 'sid', value: 'SECRET_TOKEN_VALUE_123' }] } },
   })
 
-  const [item] = loadHistoryItems()
-  assert.deepEqual(item.devices, ['desktop', 'mobile'])
-  assert.equal(item.result.deviceResults.length, 2)
-  assert.equal(item.result.deviceResults[1].errorType, 'timeout')
+  const [item] = await loadHistoryItems()
+  const serialized = JSON.stringify(item)
+
+  assert.equal(item.type, 'combined')
+  assert.equal(item.visual.status, 'success')
+  assert.equal(item.tech.status, 'success')
+  assert.deepEqual(item.devices, ['desktop', 'tablet', 'mobile'])
+  assert.equal(item.totalDurationMs, 42001)
+  assert.equal(item.aiReview.meta.openAiCalled, true)
+  assert.equal(serialized.includes('raw server response'), false)
+  assert.equal(serialized.includes('debug raw'), false)
+  assert.equal(serialized.includes('networkRequests'), false)
+  assert.equal(serialized.includes('SECRET_TOKEN_VALUE_123'), false)
+})
+
+test('history id helper never derives ids from URL type or scannedAt only', () => {
+  const ids = Array.from({ length: 6 }, () => createHistoryItemId('tech'))
+
+  assert.equal(new Set(ids).size, 6)
+  assert.equal(ids.every((id) => id.startsWith('tech-')), true)
+  assert.equal(ids.some((id) => id.includes('https://')), false)
+})
+
+test('history sorts by newest valid scan time without mutating the source array', () => {
+  const source = [
+    { id: 'invalid', scannedAt: 'not-a-date' },
+    { id: 'created', createdAt: '2026-01-08T00:00:00.000Z' },
+    { id: 'scanned', scannedAt: '2026-01-09T00:00:00.000Z' },
+    { id: 'timestamp', timestamp: '2026-01-07T00:00:00.000Z' },
+    { id: 'same-a', scannedAt: '2026-01-06T00:00:00.000Z' },
+    { id: 'same-b', scannedAt: '2026-01-06T00:00:00.000Z' },
+  ]
+
+  const sorted = sortHistoryItems(source)
+
+  assert.deepEqual(sorted.map((item) => item.id), ['scanned', 'created', 'timestamp', 'same-a', 'same-b', 'invalid'])
+  assert.deepEqual(source.map((item) => item.id), ['invalid', 'created', 'scanned', 'timestamp', 'same-a', 'same-b'])
+})
+
+test('history display status is derived from stored results instead of trusting legacy text', () => {
+  const ok = { type: 'tech', result: { targetUrl: 'https://example.com', checks: [{ id: 'access', status: 'ok' }], links: [], images: [] }, counts: {} }
+  const error = { type: 'tech', result: { targetUrl: 'https://example.com', checks: [{ id: 'access', status: 'error' }], links: [], images: [] }, counts: {} }
+  const warn = { type: 'tech', result: { targetUrl: 'https://example.com', checks: [{ id: 'external-links', status: 'warn' }], links: [], images: [] }, counts: {} }
+  const visualWarn = { type: 'visual', result: { meta: { webUrl: 'https://example.com' }, comparison: { differenceCount: 2 } }, counts: {} }
+  const allFailed = { type: 'combined', summary: 'QA 모두 실패 Failed to fetch', visual: { status: 'error', error: 'Failed to fetch', compactResult: null }, tech: { status: 'error', error: 'Failed to fetch', compactResult: null }, counts: {} }
+  const partial = { type: 'combined', visual: { status: 'success', compactResult: { meta: { webUrl: 'https://example.com' } } }, tech: { status: 'error', error: 'navigation failed', compactResult: null }, counts: {} }
+
+  assert.equal(getHistoryDisplayStatus(ok), 'ok')
+  assert.equal(getHistoryDisplayStatus(error), 'error')
+  assert.equal(getHistoryDisplayStatus(warn), 'warn')
+  assert.equal(getHistoryDisplayStatus(visualWarn), 'warn')
+  assert.equal(getHistoryDisplayStatus(allFailed), 'failed')
+  assert.equal(getHistoryDisplayStatus(partial), 'warn')
+})
+
+test('history card summary hides raw failure details and keeps concise issue metadata', () => {
+  const failed = { type: 'combined', summary: 'QA 모두 실패 Failed to fetch ERR_NAME_NOT_RESOLVED stack trace', visual: { status: 'error', error: 'Failed to fetch', compactResult: null }, tech: { status: 'error', error: 'ERR_NAME_NOT_RESOLVED', compactResult: null }, counts: {}, topIssueSummaries: ['Failed to fetch ERR_NAME_NOT_RESOLVED'] }
+  const mixed = { type: 'combined', totalDurationMs: 289800, visual: { status: 'success', compactResult: { meta: { webUrl: 'https://example.com' }, comparison: { differenceCount: 3 } } }, tech: { status: 'success', compactResult: { targetUrl: 'https://example.com', checks: [{ id: 'access', status: 'warn' }], links: [], images: [] } }, counts: {} }
+
+  assert.equal(createHistoryCardSummary(failed), 'Visual QA와 Tech QA를 완료하지 못했습니다.')
+  assert.equal(createHistoryCardSummary(failed).includes('ERR_'), false)
+  assert.equal(createHistoryCardSummary(mixed), 'Tech QA 문제 확인 0개, 검토 필요 1개 · Visual QA 차이 3개 확인 필요')
+  assert.deepEqual(createHistoryDetailMeta(mixed), ['Visual 차이 3개', 'Tech 검토 필요 1개'])
 })

@@ -26,7 +26,7 @@ function EmptyState({ scanState, scanError, mode = 'visual', combined = false, s
   const hasStartedProgressRef = useRef(false)
   const scanStages = isScanning ? getScanningStages({ isTech, combined }) : []
   const actualActiveStageIndex = isScanning ? getActiveScanningStageIndex({ isTech, combined, scanStage }) : 0
-  const displayedScanStage = displayedActiveStageIndex >= actualActiveStageIndex ? scanStage : 'catching-up'
+  const displayedScanStage = displayedActiveStageIndex === actualActiveStageIndex ? scanStage : 'catching-up'
   const stageRollOffset = getStageRollOffset(displayedActiveStageIndex)
   const eventProgressValue = isScanning ? getScanningProgressValueFromEvent(scanProgressEvent) : null
   const progressTargetValue = eventProgressValue ?? (isScanning ? getScanningProgressValue({
@@ -34,7 +34,8 @@ function EmptyState({ scanState, scanError, mode = 'visual', combined = false, s
     stagesLength: scanStages.length,
     scanStage: displayedScanStage,
   }) : 0)
-  const currentStatusText = isScanning ? scanStages[actualActiveStageIndex] : ''
+  const currentStatusText = isScanning ? scanStages[displayedActiveStageIndex] : ''
+  const currentDeviceLabel = isScanning ? getScanProgressDeviceLabel(scanProgressEvent) : ''
   const stageRows = isScanning ? createStageRows(scanStages, displayedActiveStageIndex, currentStatusText) : []
 
   useEffect(() => () => {
@@ -64,26 +65,7 @@ function EmptyState({ scanState, scanError, mode = 'visual', combined = false, s
       if (stageStepAnimationFrameRef.current === null) {
         stageStepAnimationFrameRef.current = window.requestAnimationFrame(() => {
           stageStepAnimationFrameRef.current = null
-          setDisplayedActiveStageIndex(actualActiveStageIndex)
-        })
-      }
-      return () => {
-        if (stageStepAnimationFrameRef.current !== null) {
-          window.cancelAnimationFrame(stageStepAnimationFrameRef.current)
-          stageStepAnimationFrameRef.current = null
-        }
-      }
-    }
-
-    if (displayedActiveStageIndex > actualActiveStageIndex) {
-      if (stageTransitionTimerRef.current !== null) {
-        window.clearTimeout(stageTransitionTimerRef.current)
-        stageTransitionTimerRef.current = null
-      }
-      if (stageStepAnimationFrameRef.current === null) {
-        stageStepAnimationFrameRef.current = window.requestAnimationFrame(() => {
-          stageStepAnimationFrameRef.current = null
-          setDisplayedActiveStageIndex(actualActiveStageIndex)
+          setDisplayedActiveStageIndex((currentDisplayedStageIndex) => Math.max(currentDisplayedStageIndex, actualActiveStageIndex))
         })
       }
       return () => {
@@ -195,6 +177,7 @@ function EmptyState({ scanState, scanError, mode = 'visual', combined = false, s
                 ))}
               </ol>
             </div>
+            {currentDeviceLabel ? <p className="scan-stage-device">{currentDeviceLabel} 환경 검사 중</p> : null}
             <div
               className={`scan-stage-progress ${prefersReducedMotion ? 'is-reduced-motion' : ''}`}
               style={{ '--scan-stage-progress': `${displayedProgressValue}%` }}
@@ -222,6 +205,10 @@ function createStageRows(scanStages, displayedActiveStageIndex, currentStatusTex
     })),
     { id: 'scan-stage-placeholder-after', className: 'scan-stage-row is-placeholder', isPlaceholder: true, text: '' },
   ]
+}
+
+function getScanProgressDeviceLabel(progressEvent) {
+  return typeof progressEvent?.deviceLabel === 'string' ? progressEvent.deviceLabel : ''
 }
 
 function usePrefersReducedMotion() {

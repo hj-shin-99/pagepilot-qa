@@ -53,11 +53,11 @@ test('keeps a three-row rolling viewport centered around the active stage when p
   assert.equal(getStageRollOffset(3), 3)
 })
 
-test('moves displayed active stage one step toward the actual target without jumping ahead', () => {
+test('moves displayed active stage forward only without jumping ahead', () => {
   assert.equal(getNextDisplayedScanningStageIndex({ displayedActiveStageIndex: 0, actualActiveStageIndex: 3 }), 1)
   assert.equal(getNextDisplayedScanningStageIndex({ displayedActiveStageIndex: 1, actualActiveStageIndex: 3 }), 2)
   assert.equal(getNextDisplayedScanningStageIndex({ displayedActiveStageIndex: 3, actualActiveStageIndex: 3 }), 3)
-  assert.equal(getNextDisplayedScanningStageIndex({ displayedActiveStageIndex: 3, actualActiveStageIndex: 1 }), 1)
+  assert.equal(getNextDisplayedScanningStageIndex({ displayedActiveStageIndex: 3, actualActiveStageIndex: 1 }), 3)
 })
 
 test('marks the current row distinctly without fake advancing state', () => {

@@ -1,11 +1,16 @@
 import { formatScanTime } from '../utils/report'
-import StatusChip from './StatusChip'
+import { getDeviceProfile, normalizeDeviceIds } from '../../shared/deviceProfiles.js'
 
-function HistoryPanel({ historyItems, isScanning = false, onDeleteHistory, onNewScan, onRestoreHistory }) {
+function HistoryPanel({ historyItems, isScanning = false, selectedHistoryId = '', onClearHistory, onDeleteHistory, onNewScan, onRestoreHistory }) {
   const handleDelete = (event, item) => {
     event.stopPropagation()
-    if (typeof window !== 'undefined' && !window.confirm('이 검사 기록을 삭제할까요?')) return
     onDeleteHistory(item.id)
+  }
+
+  const handleClearHistory = () => {
+    if (!historyItems.length) return
+    if (typeof window !== 'undefined' && !window.confirm('저장된 검사 기록을 모두 삭제할까요?')) return
+    onClearHistory()
   }
 
   return (
@@ -13,30 +18,30 @@ function HistoryPanel({ historyItems, isScanning = false, onDeleteHistory, onNew
       <div className="history-toolbar">
         <div>
           <h3>검사 기록</h3>
-          <p>저장된 QA 결과를 다시 확인할 수 있습니다.</p>
+          <p>최근 검사 기록을 최대 5개까지 저장합니다. 초과한 기록은 오래된 순서대로 자동 삭제됩니다.</p>
         </div>
-        <button className="secondary-button history-new-scan-button" type="button" disabled={isScanning} onClick={onNewScan}>새 검사</button>
+        <div className="history-toolbar-actions">
+          {historyItems.length > 0 ? <button className="history-clear-button" type="button" disabled={isScanning} onClick={handleClearHistory}>모두 삭제</button> : null}
+          <button className="secondary-button history-new-scan-button" type="button" disabled={isScanning} onClick={onNewScan}>새 검사</button>
+        </div>
       </div>
       <ul className="history-list compact-history-list">
         {historyItems.length > 0 ? historyItems.map((item) => (
-          <li className="history-row compact-history-row" key={item.id}>
+          <li className={`history-row compact-history-row ${item.id === selectedHistoryId ? 'is-selected' : ''}`} key={item.id}>
             <button className="history-restore-button" type="button" onClick={() => onRestoreHistory(item)}>
-              <span className="history-item-title">{formatHistoryType(item.type)} 결과</span>
+              <span className="history-item-title">{formatHistoryType(item.type)}</span>
               <span className="history-url">{item.url}</span>
-              <span className="history-meta">{formatScanTime(item.scannedAt)}</span>
-              <span className="history-meta">전체 {item.totalIssueCount} · Critical/오류 {item.counts.high} · 문구 확인 {item.counts.text} · 디자인 확인 {item.counts.style + item.counts.layout} · 버튼 확인 {item.counts.cta}</span>
-              {item.type === 'visual' || item.type === 'combined' ? <span className="history-meta">Figma Frame: {item.figmaUrl || '저장된 URL 없음'}</span> : null}
-              {item.summary ? <span className="history-meta">{item.summary}</span> : null}
-              <span className="history-summary-list">
-                {item.topIssueSummaries.map((summary, index) => <span key={`${item.id}-${index}-${summary}`}>{summary}</span>)}
+              <span className="history-summary-list" aria-label="히스토리 기본 정보">
+                <span>검사 일시 {formatScanTime(item.scannedAt)}</span>
+                <span>검사 환경 {formatHistoryDevices(item)}</span>
+                {item.totalDurationMs ? <span>총 검사 시간 {formatDuration(item.totalDurationMs)}</span> : null}
               </span>
             </button>
-            <div className="history-statuses" aria-label="히스토리 상태 요약">
-              <StatusChip status={item.counts.high > 0 ? 'error' : item.counts.total > 0 ? 'warn' : 'ok'} />
+            <div className="history-actions">
               <button className="history-delete-button" type="button" aria-label="검사 기록 삭제" title="삭제" onClick={(event) => handleDelete(event, item)}>삭제</button>
             </div>
           </li>
-        )) : <li className="empty-row">아직 저장된 검사가 없습니다. Visual QA 또는 Tech QA를 완료하면 최근 결과가 로컬에 저장됩니다.</li>}
+        )) : <li className="empty-row">저장된 검사 기록이 없습니다.<br />검사를 실행하면 결과가 이곳에 저장됩니다.</li>}
       </ul>
     </section>
   )
@@ -46,6 +51,16 @@ function formatHistoryType(type) {
   if (type === 'combined') return 'Visual + Tech QA'
   if (type === 'visual') return 'Visual QA'
   return 'Tech QA'
+}
+
+function formatHistoryDevices(item = {}) {
+  return normalizeDeviceIds(item.devices).map((deviceId) => getDeviceProfile(deviceId).label).join(' · ')
+}
+
+function formatDuration(value) {
+  const ms = Number(value)
+  if (!Number.isFinite(ms) || ms <= 0) return '-'
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}초` : `${Math.round(ms)}ms`
 }
 
 export default HistoryPanel

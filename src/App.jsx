@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import './App.css'
 import { createResultSummary } from './utils/report'
-import { deleteHistoryItem, loadHistoryItems, saveHistoryItem } from './utils/history'
+import { createHistoryItemId } from './utils/history'
+import { clearHistoryItems, deleteHistoryItem, loadHistoryItems, saveHistoryItem } from './utils/historyStorage'
 import { buildAiReviewPayloadFromSession, sanitizeAiReviewResponse } from './utils/aiReview'
 import { confirmWebUrlInput, createDebouncedWebUrlConfirmScheduler, createPublicWebUrlState, createWebUrlInputState, isValidHttpUrl } from './utils/scanSession'
 import { countIssueCards, createCompactVisualResult, createVisualIssueCards, createVisualSummary } from './utils/visualQa'
@@ -17,28 +18,32 @@ import TechQaPanel from './components/TechQaPanel'
 import VisualQaPanel from './components/VisualQaPanel'
 import WorkspaceTabs from './components/WorkspaceTabs'
 
+const ACTIVE_HISTORY_ID_KEY = 'pagepilot-qa-active-history-id'
+
 function App() {
-  const [url, setUrl] = useState('')
-  const [figmaUrl, setFigmaUrl] = useState('')
-  const [visualResult, setVisualResult] = useState(null)
-  const [techResult, setTechResult] = useState(null)
-  const [visualScanState, setVisualScanState] = useState('idle')
-  const [techScanState, setTechScanState] = useState('idle')
-  const [activeTab, setActiveTab] = useState('overview')
+  const [initialAppState] = useState(() => createInitialAppState())
+  const [url, setUrl] = useState(initialAppState.url)
+  const [figmaUrl, setFigmaUrl] = useState(initialAppState.figmaUrl)
+  const [visualResult, setVisualResult] = useState(initialAppState.visualResult)
+  const [techResult, setTechResult] = useState(initialAppState.techResult)
+  const [visualScanState, setVisualScanState] = useState(initialAppState.visualScanState)
+  const [techScanState, setTechScanState] = useState(initialAppState.techScanState)
+  const [activeTab, setActiveTab] = useState(initialAppState.activeTab)
   const [inputError, setInputError] = useState('')
   const [hasWebUrlBlurred, setHasWebUrlBlurred] = useState(false)
   const [isWebUrlConfirmed, setIsWebUrlConfirmed] = useState(false)
   const [figmaError, setFigmaError] = useState('')
   const [visualScanError, setVisualScanError] = useState('')
   const [techScanError, setTechScanError] = useState('')
-  const [aiReview, setAiReview] = useState(null)
-  const [aiReviewState, setAiReviewState] = useState('idle')
+  const [aiReview, setAiReview] = useState(initialAppState.aiReview)
+  const [aiReviewState, setAiReviewState] = useState(initialAppState.aiReviewState)
   const [scanStage, setScanStage] = useState('idle')
   const [scanProgressEvent, setScanProgressEvent] = useState(null)
-  const [historyItems, setHistoryItems] = useState(() => loadHistoryItems())
-  const [selectedHistoryId, setSelectedHistoryId] = useState('')
-  const [techScanOptions, setTechScanOptions] = useState(() => createDefaultTechScanOptions())
-  const [devices, setDevices] = useState(() => [...DEFAULT_DEVICE_IDS])
+  const [historyItems, setHistoryItems] = useState(initialAppState.historyItems)
+  const [isHistoryHydrated, setIsHistoryHydrated] = useState(false)
+  const [selectedHistoryId, setSelectedHistoryId] = useState(initialAppState.selectedHistoryId)
+  const [techScanOptions, setTechScanOptions] = useState(initialAppState.techScanOptions)
+  const [devices, setDevices] = useState(initialAppState.devices)
   const minimumScanningTimerRef = useRef(null)
 
   const isScanning = visualScanState === 'loading' || techScanState === 'loading' || aiReviewState === 'loading'
@@ -74,13 +79,41 @@ function App() {
     if (minimumScanningTimerRef.current !== null) window.clearTimeout(minimumScanningTimerRef.current)
   }, [])
 
+  useEffect(() => {
+    let cancelled = false
+    loadHistoryItems()
+      .then((items) => {
+        if (cancelled) return
+        setHistoryItems(items)
+        const activeHistoryId = readActiveHistoryId()
+        const activeHistoryItem = activeHistoryId ? items.find((item) => item.id === activeHistoryId) : null
+        if (activeHistoryItem) {
+          handleRestoreHistory(activeHistoryItem)
+        } else if (activeHistoryId) {
+          clearActiveHistoryId()
+          setSelectedHistoryId('')
+        }
+        setIsHistoryHydrated(true)
+      })
+      .catch((error) => {
+        if (cancelled) return
+        console.error(`[History IDB] load failed: ${error instanceof Error ? error.message : 'unknown error'}`)
+        setIsHistoryHydrated(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   const handleTabChange = (tabId) => {
     if (tabId === 'visual' && !isVisualTabEnabled) return
     if (tabId === 'tech' && !isTechTabEnabled) return
+    if (tabId === 'history') refreshHistoryItems()
     setActiveTab(tabId)
   }
 
   const handleStartScan = async () => {
+    const scanStartedAtMs = getScanNow()
     const startWebUrlState = createPublicWebUrlState(url)
     const webUrl = startWebUrlState.normalizedUrl
     const frameUrl = figmaUrl.trim()
@@ -160,6 +193,8 @@ function App() {
       }
     }
 
+    attachTotalDuration(session, getScanNow() - scanStartedAtMs)
+
     setScanStage('finalizing')
     await waitForResultReadyTransition({
       durationMs: getScanningResultReadyTransitionMs({ isTech: !frameUrl, combined: Boolean(frameUrl) }),
@@ -171,15 +206,30 @@ function App() {
     applyVisualSessionState(session.visual, setVisualResult, setVisualScanState, setVisualScanError)
 
     if (session.shouldSaveCombined) {
-      setHistoryItems(saveHistoryItem(createCombinedHistoryItem(session)))
+      await saveHistoryAndActivate(createCombinedHistoryItem(session))
     } else if (session.tech.status === 'success') {
-      setHistoryItems(saveHistoryItem(createTechHistoryItem(session.tech.result)))
+      await saveHistoryAndActivate(createTechHistoryItem(session.tech.result))
     }
     setScanStage('idle')
   }
 
-  const handleRestoreHistory = (item) => {
+  const saveHistoryAndActivate = async (historyItem) => {
+    const saveResult = await saveHistoryItem(historyItem)
+    if (!saveResult.ok) {
+      console.error(`[History IDB] save failed: ${saveResult.reason}`)
+      return
+    }
+
+    setHistoryItems(saveResult.items)
+    if (saveResult.items.some((item) => item.id === saveResult.savedItemId)) {
+      setSelectedHistoryId(saveResult.savedItemId)
+      writeActiveHistoryId(saveResult.savedItemId)
+    }
+  }
+
+  function handleRestoreHistory(item) {
     setSelectedHistoryId(item.id)
+    writeActiveHistoryId(item.id)
     setUrl(item.url)
     setFigmaUrl(item.figmaUrl || '')
     setInputError('')
@@ -252,6 +302,7 @@ function App() {
 
   const resetToNewScan = () => {
     if (isScanning) return
+    clearActiveHistoryId()
     clearResultState()
     setUrl('')
     setFigmaUrl('')
@@ -281,14 +332,31 @@ function App() {
     return nextState
   }
 
-  const handleDeleteHistory = (id) => {
-    const nextItems = deleteHistoryItem(id)
+  const handleDeleteHistory = async (id) => {
+    const nextItems = await deleteHistoryItem(id)
     setHistoryItems(nextItems)
     if (selectedHistoryId === id) {
+      clearActiveHistoryId()
       clearResultState()
       setSelectedHistoryId('')
       setActiveTab('history')
+    } else if (readActiveHistoryId() === id) {
+      clearActiveHistoryId()
     }
+  }
+
+  const handleClearHistory = async () => {
+    setHistoryItems(await clearHistoryItems())
+    clearActiveHistoryId()
+    clearResultState()
+    setSelectedHistoryId('')
+    setActiveTab('history')
+  }
+
+  const refreshHistoryItems = async () => {
+    const items = await loadHistoryItems()
+    setHistoryItems(items)
+    return items
   }
 
   const workspaceContent = activeTab === 'history'
@@ -296,13 +364,15 @@ function App() {
       <HistoryPanel
         historyItems={historyItems}
         isScanning={isScanning}
+        selectedHistoryId={selectedHistoryId}
+        onClearHistory={handleClearHistory}
         onDeleteHistory={handleDeleteHistory}
         onNewScan={resetToNewScan}
         onRestoreHistory={handleRestoreHistory}
       />
     ) : activeTab === 'tech'
       ? (techResult
-        ? <TechQaPanel result={techResult} />
+        ? <TechQaPanel result={techResult} onNewScan={resetToNewScan} />
         : <EmptyState scanState={techScanState} scanError={techScanError} mode="tech" combined={visualScanState === 'loading'} scanStage={scanStage} scanProgressEvent={scanProgressEvent} />)
       : activeTab === 'visual' && visualResult
         ? (
@@ -312,6 +382,7 @@ function App() {
             aiReviewState={aiReviewState}
             pageTitle={techResult?.pageTitle}
             deviceNote={getVisualDeviceNote(techResult)}
+            onNewScan={resetToNewScan}
           />
         ) : activeTab === 'visual'
           ? <EmptyState scanState={visualScanState} scanError={visualScanError} mode="visual" combined={techScanState === 'loading'} scanStage={scanStage} scanProgressEvent={scanProgressEvent} />
@@ -320,6 +391,8 @@ function App() {
   const scanningContent = activeTab === 'tech' || visualScanState !== 'loading'
     ? <EmptyState scanState={techScanState} scanError={techScanError} mode="tech" combined={visualScanState === 'loading'} scanStage={scanStage} scanProgressEvent={scanProgressEvent} />
     : <EmptyState scanState={visualScanState} scanError={visualScanError} mode="visual" combined={techScanState === 'loading'} scanStage={scanStage} scanProgressEvent={scanProgressEvent} />
+
+  if (!isHistoryHydrated) return null
 
   if (isIdleStartView) {
     return (
@@ -474,6 +547,40 @@ function applyVisualSessionState(visual, setResult, setState, setError) {
   setError(visual.error || '')
 }
 
+function getScanNow() {
+  return typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now()
+}
+
+function attachTotalDuration(session, durationMs) {
+  const totalDurationMs = normalizeDurationMs(durationMs)
+  if (!session || totalDurationMs === null) return
+
+  session.totalDurationMs = totalDurationMs
+  session.meta = { ...(session.meta || {}), totalDurationMs }
+
+  if (session.tech?.result) {
+    session.tech.result = { ...session.tech.result, totalDurationMs }
+  }
+  if (session.visual?.result) {
+    session.visual.result = {
+      ...session.visual.result,
+      meta: { ...(session.visual.result.meta || {}), totalDurationMs },
+    }
+  }
+  if (session.aiReview) {
+    session.aiReview = {
+      ...session.aiReview,
+      meta: { ...(session.aiReview.meta || {}), totalDurationMs },
+    }
+  }
+}
+
+function normalizeDurationMs(value) {
+  const durationMs = Number(value)
+  if (!Number.isFinite(durationMs) || durationMs < 0) return null
+  return Math.round(durationMs)
+}
+
 function createTechHistoryItem(result) {
   const techView = createTechQaViewModel(result)
   const techCounts = techView.issueCounts
@@ -481,9 +588,10 @@ function createTechHistoryItem(result) {
 
   return {
     type: 'tech',
-    id: `tech-${result.scannedAt}-${result.targetUrl}`,
+    id: createHistoryItemId('tech'),
     url: result.targetUrl,
     scannedAt: result.scannedAt,
+    totalDurationMs: result.totalDurationMs,
     summary: createResultSummary(result),
     devices: normalizeDeviceIds(result.devices),
     totalIssueCount,
@@ -516,13 +624,14 @@ function createCombinedHistoryItem(session) {
 
   return {
     type: 'combined',
-    id: `combined-${createdAt}-${session.webUrl}`,
+    id: createHistoryItemId('combined'),
     url: session.webUrl,
     webUrl: session.webUrl,
     figmaUrl: session.figmaUrl,
     devices: normalizeDeviceIds(session.devices || techResult?.devices),
     scannedAt: createdAt,
     createdAt,
+    totalDurationMs: session.totalDurationMs,
     summary: createCombinedSummary(session, visualSummary, techSummary),
     totalIssueCount,
     counts: {
@@ -568,6 +677,7 @@ function sanitizeHistoryAiReview(aiReview) {
       webImagePrepared: safe.meta.webImagePrepared,
       model: safe.meta.model,
       aiReviewDurationMs: safe.meta.aiReviewDurationMs,
+      totalDurationMs: safe.meta.totalDurationMs,
       visionFailureReason: safe.meta.visionFailureReason,
       fallbackUsed: safe.meta.fallbackUsed,
     },
@@ -608,6 +718,7 @@ function createCompactTechResult(result) {
     targetUrl: result.targetUrl,
     scannedAt: result.scannedAt,
     durationMs: result.durationMs,
+    totalDurationMs: result.totalDurationMs,
     pageTitle: result.pageTitle,
     httpStatus: result.httpStatus,
     accessible: result.accessible,
@@ -682,6 +793,111 @@ function getVisualDeviceNote(techResult) {
   return selectedDevices.length > 1 || selectedDevices[0] !== 'desktop'
     ? 'Visual QA는 입력한 Figma 시안을 기준으로 Desktop 화면만 비교했습니다.'
     : ''
+}
+
+function createInitialAppState() {
+  const activeHistoryId = readActiveHistoryId()
+
+  return {
+    historyItems: [],
+    selectedHistoryId: activeHistoryId || '',
+    ...createHistoryRestoreState(null),
+  }
+}
+
+function createHistoryRestoreState(item) {
+  const baseState = {
+    url: '',
+    figmaUrl: '',
+    visualResult: null,
+    techResult: null,
+    visualScanState: 'idle',
+    techScanState: 'idle',
+    aiReview: null,
+    aiReviewState: 'idle',
+    activeTab: 'overview',
+    techScanOptions: createDefaultTechScanOptions(),
+    devices: [...DEFAULT_DEVICE_IDS],
+  }
+
+  if (!item) return baseState
+
+  if (item.type === 'combined') {
+    const aiReview = item.aiReview || null
+    return {
+      ...baseState,
+      url: item.url,
+      figmaUrl: item.figmaUrl || '',
+      visualResult: item.visual?.compactResult || null,
+      techResult: item.tech?.compactResult || null,
+      visualScanState: item.visual?.status || 'skipped',
+      techScanState: item.tech?.status || 'idle',
+      aiReview,
+      aiReviewState: aiReview ? aiReview.meta?.fallbackUsed ? 'fallback' : 'success' : 'idle',
+      activeTab: 'visual',
+      techScanOptions: resolveHistoryScanOptions(item.tech?.compactResult || item.tech),
+      devices: resolveHistoryDevices(item.tech?.compactResult || item.tech || item),
+    }
+  }
+
+  if (!item.result) {
+    return {
+      ...baseState,
+      url: item.url,
+      figmaUrl: item.figmaUrl || '',
+      devices: resolveHistoryDevices(item),
+      activeTab: 'history',
+    }
+  }
+
+  if (item.type === 'tech' || item.result?.targetUrl) {
+    return {
+      ...baseState,
+      url: item.url,
+      figmaUrl: item.figmaUrl || '',
+      techResult: item.result,
+      visualScanState: 'skipped',
+      techScanState: 'success',
+      activeTab: 'tech',
+      techScanOptions: resolveHistoryScanOptions(item.result),
+      devices: resolveHistoryDevices(item.result || item),
+    }
+  }
+
+  return {
+    ...baseState,
+    url: item.url,
+    figmaUrl: item.figmaUrl || '',
+    visualResult: item.result,
+    visualScanState: 'success',
+    techScanState: 'idle',
+    activeTab: 'visual',
+    devices: resolveHistoryDevices(item.result || item),
+  }
+}
+
+function readActiveHistoryId() {
+  try {
+    return typeof sessionStorage === 'undefined' ? '' : sessionStorage.getItem(ACTIVE_HISTORY_ID_KEY) || ''
+  } catch {
+    return ''
+  }
+}
+
+function writeActiveHistoryId(id) {
+  try {
+    if (typeof sessionStorage !== 'undefined' && id) sessionStorage.setItem(ACTIVE_HISTORY_ID_KEY, id)
+  } catch {
+    // Ignore storage access failures so result rendering is never blocked.
+  }
+}
+
+function clearActiveHistoryId() {
+  try {
+    if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(ACTIVE_HISTORY_ID_KEY)
+  } catch {
+    // Ignore storage access failures so result rendering is never blocked.
+  }
 }
 
 export default App

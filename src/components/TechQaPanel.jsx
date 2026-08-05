@@ -8,13 +8,15 @@ import { createDeviceDescriptor, formatDeviceViewport, normalizeDeviceIds } from
 const MARKUP_ACCESSIBILITY_PRIMARY_IDS = ['meta', 'image-alt', 'external-links']
 const MARKUP_ACCESSIBILITY_DETAIL_IDS = ['meta', 'image-alt', 'external-links', 'headings', 'duplicate-ids', 'forms', 'unlabeled-clickables']
 
-function TechQaPanel({ result }) {
+function TechQaPanel({ result, onNewScan }) {
   const deviceEntries = createTechDeviceEntries(result)
   const defaultDeviceId = getDefaultActiveDeviceId(deviceEntries)
   const [activeDeviceId, setActiveDeviceId] = useState(defaultDeviceId)
   const resolvedActiveDeviceId = deviceEntries.some((entry) => entry.deviceId === activeDeviceId) ? activeDeviceId : defaultDeviceId
   const activeDeviceEntry = deviceEntries.find((entry) => entry.deviceId === resolvedActiveDeviceId) || deviceEntries[0]
-  const activeResult = activeDeviceEntry?.result || result
+  const activeResult = activeDeviceEntry?.result
+    ? { ...activeDeviceEntry.result, totalDurationMs: activeDeviceEntry.result.totalDurationMs ?? result?.totalDurationMs }
+    : result
   const view = createTechQaViewModel(activeResult)
   const display = createTechPanelDisplayModel(activeResult, view)
   const linkGroups = getVisibleLinkGroups(display.detailRows.linkRows)
@@ -34,7 +36,6 @@ function TechQaPanel({ result }) {
             <p className="eyebrow">Tech QA Report · {formatScanTime(activeResult.scannedAt)}</p>
             <h2>{techTitle}</h2>
             <p className="target-url">{view.targetUrl}</p>
-            <p className="panel-note relaxed-note">{formatActiveDeviceMeta(activeDeviceEntry)}</p>
           </div>
         </div>
         <div className="summary-box">{formatTechStatusMessage(display)}</div>
@@ -207,9 +208,19 @@ function TechQaPanel({ result }) {
           <RawDetails view={view} result={activeResult} scanOptions={scanOptions} />
         </div>
       </details>
+      <ResultFooterAction onNewScan={onNewScan} />
       </>
       )}
     </section>
+  )
+}
+
+function ResultFooterAction({ onNewScan }) {
+  if (typeof onNewScan !== 'function') return null
+  return (
+    <div className="result-bottom-action">
+      <button className="result-new-scan-button" type="button" onClick={onNewScan}>새 검사 시작</button>
+    </div>
   )
 }
 

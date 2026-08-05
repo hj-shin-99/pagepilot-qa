@@ -49,7 +49,6 @@ export function getStageRollOffset(activeStageIndex) {
 
 export function getNextDisplayedScanningStageIndex({ displayedActiveStageIndex, actualActiveStageIndex }) {
   if (displayedActiveStageIndex < actualActiveStageIndex) return displayedActiveStageIndex + 1
-  if (displayedActiveStageIndex > actualActiveStageIndex) return actualActiveStageIndex
   return displayedActiveStageIndex
 }
 

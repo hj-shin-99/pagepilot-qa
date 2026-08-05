@@ -357,16 +357,16 @@ function hasSelectedTechChecks(scanOptions = {}) {
 function createCompletionMeta(result = {}, view = {}) {
   const meta = []
   const engine = resolveTechQaEngine(result, view)
-  const environment = getEnvironmentLabel(result)
   const linkCount = getLinkInspectionCount(result, view)
   const imageCount = Array.isArray(result.images) ? result.images.length : null
   const durationText = formatTechQaDuration(result.durationMs)
+  const totalDurationText = formatTechQaDuration(result.totalDurationMs)
 
   if (engine) meta.push({ label: '검사 엔진', value: engine })
-  if (environment) meta.push({ label: '검사 환경', value: environment })
   if (linkCount !== null) meta.push({ label: '링크 검사', value: `${linkCount}개` })
   if (imageCount !== null) meta.push({ label: '이미지 검사', value: `${imageCount}개` })
   if (durationText) meta.push({ label: '처리시간', value: durationText })
+  if (totalDurationText) meta.push({ label: '총 검사 시간', value: totalDurationText })
 
   return meta
 }

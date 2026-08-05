@@ -71,6 +71,7 @@ export function sanitizeAiReviewResponse(response = {}) {
       fallbackUsed: response.meta?.fallbackUsed === true,
       model: getString(response.meta?.model),
       aiReviewDurationMs: numberValue(response.meta?.aiReviewDurationMs),
+      totalDurationMs: optionalDurationMs(response.meta?.totalDurationMs),
       visionFailureReason: getString(response.meta?.visionFailureReason),
       visionInputSummary: sanitizeVisionInputSummary(response.meta?.visionInputSummary),
       visionCropSummary: sanitizeVisionCropSummary(response.meta?.visionCropSummary),
@@ -452,6 +453,11 @@ function arrayOfStrings(value) {
 function numberValue(value) {
   const number = Number(value)
   return Number.isFinite(number) ? number : 0
+}
+
+function optionalDurationMs(value) {
+  const number = Number(value)
+  return Number.isFinite(number) && number >= 0 ? number : null
 }
 
 function nullableNumber(value) {

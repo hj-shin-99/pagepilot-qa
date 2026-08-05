@@ -26,6 +26,7 @@ function QaStartScreen({
   const isWebUrlInvalid = Boolean(inputError)
   const [shouldRenderProgressive, setShouldRenderProgressive] = useState(false)
   const [isProgressiveVisible, setIsProgressiveVisible] = useState(false)
+  const [isSubmitVisible, setIsSubmitVisible] = useState(false)
   const shouldShowProgressive = isWebUrlReady || shouldRenderProgressive
   const isProgressiveOpen = isWebUrlReady && isProgressiveVisible
 
@@ -51,6 +52,11 @@ function QaStartScreen({
       window.clearTimeout(timeoutId)
     }
   }, [isWebUrlReady])
+
+  useEffect(() => {
+    const frameId = window.requestAnimationFrame(() => setIsSubmitVisible(isProgressiveOpen))
+    return () => window.cancelAnimationFrame(frameId)
+  }, [isProgressiveOpen])
 
   const handleSubmit = (event) => {
     event.preventDefault()
@@ -140,9 +146,13 @@ function QaStartScreen({
                     />
                   </div>
 
-                  <button className="primary-button start-submit start-step start-step-submit" type="submit" disabled={!canStartScan || isScanning}>
-                    <span>검사 시작</span>
-                  </button>
+                  <div className="start-submit-slot">
+                    <div className={`start-submit-reveal ${isSubmitVisible ? 'is-visible' : ''}`}>
+                      <button className="primary-button start-submit start-step-submit" type="submit" disabled={!canStartScan || isScanning}>
+                        <span>검사 시작</span>
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             ) : null}

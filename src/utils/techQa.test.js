@@ -225,6 +225,7 @@ test('compact Tech QA summary cards use four meaningful KPI values', () => {
 test('Tech QA panel display replaces top KPI cards with completion meta from existing data', () => {
   const base = result({
     durationMs: 18234,
+    totalDurationMs: 24321,
     scanOptions: { url: true, click: true, landing: true, form: true, hover: true, modal: true, scroll: true, responsive: true, download: true, cookie: true, image: true, performance: true, seo: true, markup: true },
     linkAudit: { playwrightRunCount: 1, uniqueRequestUrlCount: 98 },
     images: Array.from({ length: 25 }, () => ({ status: 'ok' })),
@@ -239,10 +240,11 @@ test('Tech QA panel display replaces top KPI cards with completion meta from exi
   assert.equal(display.completion.steps.includes('선택한 Tech QA 검사 완료'), true)
   assert.equal(display.completion.steps.includes('Tech QA 처리시간 18.2초'), false)
   assert.equal(meta['검사 엔진'], 'Playwright')
-  assert.equal(meta['검사 환경'], 'Desktop + Mobile')
+  assert.equal(meta['검사 환경'], undefined)
   assert.equal(meta['링크 검사'], '98개')
   assert.equal(meta['이미지 검사'], '25개')
   assert.equal(meta['처리시간'], '18.2초')
+  assert.equal(meta['총 검사 시간'], '24.3초')
 })
 
 test('Tech QA completion copy does not claim unselected checks were completed', () => {
@@ -300,6 +302,7 @@ test('Tech QA panel display hides unavailable completion meta for history fallba
 
   assert.equal(labels.includes('검사 엔진'), false)
   assert.equal(labels.includes('처리시간'), false)
+  assert.equal(labels.includes('총 검사 시간'), false)
   assert.equal(values.includes('undefined'), false)
   assert.equal(values.includes('NaN'), false)
 })

@@ -1031,28 +1031,52 @@ function LargeResourceList({ items, threshold }) {
 }
 
 function TechExplanationDetails({ item = {} }) {
-  const verifySteps = Array.isArray(item.verifySteps) ? item.verifySteps.slice(0, 3) : []
+  const commonCauses = Array.isArray(item.commonCauses) ? item.commonCauses.slice(0, 5) : []
+  const verifySteps = Array.isArray(item.verifySteps) ? item.verifySteps.slice(0, 6) : []
+  const decisionGuide = Array.isArray(item.decisionGuide) ? item.decisionGuide.slice(0, 4) : []
+  const displayStatus = getDisplayStatusLabel(item)
   return (
     <div className="tech-explanation-detail">
-      <dl className="tech-issue-meta">
-        <Meta label="발견 내용" value={item.finding || '자동 검사 결과가 기록되었습니다.'} />
-        <Meta label="판단 근거" value={item.reason || '수집된 검사 결과를 기준으로 표시했습니다.'} />
-        <Meta label="영향" value={item.impact || '직접적인 영향은 자동 검사에서 확인되지 않았습니다.'} />
-        {verifySteps.length > 0 ? (
-          <div>
-            <dt>확인 방법</dt>
-            <dd>
-              <ol className="tech-detail-steps">
-                {verifySteps.map((step) => <li key={step}>{step}</li>)}
-              </ol>
-            </dd>
-          </div>
-        ) : null}
-        <Meta label="권장 조치" value={item.recommendation || '필요 시 담당자가 실제 화면 상태를 확인해 주세요.'} />
-      </dl>
+      <section className="tech-explanation-section">
+        <h4>이 결과의 의미</h4>
+        <p>{item.meaning || item.finding || '자동 검사 결과가 기록되었습니다.'}</p>
+      </section>
+      {commonCauses.length > 0 ? (
+        <section className="tech-explanation-section">
+          <h4>대표 원인</h4>
+          <ul className="tech-detail-list-items">
+            {commonCauses.map((cause) => <li key={cause}>{cause}</li>)}
+          </ul>
+        </section>
+      ) : null}
+      <section className="tech-explanation-section">
+        <h4>왜 '{displayStatus}'로 분류됐나요?</h4>
+        <p>{item.classificationReason || item.reason || '수집된 검사 결과를 기준으로 표시했습니다.'}</p>
+      </section>
+      {verifySteps.length > 0 ? (
+        <section className="tech-explanation-section">
+          <h4>웹에서 확인하는 방법</h4>
+          <ol className="tech-detail-steps">
+            {verifySteps.map((step) => <li key={step}>{step}</li>)}
+          </ol>
+        </section>
+      ) : null}
+      {decisionGuide.length > 0 ? (
+        <section className="tech-explanation-section">
+          <h4>확인 후 판단 기준</h4>
+          <ul className="tech-detail-list-items">
+            {decisionGuide.map((guide) => <li key={typeof guide === 'string' ? guide : `${guide.condition}-${guide.judgment}`}>{formatDecisionGuide(guide)}</li>)}
+          </ul>
+        </section>
+      ) : null}
       <TechnicalEvidenceDetails items={item.technicalEvidence} />
     </div>
   )
+}
+
+function formatDecisionGuide(guide) {
+  if (!guide || typeof guide !== 'object') return String(guide || '')
+  return [guide.condition, guide.judgment].filter(Boolean).join(' → ')
 }
 
 function TechnicalEvidenceDetails({ items }) {

@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import { createLinkItems, createTechQaViewModel, getSectionVisibility, getVisibleLinkGroups } from './techQa.js'
 import { createTechDetailRows, createTechPanelDisplayModel, createTechQaDetailViewModel, resolveTechQaEngine } from './techQaPanelView.js'
 import { isDeviceAccordionOpen, updateDeviceAccordionState } from './deviceAccordionState.js'
+import { TECH_QA_EXPLANATION_INVENTORY } from './techQaExplanationCatalog.js'
 
 test('A normal internal links show first five and preserve all twelve', () => {
   const view = createTechQaViewModel(result({ links: Array.from({ length: 12 }, (_, index) => link({ label: `Link ${index + 1}`, url: `https://example.com/${index + 1}` })) }))
@@ -345,8 +346,10 @@ test('compact Tech QA source keeps table UI and closed detail policy', () => {
   assert.equal(source.includes('<details className="detail-card tech-detail-accordion" open>'), false)
   assert.equal(source.includes('문제 예시:'), false)
   assert.equal(source.includes('담당 권장:'), false)
-  assert.equal(source.includes('발견 내용'), true)
-  assert.equal(source.includes('판단 근거'), true)
+  assert.equal(source.includes('이 결과의 의미'), true)
+  assert.equal(source.includes('대표 원인'), true)
+  assert.equal(source.includes('웹에서 확인하는 방법'), true)
+  assert.equal(source.includes('확인 후 판단 기준'), true)
   assert.equal(source.includes('문제 및 확인 항목'), false)
   assert.equal(source.includes('담당 팀에서 확인할 내용'), false)
   assert.equal(source.includes('기술 정보 보기'), true)
@@ -377,10 +380,10 @@ test('compact Tech QA source keeps table UI and closed detail policy', () => {
   assert.equal(source.includes('검사 근거 오류'), false)
   assert.equal(source.includes('쉬운 설명'), false)
   assert.equal(source.includes('error message'), false)
-  assert.equal(source.includes('label="영향"'), true)
+  assert.equal(source.includes('확인 후 판단 기준'), true)
   assert.equal(source.includes('selector/위치'), false)
   assert.equal(source.includes('확인할 요소'), true)
-  assert.equal(source.includes('권장 조치'), true)
+  assert.equal(source.includes('권장 조치'), false)
   assert.equal(source.includes('리소스 및 네트워크'), false)
   assert.equal(source.includes('우선 확인 팀'), false)
   assert.equal(source.includes('UID팀'), false)
@@ -964,7 +967,7 @@ test('generic Tech QA display H and I keep raw selector out of default copy but 
   assert.equal(source.includes('selector/위치'), false)
   assert.equal(source.includes('label="selector"'), true)
   assert.equal(source.includes('label="raw failure"'), true)
-  assert.equal(source.includes('label="영향"'), true)
+  assert.equal(source.includes('확인 후 판단 기준'), true)
 })
 
 test('compact Tech QA CSS uses table rows instead of large repeated cards', () => {
@@ -1067,11 +1070,13 @@ test('Tech QA phase 2 detail view model explains problem results without changin
   const row = createTechDetailRows(view).linkRows[0]
 
   assert.equal(row.displayStatus, '문제 확인')
-  assert.equal(row.finding, '요청한 URL이 HTTP 404 상태를 반환했습니다.')
-  assert.equal(row.reason, '자동 요청 결과 status 404가 확인되었습니다.')
-  assert.equal(row.impact, '사용자가 해당 링크를 열면 페이지를 찾을 수 없을 수 있습니다.')
-  assert.deepEqual(row.verifySteps, ['표시된 URL을 새 탭에서 엽니다.', '정상 페이지가 표시되는지 확인합니다.'])
-  assert.equal(row.recommendation, '링크 주소 또는 대상 페이지의 배포 상태를 확인하세요.')
+  assert.equal(row.meaning.includes('서버에서 찾을 수 없거나 사용할 수 없는 상태'), true)
+  assert.equal(Array.isArray(row.commonCauses), true)
+  assert.equal(row.classificationReason.includes('HTTP 404'), true)
+  assert.equal(row.verifySteps.some((step) => step.includes('브라우저 주소창의 최종 URL')), true)
+  assert.equal(Array.isArray(row.decisionGuide), true)
+  assert.equal(row.finding, row.meaning)
+  assert.equal(row.reason, row.classificationReason)
   assert.equal(row.technicalEvidence.some((entry) => entry.label === 'HTTP status' && entry.value === '404'), true)
   assert.equal(view.linkSummary.error, 1)
   assert.equal(view.linkSummary.warn, 0)
@@ -1085,27 +1090,27 @@ test('Tech QA phase 2 review detail explains why direct confirmation is needed',
   const row = createTechDetailRows(view).linkRows[0]
 
   assert.equal(row.displayStatus, '검토 필요')
-  assert.equal(row.finding, '링크 대상이 임시 값인 #으로 설정되어 있습니다.')
-  assert.equal(row.reason.includes('직접 확인이 필요'), true)
-  assert.equal(row.impact, '의도된 UI 제어일 수도 있어 자동 검사만으로 오류를 확정할 수 없습니다.')
-  assert.equal(row.recommendation.includes('정상 UI 제어라면 수정이 필요하지 않습니다.'), true)
+  assert.equal(row.meaning.includes('같은 페이지 내부 위치'), true)
+  assert.equal(row.classificationReason.includes('anchor'), true)
+  assert.equal(row.verifySteps.some((step) => step.includes('페이지 위치')), true)
+  assert.equal(row.decisionGuide.some((guide) => guide.includes('임시 링크')), true)
 })
 
 test('Tech QA phase 2 normal detail does not claim absolute integrity', () => {
   const row = createTechDetailRows(createTechQaViewModel(result({ checks: [check({ id: 'access', status: 'ok' })] }))).basicRows[0]
 
   assert.equal(row.displayStatus, '정상')
-  assert.equal(row.finding, '현재 검사 조건에서 정상 응답 또는 기대 신호를 확인했습니다.')
-  assert.equal(row.finding.includes('문제가 전혀 없습니다'), false)
-  assert.equal(row.reason.includes('실패 신호가 수집되지 않았습니다'), true)
+  assert.equal(row.meaning.includes('브라우저에서 열리는지'), true)
+  assert.equal(row.meaning.includes('문제가 전혀 없습니다'), false)
+  assert.equal(row.classificationReason.includes('정상'), true)
 })
 
 test('Tech QA phase 2 not applicable detail keeps target absence reason', () => {
   const detail = createTechQaDetailViewModel({ id: 'modal-interaction', status: 'info', meta: { noTarget: true } })
 
   assert.equal(detail.displayStatus, '해당 없음')
-  assert.equal(detail.finding, '현재 페이지에서 이 검사 대상 요소가 확인되지 않았습니다.')
-  assert.equal(detail.reason, '검사 메타 정보에서 noTarget 신호가 확인되었습니다.')
+  assert.equal(detail.meaning.includes('검사 대상이 확인되지 않았습니다'), true)
+  assert.equal(detail.classificationReason.includes('noTarget'), true)
 })
 
 test('Tech QA phase 2 unavailable detail distinguishes existing failure signals', () => {
@@ -1114,11 +1119,11 @@ test('Tech QA phase 2 unavailable detail distinguishes existing failure signals'
   const login = createTechQaDetailViewModel({ status: 'error', statusCode: 401, message: 'login required' })
 
   assert.equal(timeout.displayStatus, '검사 불가')
-  assert.equal(timeout.finding.includes('timeout'), true)
+  assert.equal(timeout.meaning.includes('timeout'), true)
   assert.equal(network.displayStatus, '검사 불가')
-  assert.equal(network.finding.includes('network'), true)
+  assert.equal(network.meaning.includes('network'), true)
   assert.equal(login.displayStatus, '검사 불가')
-  assert.equal(login.finding.includes('login required'), true)
+  assert.equal(login.meaning.includes('login required'), true)
 })
 
 test('Tech QA phase 2 detail evidence hides missing technical fields', () => {
@@ -1135,11 +1140,11 @@ test('Tech QA phase 2 detail UI keeps inline closed expansion behavior', () => {
   const source = fs.readFileSync('src/components/TechQaPanel.jsx', 'utf8')
 
   assert.equal(source.includes('function TechExplanationDetails'), true)
-  assert.equal(source.includes('<Meta label="발견 내용"'), true)
-  assert.equal(source.includes('<Meta label="판단 근거"'), true)
-  assert.equal(source.includes('<Meta label="영향"'), true)
-  assert.equal(source.includes('<dt>확인 방법</dt>'), true)
-  assert.equal(source.includes('<Meta label="권장 조치"'), true)
+  assert.equal(source.includes('이 결과의 의미'), true)
+  assert.equal(source.includes('대표 원인'), true)
+  assert.equal(source.includes("왜 '{displayStatus}'로 분류됐나요?"), true)
+  assert.equal(source.includes('웹에서 확인하는 방법'), true)
+  assert.equal(source.includes('확인 후 판단 기준'), true)
   assert.equal(source.includes('function TechnicalEvidenceDetails'), true)
   assert.equal(source.includes('open={isOpen}'), true)
   assert.equal(source.includes('aria-expanded={isOpen}'), true)
@@ -1155,6 +1160,189 @@ test('Tech QA phase 2 detail view remains safe for restored history-shaped rows'
   assert.equal(Array.isArray(row.verifySteps), true)
   assert.equal(Array.isArray(row.technicalEvidence), true)
 })
+
+test('Tech QA explanation inventory covers every displayed Tech QA section', () => {
+  const screenNames = TECH_QA_EXPLANATION_INVENTORY.map((entry) => entry.screenName)
+
+  assert.deepEqual(screenNames, [
+    '주요 검사 결과',
+    'URL 검사',
+    '클릭 동작 검사',
+    '랜딩 페이지 검사',
+    'Form QA',
+    'Hover / Dropdown QA',
+    'Modal QA',
+    'Scroll QA',
+    'Responsive QA',
+    'Download QA',
+    'Cookie QA',
+    'Image QA',
+    'Performance QA',
+    'SEO QA',
+    '마크업 및 접근성 검사',
+  ])
+  assert.equal(TECH_QA_EXPLANATION_INVENTORY.every((entry) => Array.isArray(entry.categories) && entry.categories.length > 0), true)
+})
+
+test('Tech QA explanation common contract preserves result and technical evidence shape', () => {
+  const item = {
+    rowId: 'tech-click-apply',
+    status: 'error',
+    statusLabel: '문제 확인',
+    value: 'hit-test 결과 unrelated overlay가 실제 클릭 지점을 막고 있습니다.',
+    label: '프로모션 바로가기',
+    category: 'covered-or-not-interactable',
+    actionClassification: 'actual-error',
+    hitTestStatus: 'hitTestFailed',
+    unrelatedOverlay: true,
+    overlaySelector: '#overlay',
+    selector: '#promotion',
+  }
+  const detail = { ...item, ...createTechQaDetailViewModel(item) }
+
+  assert.equal(detail.value, 'hit-test 결과 unrelated overlay가 실제 클릭 지점을 막고 있습니다.')
+  assert.equal(detail.status, 'error')
+  assert.equal(detail.displayStatus, '문제 확인')
+  assertExplanation(detail)
+  assert.equal(detail.meaning.includes('프로모션 바로가기'), true)
+  assert.equal(detail.meaning.includes('클릭 좌표 위에 다른 화면 요소'), true)
+  assert.equal(detail.verifySteps.some((step) => step.includes('클릭')), true)
+  assert.equal(detail.commonCauses.some((cause) => cause.includes('overlay') || cause.includes('팝업')), true)
+  assert.equal(detail.technicalEvidence.some((entry) => entry.label === 'overlay selector' && entry.value === '#overlay'), true)
+})
+
+test('URL explanation templates cover special links access errors timeout and sparse success', () => {
+  const cases = [
+    { category: 'javascript-pseudo-url', href: 'javascript:void(0)', status: 'warn', expect: 'JavaScript', step: '클릭' },
+    { category: 'http-4xx', statusCode: 403, status: 'warn', expect: '접근 권한', step: '로그인' },
+    { category: 'http-4xx', statusCode: 404, status: 'error', expect: '찾을 수 없거나', step: '최종 URL' },
+    { category: 'timeout', status: 'error', message: 'timeout exceeded', expect: '제한 시간', step: 'Network' },
+    { category: 'special-scheme', linkType: 'mailto', href: 'mailto:hello@example.com', status: 'ok', expect: '메일 앱', step: 'href' },
+    { category: 'special-scheme', linkType: 'tel', href: 'tel:01012345678', status: 'ok', expect: '전화 앱', step: 'href' },
+    { category: 'sparse-success-page', statusCode: 200, status: 'warn', expect: 'HTTP 200', step: '콘텐츠' },
+  ]
+
+  cases.forEach((entry) => {
+    const detail = createTechQaDetailViewModel({ type: 'link', title: 'Link', label: 'Link', url: 'https://example.com', ...entry })
+    assertExplanation(detail)
+    assert.equal(detail.meaning.includes(entry.expect) || detail.classificationReason.includes(entry.expect), true)
+    assert.equal(detail.verifySteps.some((step) => step.includes(entry.step)), true)
+  })
+})
+
+test('Click explanation templates cover overlay timeout no-change UI control navigation and missing target', () => {
+  const cases = [
+    { rowId: 'tech-click-overlay', status: 'error', category: 'covered-or-not-interactable', label: 'Apply', actionClassification: 'actual-error', hitTestStatus: 'hitTestFailed', unrelatedOverlay: true, expect: '클릭 좌표', step: '클릭' },
+    { rowId: 'tech-click-timeout', status: 'error', category: 'covered-or-not-interactable', label: 'Open', actionClassification: 'actual-error', message: 'Timeout 2500ms exceeded', expect: '제한 시간', step: 'spinner' },
+    { rowId: 'tech-click-no-change', status: 'warn', category: 'no-observable-action', label: 'Track', actionClassification: 'actionable-warning', expect: '변화가 관찰되지 않았습니다', step: 'Console' },
+    { rowId: 'tech-click-control', status: 'ok', category: 'UI-control-no-url-required', label: 'Menu', actionClassification: 'ui-control-no-url-required', expect: 'UI 제어', step: '키보드' },
+    { rowId: 'tech-click-nav', status: 'ok', category: 'valid-url', label: 'Product', actionClassification: 'verified-working', expect: '확인됐습니다', step: '클릭' },
+    { rowId: 'tech-click-missing', status: 'warn', category: 'missing-navigation-action', label: 'CTA', actionClassification: 'actionable-warning', expect: '충분히 명확', step: '클릭' },
+  ]
+
+  cases.forEach((item) => {
+    const detail = createTechQaDetailViewModel(item)
+    assertExplanation(detail)
+    assert.equal(`${detail.meaning} ${detail.classificationReason}`.includes(item.expect), true)
+    assert.equal(detail.verifySteps.some((step) => step.includes(item.step)), true)
+  })
+})
+
+test('Landing explanation templates cover http errors weak content restrictions and normal page', () => {
+  const cases = [
+    { rowId: 'tech-landing-http', status: 'error', category: 'http-5xx', statusCode: 500, label: 'CTA', expect: 'HTTP 500', step: 'Network' },
+    { rowId: 'tech-landing-browser-error', status: 'error', category: 'browser-error-page', statusCode: 200, label: 'CTA', expect: '화면 오류', step: 'Console' },
+    { rowId: 'tech-landing-sparse', status: 'warn', category: 'needs-review', statusCode: 200, label: 'CTA', expect: '충분하지 않았습니다', step: '본문' },
+    { rowId: 'tech-landing-restricted', status: 'warn', category: 'restricted', statusCode: 403, label: 'CTA', expect: '확인하지 못했습니다', step: '권한' },
+    { rowId: 'tech-landing-ok', status: 'ok', category: 'landing-ok', statusCode: 200, label: 'CTA', expect: '기본 콘텐츠', step: '최종 랜딩 URL' },
+  ]
+
+  cases.forEach((item) => {
+    const detail = createTechQaDetailViewModel(item)
+    assertExplanation(detail)
+    assert.equal(`${detail.meaning} ${detail.classificationReason}`.includes(item.expect), true)
+    assert.equal(detail.verifySteps.some((step) => step.includes(item.step)), true)
+  })
+})
+
+test('Interaction explanation templates cover form hover modal scroll download cookie and image', () => {
+  const cases = [
+    { rowId: 'tech-form-email', status: 'error', category: 'submit-not-blocked', label: 'Email', expect: '제출', step: 'POST' },
+    { rowId: 'tech-hover-menu', status: 'warn', category: 'no-change', label: 'Menu', expect: '마우스', step: '마우스' },
+    { rowId: 'tech-modal-open', status: 'warn', category: 'accessibility-review', label: 'Open modal', expect: 'ESC', step: 'ESC' },
+    { rowId: 'tech-scroll-bottom', status: 'warn', category: 'height-growth', label: 'Page scroll', expect: '하단', step: '스크롤' },
+    { rowId: 'tech-download-pdf', status: 'error', category: 'mime-mismatch', label: 'PDF', expect: '파일 형식', step: 'Content-Type' },
+    { rowId: 'tech-cookie-sid', status: 'warn', category: 'httponly-review', label: 'session_token', expect: 'HttpOnly', step: 'Application' },
+    { rowId: 'tech-image-hero', status: 'warn', category: 'aspect-ratio', label: 'hero.webp', expect: '이미지', step: 'natural size' },
+  ]
+
+  cases.forEach((item) => {
+    const detail = createTechQaDetailViewModel(item)
+    assertExplanation(detail)
+    assert.equal(`${detail.meaning} ${detail.commonCauses.join(' ')}`.includes(item.expect), true)
+    assert.equal(detail.verifySteps.some((step) => step.includes(item.step)), true)
+  })
+})
+
+test('Responsive Performance SEO and Markup explanations use audit-specific verification paths', () => {
+  const cases = [
+    { rowId: 'tech-responsive-mobile', status: 'error', category: 'viewport', label: 'Mobile', type: '390x844', expectStep: 'viewport', expectText: '가로 스크롤' },
+    { rowId: 'tech-performance-large', status: 'warn', category: 'large-resource', label: 'large.js', expectStep: 'Network', expectText: '큰 용량' },
+    { rowId: 'tech-performance-compression', status: 'warn', category: 'compression', label: 'app.js', expectStep: 'Encoding', expectText: '압축' },
+    { rowId: 'tech-performance-failed', status: 'error', category: 'failed-resource', label: 'app.js', expectStep: 'Status', expectText: '실패 응답' },
+    { rowId: 'tech-seo-canonical', status: 'warn', category: 'canonical', label: 'Canonical', expectStep: 'canonical', expectText: 'canonical' },
+    { rowId: 'tech-seo-jsonld', status: 'error', category: 'structured-data', label: 'JSON-LD', expectStep: 'application/ld+json', expectText: 'JSON-LD' },
+    { rowId: 'tech-markup-alt', id: 'image-alt', status: 'warn', label: '이미지 alt', expectStep: 'img', expectText: '대체 텍스트' },
+    { rowId: 'tech-markup-rel', id: 'external-links', status: 'warn', label: '새 창 외부 링크', expectStep: 'rel', expectText: 'rel 보안' },
+    { rowId: 'tech-markup-heading', id: 'headings', status: 'warn', label: 'Heading', expectStep: 'heading', expectText: 'heading 구조' },
+    { rowId: 'tech-markup-form', id: 'forms', status: 'warn', label: 'Form label', expectStep: 'label', expectText: 'label' },
+  ]
+
+  cases.forEach((item) => {
+    const detail = createTechQaDetailViewModel(item)
+    assertExplanation(detail)
+    assert.equal(`${detail.meaning} ${detail.commonCauses.join(' ')}`.includes(item.expectText), true)
+    assert.equal(detail.verifySteps.some((step) => step.includes(item.expectStep)), true)
+  })
+})
+
+test('Generic fallback is useful and does not force opening URLs in new tabs', () => {
+  const item = { rowId: 'tech-unknown-row', status: 'warn', category: 'new-category', message: 'unexpected signal', value: '원본 결과 문구' }
+  const detail = { ...item, ...createTechQaDetailViewModel(item) }
+
+  assert.equal(detail.value, '원본 결과 문구')
+  assertExplanation(detail)
+  assert.equal(detail.meaning.includes('추가 확인'), true)
+  assert.equal(detail.classificationReason.includes('unexpected signal'), true)
+  assert.equal(detail.verifySteps.some((step) => step.includes('새 탭')), false)
+})
+
+test('Legacy history and device-shaped detail rows receive explanations at render view-model time', () => {
+  const base = result({
+    deviceResults: [
+      { deviceId: 'desktop', status: 'success', result: result({ links: [link({ label: 'Desktop Missing', status: 'error', statusCode: 404, category: 'http-4xx' })] }) },
+      { deviceId: 'mobile', status: 'success', result: result({ checks: [check({ id: 'seo-readiness', status: 'warn', items: [{ label: 'Canonical', category: 'canonical', status: 'warn' }] })] }) },
+    ],
+  })
+  const desktopView = createTechQaViewModel(base.deviceResults[0].result)
+  const mobileView = createTechQaViewModel(base.deviceResults[1].result)
+
+  assertExplanation(createTechDetailRows(desktopView).linkRows[0])
+  assertExplanation(createTechDetailRows(mobileView).seoRows[0])
+})
+
+function assertExplanation(detail) {
+  assert.equal(typeof detail.meaning, 'string')
+  assert.equal(detail.meaning.length > 0, true)
+  assert.equal(Array.isArray(detail.commonCauses), true)
+  assert.equal(typeof detail.classificationReason, 'string')
+  assert.equal(detail.classificationReason.length > 0, true)
+  assert.equal(Array.isArray(detail.verifySteps), true)
+  assert.equal(detail.verifySteps.length > 0, true)
+  assert.equal(Array.isArray(detail.decisionGuide), true)
+  assert.equal(detail.decisionGuide.length > 0, true)
+  assert.equal(Array.isArray(detail.technicalEvidence), true)
+}
 
 test('Tech QA phase 2 does not change API payload scan options visual QA or progress contracts', () => {
   const panelSource = fs.readFileSync('src/components/TechQaPanel.jsx', 'utf8')

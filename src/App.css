@@ -5098,6 +5098,7 @@
 
 .tech-row-detail-body .tech-row-details:not(.tech-row-with-details),
 .tech-row-detail-body .tech-issue-meta,
+.tech-row-detail-body .tech-explanation-detail,
 .tech-row-detail-body .tech-problem-elements,
 .tech-row-detail-body .tech-problem-elements li {
   max-width: 100%;
@@ -5108,6 +5109,45 @@
 
 .tech-row-detail-body .tech-row-details:not(.tech-row-with-details) {
   overflow-x: auto;
+}
+
+.tech-explanation-detail {
+  display: grid;
+  gap: 10px;
+}
+
+.tech-explanation-section {
+  display: grid;
+  gap: 5px;
+}
+
+.tech-explanation-section h4 {
+  margin: 0;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.tech-explanation-section p {
+  margin: 0;
+  color: #475467;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.tech-detail-list-items,
+.tech-detail-steps {
+  margin: 0;
+  padding-left: 18px;
+  color: #475467;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.tech-detail-list-items li,
+.tech-detail-steps li {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
 }
 
 .tech-row-details:not(.tech-row-with-details)[open] {

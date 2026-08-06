@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import { createLandingAuditSourceItems, runOptionalTechAudits, runUrlAudit } from './techScanOrchestration.js'
+import { MAX_OPTIONAL_AUDIT_CONCURRENCY, createLandingAuditSourceItems, runOptionalTechAudits, runUrlAudit } from './techScanOrchestration.js'
 import { auditPerformanceResources } from './techPerformanceAudit.js'
 import { auditSeoReadiness } from './techSeoAudit.js'
 
@@ -655,6 +655,132 @@ test('optional tech audit orchestration accepts synchronous performance and prod
   assert.equal(Array.isArray(result.performanceAuditResult.items), true)
   assert.equal(Array.isArray(result.seoAuditResult.items), true)
 })
+
+test('optional tech audit orchestration keeps DOM interaction group sequential before independent audits', async () => {
+  const calls = []
+  await runOptionalTechAudits({
+    browser: {},
+    targetUrl: 'https://example.com',
+    snapshot: { clickableCandidates: [{ selector: '#cta' }], interactionTargets: [{ url: 'https://example.com/next', selector: '#cta' }], links: [] },
+    resourceResponses: [],
+    techScanOptions: { url: false, click: true, landing: true, form: true, hover: true, modal: true, scroll: true, responsive: false, download: false, cookie: false, image: false, performance: true, seo: true, markup: false },
+    instrumentation: {},
+    auditClickableActions: async () => {
+      calls.push('click')
+      return { items: [{ auditId: 'click-1', url: 'https://example.com/next' }], meta: {} }
+    },
+    auditLandingPages: async () => {
+      calls.push('landing')
+      return { items: [], meta: {} }
+    },
+    auditForms: async () => {
+      calls.push('form')
+      return { items: [], meta: {} }
+    },
+    auditHoverInteractions: async () => {
+      calls.push('hover')
+      return { items: [], meta: {} }
+    },
+    auditModalInteractions: async () => {
+      calls.push('modal')
+      return { items: [], meta: {} }
+    },
+    auditScrollInteractions: async () => {
+      calls.push('scroll')
+      return { items: [], meta: {} }
+    },
+    auditResponsiveLayouts: async () => ({ items: [], meta: {} }),
+    auditDownloadResources: async () => ({ items: [], meta: {} }),
+    auditCookies: async () => ({ items: [], meta: {} }),
+    auditImages: async () => ({ items: [], meta: {} }),
+    auditPerformanceResources: async () => {
+      calls.push('performance')
+      return { items: [], meta: {} }
+    },
+    auditSeoReadiness: async () => {
+      calls.push('seo')
+      return { items: [], meta: {} }
+    },
+  })
+
+  assert.deepEqual(calls.slice(0, 6), ['click', 'landing', 'form', 'hover', 'modal', 'scroll'])
+  assert.deepEqual(calls.slice(6).sort(), ['performance', 'seo'])
+})
+
+test('optional tech audit orchestration runs independent performance and seo with bounded concurrency two', async () => {
+  const active = { count: 0, max: 0 }
+  const result = await runOptionalTechAudits({
+    browser: {},
+    targetUrl: 'https://example.com',
+    snapshot: { clickableCandidates: [], interactionTargets: [], links: [] },
+    resourceResponses: [],
+    techScanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, performance: true, seo: true, markup: false },
+    instrumentation: {},
+    auditClickableActions: async () => ({ items: [], meta: {} }),
+    auditLandingPages: async () => ({ items: [], meta: {} }),
+    auditForms: async () => ({ items: [], meta: {} }),
+    auditHoverInteractions: async () => ({ items: [], meta: {} }),
+    auditModalInteractions: async () => ({ items: [], meta: {} }),
+    auditScrollInteractions: async () => ({ items: [], meta: {} }),
+    auditResponsiveLayouts: async () => ({ items: [], meta: {} }),
+    auditDownloadResources: async () => ({ items: [], meta: {} }),
+    auditCookies: async () => ({ items: [], meta: {} }),
+    auditImages: async () => ({ items: [], meta: {} }),
+    auditConcurrencyLimit: MAX_OPTIONAL_AUDIT_CONCURRENCY,
+    auditPerformanceResources: () => delayedAudit(active, 'performance'),
+    auditSeoReadiness: () => delayedAudit(active, 'seo'),
+  })
+
+  assert.equal(active.max, 2)
+  assert.equal(result.performanceAuditResult.items[0].id, 'performance')
+  assert.equal(result.seoAuditResult.items[0].id, 'seo')
+})
+
+test('optional tech audit orchestration honors request-level reduced audit concurrency', async () => {
+  const active = { count: 0, max: 0 }
+  await runOptionalTechAudits({
+    browser: {},
+    targetUrl: 'https://example.com',
+    snapshot: { clickableCandidates: [], interactionTargets: [], links: [] },
+    resourceResponses: [],
+    techScanOptions: { url: false, click: false, landing: false, form: false, hover: false, modal: false, scroll: false, responsive: false, download: false, cookie: false, image: false, performance: true, seo: true, markup: false },
+    instrumentation: {},
+    auditClickableActions: async () => ({ items: [], meta: {} }),
+    auditLandingPages: async () => ({ items: [], meta: {} }),
+    auditForms: async () => ({ items: [], meta: {} }),
+    auditHoverInteractions: async () => ({ items: [], meta: {} }),
+    auditModalInteractions: async () => ({ items: [], meta: {} }),
+    auditScrollInteractions: async () => ({ items: [], meta: {} }),
+    auditResponsiveLayouts: async () => ({ items: [], meta: {} }),
+    auditDownloadResources: async () => ({ items: [], meta: {} }),
+    auditCookies: async () => ({ items: [], meta: {} }),
+    auditImages: async () => ({ items: [], meta: {} }),
+    auditConcurrencyLimit: 1,
+    auditPerformanceResources: () => delayedAudit(active, 'performance'),
+    auditSeoReadiness: () => delayedAudit(active, 'seo'),
+  })
+
+  assert.equal(active.max, 1)
+})
+
+test('scanUrl starts URL audit before optional audits for safe overlap without changing link checker', () => {
+  const source = fs.readFileSync('server/index.js', 'utf8')
+  const urlAuditIndex = source.indexOf('const urlAuditPromise = runUrlAudit({')
+  const optionalAuditIndex = source.indexOf('await runOptionalTechAudits({', urlAuditIndex)
+
+  assert.equal(urlAuditIndex > 0, true)
+  assert.equal(optionalAuditIndex > urlAuditIndex, true)
+  assert.equal(source.includes('LINK_CHECK_CONCURRENCY'), true)
+  assert.equal(source.includes('timeout: LINK_TIMEOUT_MS'), true)
+})
+
+async function delayedAudit(active, id) {
+  active.count += 1
+  active.max = Math.max(active.max, active.count)
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  active.count -= 1
+  return { items: [{ id }], meta: { candidateCount: 1 } }
+}
 
 test('tech scan option orchestration sources do not hardcode specific sites or hostnames', () => {
   const source = [

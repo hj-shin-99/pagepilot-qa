@@ -1,9 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
 import { MAX_DEVICE_SCAN_CONCURRENCY, buildQaRunResponse, createQaRunStreamHandler, runWithConcurrency } from './qaRunRoute.js'
 
 function createDependencies(overrides = {}) {
-  const calls = { scanUrl: 0, visual: 0, visualScanResult: null }
+  const calls = { scanUrl: 0, visual: 0, visualScanResult: null, mobileCompatibility: 0 }
   const scanResult = overrides.scanResult || {
     targetUrl: 'https://example.com',
     scannedAt: '2026-07-13T00:00:00.000Z',
@@ -62,6 +63,10 @@ function createDependencies(overrides = {}) {
           heroCtaGroup: { figma: { count: 2 }, web: { count: 2 } },
         },
       }
+    },
+    async createMobileCompatibilityResult() {
+      calls.mobileCompatibility += 1
+      return overrides.mobileCompatibilityResult || { viewport: { width: 390, height: 844 }, viewportWidth: 390, documentWidth: 390, hasHorizontalOverflow: false, accessible: true, statusCode: 200, note: 'shared mobile ok' }
     },
   }
 
@@ -297,6 +302,147 @@ test('/api/qa/run builder keeps Visual QA desktop-only when desktop was not sele
   assert.equal(result.deviceResults.length, 1)
 })
 
+test('/api/qa/run builder keeps desktop-only legacy mobile compatibility unchanged', async () => {
+  const { calls, dependencies } = createDependencies()
+  const result = await buildQaRunResponse({ webUrl: 'https://example.com', figmaUrl: '', devices: ['desktop'] }, dependencies)
+
+  assert.equal(calls.scanUrl, 1)
+  assert.equal(calls.scanArgs.options.includeMobile, true)
+  assert.equal(calls.mobileCompatibility, 0)
+  assert.equal(result.tech.result.mobile.statusCode, 200)
+})
+
+test('/api/qa/run builder keeps tablet-only legacy mobile compatibility unchanged', async () => {
+  const { calls, dependencies } = createDependencies()
+  const result = await buildQaRunResponse({ webUrl: 'https://example.com', figmaUrl: '', devices: ['tablet'] }, dependencies)
+
+  assert.equal(calls.scanUrl, 1)
+  assert.equal(calls.scanArgs.options.deviceId, 'tablet')
+  assert.equal(calls.scanArgs.options.includeMobile, true)
+  assert.equal(calls.mobileCompatibility, 0)
+  assert.equal(result.deviceResults[0].result.mobile.statusCode, 200)
+})
+
+test('/api/qa/run builder keeps mobile-only legacy mobile compatibility unchanged', async () => {
+  const { calls, dependencies } = createDependencies()
+  const result = await buildQaRunResponse({ webUrl: 'https://example.com', figmaUrl: '', devices: ['mobile'] }, dependencies)
+
+  assert.equal(calls.scanUrl, 1)
+  assert.equal(calls.scanArgs.options.deviceId, 'mobile')
+  assert.equal(calls.scanArgs.options.includeMobile, true)
+  assert.equal(calls.mobileCompatibility, 0)
+  assert.equal(result.deviceResults[0].result.mobile.statusCode, 200)
+})
+
+test('/api/qa/run builder reuses canonical mobile compatibility across multi-device results', async () => {
+  const fallbackMobile = { viewport: { width: 0, height: 0 }, viewportWidth: 0, documentWidth: 0, hasHorizontalOverflow: false, accessible: false, statusCode: null, note: '' }
+  const canonicalMobile = { viewport: { width: 390, height: 844 }, viewportWidth: 390, documentWidth: 420, hasHorizontalOverflow: true, accessible: true, statusCode: 204, note: 'canonical mobile' }
+  const { calls, dependencies } = createDependencies({
+    scanResultFactory(url, options) {
+      const mobile = options.includeMobile ? canonicalMobile : fallbackMobile
+      return {
+        targetUrl: url,
+        scannedAt: '2026-07-13T00:00:00.000Z',
+        pageTitle: options.deviceId,
+        httpStatus: 200,
+        accessible: true,
+        navigationError: '',
+        checks: [
+          { id: 'mobile', status: mobile.accessible ? 'ok' : 'error', value: mobile.statusCode ? String(mobile.statusCode) : '응답 없음', detail: mobile.note },
+          { id: 'mobile-overflow', status: mobile.hasHorizontalOverflow ? 'warn' : 'ok', value: mobile.hasHorizontalOverflow ? `${mobile.documentWidth}px / viewport ${mobile.viewportWidth}px` : '가로 넘침 없음', detail: mobile.hasHorizontalOverflow ? '모바일 화면 너비보다 문서가 넓어 가로 스크롤이 생길 수 있습니다.' : '모바일 viewport 기준 가로 넘침이 감지되지 않았습니다.' },
+        ],
+        links: [],
+        images: [],
+        counts: { anchors: 0, buttons: 0 },
+        mobile,
+      }
+    },
+  })
+
+  const result = await buildQaRunResponse({ webUrl: 'https://example.com', figmaUrl: '', devices: ['desktop', 'tablet', 'mobile'] }, dependencies)
+
+  assert.deepEqual(calls.scanArgsList.map((entry) => [entry.options.deviceId, entry.options.includeMobile]), [['desktop', false], ['tablet', false], ['mobile', true]])
+  assert.equal(calls.mobileCompatibility, 0)
+  assert.deepEqual(result.deviceResults.map((entry) => entry.result.mobile.statusCode), [204, 204, 204])
+  assert.deepEqual(result.deviceResults.map((entry) => entry.result.checks.find((check) => check.id === 'mobile').detail), ['canonical mobile', 'canonical mobile', 'canonical mobile'])
+  assert.deepEqual(result.deviceResults.map((entry) => entry.result.checks.find((check) => check.id === 'mobile-overflow').status), ['warn', 'warn', 'warn'])
+})
+
+test('/api/qa/run builder runs one shared mobile compatibility fallback when mobile device fails', async () => {
+  const fallbackMobile = { viewport: { width: 0, height: 0 }, viewportWidth: 0, documentWidth: 0, hasHorizontalOverflow: false, accessible: false, statusCode: null, note: '' }
+  const sharedMobile = { viewport: { width: 390, height: 844 }, viewportWidth: 390, documentWidth: 390, hasHorizontalOverflow: false, accessible: true, statusCode: 201, note: 'shared fallback mobile' }
+  const { calls, dependencies } = createDependencies({ mobileCompatibilityResult: sharedMobile })
+  dependencies.scanUrl = async (url, options) => {
+    calls.scanUrl += 1
+    calls.scanArgsList = [...(calls.scanArgsList || []), { url, options }]
+    if (options.deviceId === 'mobile') throw new Error('mobile failed')
+    return {
+      targetUrl: url,
+      scannedAt: '2026-07-13T00:00:00.000Z',
+      pageTitle: options.deviceId,
+      httpStatus: 200,
+      accessible: true,
+      navigationError: '',
+      checks: [{ id: 'mobile', status: 'error', value: '응답 없음', detail: '' }],
+      links: [],
+      images: [],
+      counts: { anchors: 0, buttons: 0 },
+      mobile: fallbackMobile,
+      scanOptions: options.techScanOptions,
+    }
+  }
+
+  const result = await buildQaRunResponse({ webUrl: 'https://example.com', figmaUrl: '', devices: ['desktop', 'tablet', 'mobile'] }, dependencies)
+
+  assert.equal(calls.mobileCompatibility, 1)
+  assert.equal(result.deviceResults.find((entry) => entry.deviceId === 'mobile').status, 'error')
+  assert.deepEqual(result.deviceResults.filter((entry) => entry.status === 'success').map((entry) => entry.result.mobile.statusCode), [201, 201])
+})
+
+test('/api/qa/run builder applies canonical Korean mobile compatibility check copy', async () => {
+  const noResponseMobile = { viewport: { width: 390, height: 844 }, viewportWidth: 390, documentWidth: 390, hasHorizontalOverflow: false, accessible: false, statusCode: null, note: 'mobile no response' }
+  const overflowMobile = { viewport: { width: 390, height: 844 }, viewportWidth: 390, documentWidth: 480, hasHorizontalOverflow: true, accessible: true, statusCode: 200, note: 'mobile ok' }
+  const noResponseResult = await runMultiDeviceWithMobileCompatibility(noResponseMobile)
+  const overflowResult = await runMultiDeviceWithMobileCompatibility(overflowMobile)
+
+  assert.deepEqual(noResponseResult.deviceResults.map((entry) => entry.result.checks.find((check) => check.id === 'mobile').value), ['응답 없음', '응답 없음', '응답 없음'])
+  assert.deepEqual(noResponseResult.deviceResults.map((entry) => entry.result.checks.find((check) => check.id === 'mobile-overflow').value), ['가로 넘침 없음', '가로 넘침 없음', '가로 넘침 없음'])
+  assert.deepEqual(overflowResult.deviceResults.map((entry) => entry.result.checks.find((check) => check.id === 'mobile-overflow').detail), [
+    '모바일 화면 너비보다 문서가 넓어 가로 스크롤이 생길 수 있습니다.',
+    '모바일 화면 너비보다 문서가 넓어 가로 스크롤이 생길 수 있습니다.',
+    '모바일 화면 너비보다 문서가 넓어 가로 스크롤이 생길 수 있습니다.',
+  ])
+  assert.deepEqual(overflowResult.deviceResults.map((entry) => entry.result.checks.find((check) => check.id === 'mobile').status), ['ok', 'ok', 'ok'])
+})
+
+test('new mobile compatibility Korean copy matches canonical buildChecks copy and has no mojibake', () => {
+  const routeSource = fs.readFileSync('server/qaRunRoute.js', 'utf8')
+  const routeTestSource = fs.readFileSync('server/qaRunRoute.test.js', 'utf8')
+  const indexSource = fs.readFileSync('server/index.js', 'utf8')
+  const canonicalCopies = [
+    '응답 없음',
+    '가로 넘침 없음',
+    '모바일 화면 너비보다 문서가 넓어 가로 스크롤이 생길 수 있습니다.',
+    '모바일 viewport 기준 가로 넘침이 감지되지 않았습니다.',
+  ]
+  const mojibakePatterns = [
+    [0x3f, 0xbb10, 0xb59f],
+    [0x3f, 0xb181, 0xc4ec],
+    [0x5a9b, 0x6fe1],
+    [0xf9cf, 0x2464, 0xceee],
+    [0xc10f, 0xbb20],
+  ].map((codePoints) => codePoints.map((codePoint) => String.fromCodePoint(codePoint)).join(''))
+
+  canonicalCopies.forEach((copy) => {
+    assert.equal(indexSource.includes(copy), true)
+    assert.equal(routeSource.includes(copy), true)
+  })
+  mojibakePatterns.forEach((pattern) => {
+    assert.equal(routeSource.includes(pattern), false)
+    assert.equal(routeTestSource.includes(pattern), false)
+  })
+})
+
 test('/api/qa/run builder ignores progress callback failures', async () => {
   const { dependencies } = createDependencies()
   const result = await buildQaRunResponse({
@@ -485,6 +631,32 @@ async function measureDeviceConcurrency(devices, delays = {}) {
 
   const result = await buildQaRunResponse({ webUrl: 'https://example.com', figmaUrl: '', devices }, dependencies)
   return { starts, finishes, maxActive, result }
+}
+
+async function runMultiDeviceWithMobileCompatibility(canonicalMobile) {
+  const fallbackMobile = { viewport: { width: 0, height: 0 }, viewportWidth: 0, documentWidth: 0, hasHorizontalOverflow: false, accessible: false, statusCode: null, note: '' }
+  const { dependencies } = createDependencies({
+    scanResultFactory(url, options) {
+      const mobile = options.includeMobile ? canonicalMobile : fallbackMobile
+      return {
+        targetUrl: url,
+        scannedAt: '2026-07-13T00:00:00.000Z',
+        pageTitle: options.deviceId,
+        httpStatus: 200,
+        accessible: true,
+        navigationError: '',
+        checks: [
+          { id: 'mobile', status: mobile.accessible ? 'ok' : 'error', value: mobile.statusCode ? String(mobile.statusCode) : '응답 없음', detail: mobile.note },
+          { id: 'mobile-overflow', status: mobile.hasHorizontalOverflow ? 'warn' : 'ok', value: mobile.hasHorizontalOverflow ? `${mobile.documentWidth}px / viewport ${mobile.viewportWidth}px` : '가로 넘침 없음', detail: mobile.hasHorizontalOverflow ? '모바일 화면 너비보다 문서가 넓어 가로 스크롤이 생길 수 있습니다.' : '모바일 viewport 기준 가로 넘침이 감지되지 않았습니다.' },
+        ],
+        links: [],
+        images: [],
+        counts: { anchors: 0, buttons: 0 },
+        mobile,
+      }
+    },
+  })
+  return buildQaRunResponse({ webUrl: 'https://example.com', figmaUrl: '', devices: ['desktop', 'tablet', 'mobile'] }, dependencies)
 }
 
 function delay(ms) {

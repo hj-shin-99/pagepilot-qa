@@ -76,6 +76,7 @@ export async function buildQaRunResponse(input, dependencies) {
   }
   const timingMetrics = createQaTimingMetrics()
   const deviceConcurrency = Math.min(MAX_DEVICE_SCAN_CONCURRENCY, normalizedDevices.length)
+  const useSharedMobileCompatibility = normalizedDevices.length > 1
   let figmaPreparationPromise = null
   let visualScanResult = null
   let visualScanError = null
@@ -100,7 +101,7 @@ export async function buildQaRunResponse(input, dependencies) {
 
   throwIfAborted(input?.signal)
 
-  const deviceResults = await runWithConcurrency(normalizedDevices, deviceConcurrency, async (deviceId) => {
+  let deviceResults = await runWithConcurrency(normalizedDevices, deviceConcurrency, async (deviceId) => {
     throwIfAborted(input?.signal)
     return scanDevice({
       deviceId,
@@ -112,6 +113,7 @@ export async function buildQaRunResponse(input, dependencies) {
       instrumentation,
       progressReporter,
       timingMetrics,
+      useSharedMobileCompatibility,
       startFigmaPreparation,
       setVisualScanResult(result) {
         visualScanResult = result
@@ -121,6 +123,21 @@ export async function buildQaRunResponse(input, dependencies) {
 
   throwIfAborted(input?.signal)
 
+  if (useSharedMobileCompatibility) {
+    const sharedMobileResult = await resolveSharedMobileCompatibility({
+      input,
+      dependencies,
+      deviceResults,
+      instrumentation,
+    })
+    if (sharedMobileResult) {
+      deviceResults = applySharedMobileCompatibility(deviceResults, sharedMobileResult)
+      if (visualScanResult?.deviceId === 'desktop') {
+        visualScanResult = replaceMobileCompatibility(visualScanResult, sharedMobileResult)
+      }
+    }
+  }
+
   if (hasFigmaUrl && !visualScanResult && !normalizedDevices.includes('desktop')) {
     const fallbackDeviceStartedAt = Date.now()
     try {
@@ -129,7 +146,8 @@ export async function buildQaRunResponse(input, dependencies) {
       instrumentation.webScanInvocationCount += 1
       const result = await dependencies.scanUrl(input.webUrl, {
         includeVisualPayloadData: true,
-        includeMobile: true,
+        includeMobile: !useSharedMobileCompatibility,
+        optionalAuditConcurrencyLimit: useSharedMobileCompatibility ? 1 : 2,
         techScanOptions: normalizedScanOptions,
         instrumentation,
         deviceId: 'desktop',
@@ -233,6 +251,7 @@ async function scanDevice({
   instrumentation,
   progressReporter,
   timingMetrics,
+  useSharedMobileCompatibility,
   startFigmaPreparation,
   setVisualScanResult,
 }) {
@@ -244,7 +263,8 @@ async function scanDevice({
     instrumentation.webScanInvocationCount += 1
     const result = await dependencies.scanUrl(input.webUrl, {
       includeVisualPayloadData: hasFigmaUrl && deviceId === 'desktop',
-      includeMobile: true,
+      includeMobile: !useSharedMobileCompatibility || deviceId === 'mobile',
+      optionalAuditConcurrencyLimit: useSharedMobileCompatibility ? 1 : 2,
       techScanOptions: normalizedScanOptions,
       instrumentation,
       deviceId,
@@ -267,6 +287,63 @@ async function scanDevice({
   } finally {
     timingMetrics.activeDeviceWorkers = Math.max(0, timingMetrics.activeDeviceWorkers - 1)
     timingMetrics.deviceMs[deviceId] = Math.max(0, Date.now() - deviceStartedAt)
+  }
+}
+
+async function resolveSharedMobileCompatibility({ input, dependencies, deviceResults, instrumentation }) {
+  const mobileDeviceResult = deviceResults.find((entry) => entry?.deviceId === 'mobile' && entry.status === 'success' && entry.result?.mobile)
+  if (mobileDeviceResult?.result?.mobile) return cloneMobileCompatibilityResult(mobileDeviceResult.result.mobile)
+  if (typeof dependencies.createMobileCompatibilityResult !== 'function') return null
+  return cloneMobileCompatibilityResult(await dependencies.createMobileCompatibilityResult(input.webUrl, instrumentation))
+}
+
+function applySharedMobileCompatibility(deviceResults, mobileResult) {
+  return deviceResults.map((entry) => {
+    if (!entry || entry.status !== 'success' || !entry.result) return entry
+    return {
+      ...entry,
+      result: replaceMobileCompatibility(entry.result, mobileResult),
+    }
+  })
+}
+
+function replaceMobileCompatibility(result, mobileResult) {
+  const mobile = cloneMobileCompatibilityResult(mobileResult)
+  return {
+    ...result,
+    mobile,
+    checks: replaceMobileCompatibilityChecks(result.checks, mobile),
+  }
+}
+
+function replaceMobileCompatibilityChecks(checks, mobileResult) {
+  if (!Array.isArray(checks)) return checks
+  return checks.map((check) => {
+    if (check?.id === 'mobile') {
+      return {
+        ...check,
+        status: mobileResult.accessible ? 'ok' : 'error',
+        value: mobileResult.statusCode ? String(mobileResult.statusCode) : '응답 없음',
+        detail: mobileResult.note,
+      }
+    }
+    if (check?.id === 'mobile-overflow') {
+      return {
+        ...check,
+        status: mobileResult.hasHorizontalOverflow ? 'warn' : 'ok',
+        value: mobileResult.hasHorizontalOverflow ? `${mobileResult.documentWidth}px / viewport ${mobileResult.viewportWidth}px` : '가로 넘침 없음',
+        detail: mobileResult.hasHorizontalOverflow ? '모바일 화면 너비보다 문서가 넓어 가로 스크롤이 생길 수 있습니다.' : '모바일 viewport 기준 가로 넘침이 감지되지 않았습니다.',
+      }
+    }
+    return check
+  })
+}
+
+function cloneMobileCompatibilityResult(mobileResult) {
+  if (!mobileResult || typeof mobileResult !== 'object') return null
+  return {
+    ...mobileResult,
+    viewport: mobileResult.viewport && typeof mobileResult.viewport === 'object' ? { ...mobileResult.viewport } : mobileResult.viewport,
   }
 }
 

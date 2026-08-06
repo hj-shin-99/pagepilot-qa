@@ -1,12 +1,15 @@
-import { useState } from 'react'
+import { createContext, useContext, useState } from 'react'
 import { createEmptyTechQaStatusCounts, createTechQaViewModel, formatTechQaStatusCounts, formatTechQaStatusCountsForItems, getSectionVisibility, getTechQaStatusLabel, getVisibleLinkGroups } from '../utils/techQa'
 import { createTechPanelDisplayModel, getBasicCheckDetailId, getMarkupDetailId } from '../utils/techQaPanelView'
+import { isDeviceAccordionOpen, updateDeviceAccordionState } from '../utils/deviceAccordionState'
 import { formatScanTime } from '../utils/report'
 import { createTechQaTitle } from '../utils/techTitle'
 import { createDeviceDescriptor, formatDeviceViewport, normalizeDeviceIds } from '../../shared/deviceProfiles.js'
 
 const MARKUP_ACCESSIBILITY_PRIMARY_IDS = ['meta', 'image-alt', 'external-links']
 const MARKUP_ACCESSIBILITY_DETAIL_IDS = ['meta', 'image-alt', 'external-links', 'headings', 'duplicate-ids', 'forms', 'unlabeled-clickables']
+
+const TechAccordionStateContext = createContext(null)
 
 function TechQaPanel({ result, onNewScan }) {
   const deviceEntries = createTechDeviceEntries(result)
@@ -23,10 +26,17 @@ function TechQaPanel({ result, onNewScan }) {
   const markupItems = createMarkupAccessibilityItems(display.detailRows.markupRows)
   const techTitle = createTechQaTitle(view.title)
   const scanOptions = view.scanOptions
+  const [expandedByDevice, setExpandedByDevice] = useState({})
+  const accordionState = {
+    activeDeviceId: activeDeviceEntry?.deviceId || resolvedActiveDeviceId,
+    expandedByDevice,
+    setExpandedByDevice,
+  }
 
   return (
     <section className="section-stack tech-qa-panel tech-qa-compact">
       <DeviceSwitcher entries={deviceEntries} activeDeviceId={activeDeviceEntry?.deviceId} onDeviceChange={setActiveDeviceId} />
+      <TechAccordionStateContext.Provider value={accordionState}>
       {activeDeviceEntry?.status === 'error' ? <DeviceFailure entry={activeDeviceEntry} /> : null}
       {activeDeviceEntry?.status === 'error' ? null : (
       <>
@@ -198,19 +208,21 @@ function TechQaPanel({ result, onNewScan }) {
 
       {scanOptions.markup ? <MarkupAccessibilitySection items={markupItems} /> : null}
 
-      <details className="detail-card tech-detail-accordion">
-        <summary>
+      <DeviceScopedDetails accordionKey="developer-details" className="detail-card tech-detail-accordion" summary={(
+        <>
           <span>개발 상세 정보</span>
           <strong>raw selector, request, count</strong>
-        </summary>
+        </>
+      )}>
         <div className="tech-accordion-body">
           <DeveloperInfo view={view} result={activeResult} scanOptions={scanOptions} />
           <RawDetails view={view} result={activeResult} scanOptions={scanOptions} />
         </div>
-      </details>
+      </DeviceScopedDetails>
       <ResultFooterAction onNewScan={onNewScan} />
       </>
       )}
+      </TechAccordionStateContext.Provider>
     </section>
   )
 }
@@ -221,6 +233,29 @@ function ResultFooterAction({ onNewScan }) {
     <div className="result-bottom-action">
       <button className="result-new-scan-button" type="button" onClick={onNewScan}>새 검사 시작</button>
     </div>
+  )
+}
+
+function useDeviceAccordionState(accordionKey) {
+  const context = useContext(TechAccordionStateContext)
+  const [fallbackOpen, setFallbackOpen] = useState(false)
+  if (!context || !accordionKey) return [fallbackOpen, setFallbackOpen]
+
+  const deviceId = context.activeDeviceId || 'desktop'
+  const isOpen = isDeviceAccordionOpen(context.expandedByDevice, deviceId, accordionKey)
+  const setIsOpen = (open) => {
+    context.setExpandedByDevice((previous) => updateDeviceAccordionState(previous, deviceId, accordionKey, open))
+  }
+  return [isOpen, setIsOpen]
+}
+
+function DeviceScopedDetails({ accordionKey, className, id, summary, summaryClassName = '', children }) {
+  const [isOpen, setIsOpen] = useDeviceAccordionState(accordionKey)
+  return (
+    <details id={id} className={className} open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
+      <summary className={summaryClassName || undefined} aria-expanded={isOpen}>{summary}</summary>
+      {children}
+    </details>
   )
 }
 
@@ -416,12 +451,11 @@ function MarkupCheckDetails({ item }) {
 
 function NormalMarkupSummary({ items }) {
   return (
-    <details className="tech-detail-list tech-normal-markup-list">
-      <summary>정상 마크업 및 접근성 검사 {items.length}개</summary>
+    <DeviceScopedDetails accordionKey="tech-markup:normal" className="tech-detail-list tech-normal-markup-list" summary={`정상 마크업 및 접근성 검사 ${items.length}개`}>
       <ul className="tech-raw-list">
         {items.map((item) => <li key={item.id}>{item.title} · {item.value || '정상'}</li>)}
       </ul>
-    </details>
+    </DeviceScopedDetails>
   )
 }
 
@@ -432,7 +466,7 @@ function LinkTable({ groups }) {
         <LinkTableHead />
         {groups.visibleItems.length > 0 ? groups.visibleItems.map((item, index) => <LinkTableRow item={item} key={item.rowKey || getTechRowKey(item, 'link-visible', index)} />) : <p className="empty-row">검사된 링크가 없습니다.</p>}
       </div>
-      {groups.hiddenCount > 0 ? <CollapsedRows label={getCollapsedResultsLabel(groups.hiddenCount)} items={groups.hiddenItems} renderHead={() => <LinkTableHead />} renderRow={(item, index) => <LinkTableRow item={item} key={item.rowKey || getTechRowKey(item, 'link-hidden', index)} />} /> : null}
+      {groups.hiddenCount > 0 ? <CollapsedRows stateKey="tech-links:hidden" label={getCollapsedResultsLabel(groups.hiddenCount)} items={groups.hiddenItems} renderHead={() => <LinkTableHead />} renderRow={(item, index) => <LinkTableRow item={item} key={item.rowKey || getTechRowKey(item, 'link-hidden', index)} />} /> : null}
     </>
   )
 }
@@ -504,7 +538,7 @@ function ClickActionTableHead() {
 }
 
 function CollapsedClickRows({ label, items }) {
-  const [isOpen, setIsOpen] = useState(false)
+  const [isOpen, setIsOpen] = useDeviceAccordionState(`tech-click:hidden:${label}`)
   return (
     <details className="tech-more-details tech-click-more-details tech-click-more" open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
       <summary className="tech-more-summary">{isOpen ? '접기' : label}</summary>
@@ -555,7 +589,7 @@ function LandingPageSection({ groups, rows }) {
       {groups?.hasTargets ? (
         <>
           <LandingPageTable items={visibleGroups.visibleItems} />
-          {visibleGroups.hiddenCount > 0 ? <CollapsedRows label={getCollapsedResultsLabel(visibleGroups.hiddenCount)} items={visibleGroups.hiddenItems} renderHead={() => <LandingPageTableHead />} renderRow={(item, index) => <LandingPageRow item={item} key={item.rowKey || getTechRowKey(item, 'landing-hidden', index)} />} /> : null}
+          {visibleGroups.hiddenCount > 0 ? <CollapsedRows stateKey="tech-landing:hidden" label={getCollapsedResultsLabel(visibleGroups.hiddenCount)} items={visibleGroups.hiddenItems} renderHead={() => <LandingPageTableHead />} renderRow={(item, index) => <LandingPageRow item={item} key={item.rowKey || getTechRowKey(item, 'landing-hidden', index)} />} /> : null}
         </>
       ) : <p className="empty-row">검사할 URL 이동 또는 새 창 결과가 없습니다.</p>}
     </section>
@@ -574,7 +608,7 @@ function InteractionAuditSection({ id, title, ariaLabel, note, emptyMessage, gro
       {groups?.hasTargets ? (
         <>
           <InteractionAuditTable items={visibility.visibleItems} label={ariaLabel} />
-          {visibility.hiddenItems.length > 0 ? <CollapsedInteractionRows label={getCollapsedResultsLabel(visibility.hiddenItems.length)} items={visibility.hiddenItems} /> : null}
+          {visibility.hiddenItems.length > 0 ? <CollapsedInteractionRows stateKey={`${id}:hidden`} label={getCollapsedResultsLabel(visibility.hiddenItems.length)} items={visibility.hiddenItems} /> : null}
         </>
       ) : <p className="empty-row">{emptyMessage}</p>}
     </section>
@@ -606,8 +640,8 @@ function InteractionAuditTableHead() {
   )
 }
 
-function CollapsedInteractionRows({ label, items }) {
-  const [isOpen, setIsOpen] = useState(false)
+function CollapsedInteractionRows({ stateKey, label, items }) {
+  const [isOpen, setIsOpen] = useDeviceAccordionState(stateKey || `tech-interaction:hidden:${label}`)
   return (
     <details className="tech-more-details tech-click-more-details tech-click-more" open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
       <summary className="tech-more-summary">{isOpen ? '접기' : label}</summary>
@@ -687,14 +721,13 @@ function LandingPageDetails({ item }) {
               <strong>{source.label || `클릭 요소 ${index + 1}`} · {getUserLocation(source)}</strong>
               <span>클릭 결과: {formatLandingSourceOutcome(source)}</span>
               <span>대상 URL: {source.requestedUrl || '-'}</span>
-              <details className="tech-row-details">
-                <summary>기술 정보 보기</summary>
+              <DeviceScopedDetails accordionKey={`tech-landing-source:${item.rowId || item.auditId || item.requestedUrl}:${index}`} className="tech-row-details" summary="기술 정보 보기">
                 <dl className="tech-issue-meta">
                   <Meta label="selector" value={source.selector} />
                   <Meta label="section" value={source.section} />
                   <Meta label="interaction outcome" value={source.interactionOutcome} />
                 </dl>
-              </details>
+              </DeviceScopedDetails>
             </li>
           ))}
         </ol>
@@ -720,7 +753,7 @@ function InteractionAuditDetails({ item }) {
 }
 
 function DetailRow({ id, className, summaryClassName = '', children, detail }) {
-  const [isOpen, setIsOpen] = useState(false)
+  const [isOpen, setIsOpen] = useDeviceAccordionState(id)
   return (
     <details id={id} className={className} open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
       <summary className={`tech-row-summary${summaryClassName ? ` ${summaryClassName}` : ''}`} aria-label={isOpen ? '상세 닫기' : '상세 열기'} aria-expanded={isOpen}>
@@ -881,8 +914,8 @@ function sanitizeUserFacingText(value) {
   return text
 }
 
-function CollapsedRows({ label, items, renderHead, renderRow }) {
-  const [isOpen, setIsOpen] = useState(false)
+function CollapsedRows({ stateKey, label, items, renderHead, renderRow }) {
+  const [isOpen, setIsOpen] = useDeviceAccordionState(stateKey || `tech-collapsed:${label}`)
   return (
     <details className="tech-more-details tech-normal-links-more tech-link-more" open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
       <summary className="tech-more-summary">{isOpen ? '접기' : label}</summary>
@@ -982,15 +1015,14 @@ function LargeResourceList({ items, threshold }) {
             <span>리소스 용량: {formatResourceSize(entry.sizeBytes)}</span>
             {threshold ? <span>큰 리소스 기준: {threshold}</span> : null}
             <span>확인 이유: 1MB 이상으로 수집된 리소스라 로딩 영향 확인이 필요합니다.</span>
-            <details className="tech-row-details">
-              <summary>기술 정보 보기</summary>
+            <DeviceScopedDetails accordionKey={`tech-resource-evidence:${entry.url || entry.selector || index}`} className="tech-row-details" summary="기술 정보 보기">
               <dl className="tech-issue-meta">
                 <Meta label="resource URL" value={entry.url} />
                 <Meta label="resource type" value={entry.type} />
                 <Meta label="size bytes" value={entry.sizeBytes} />
                 <Meta label="status" value={entry.statusCode || entry.status} />
               </dl>
-            </details>
+            </DeviceScopedDetails>
           </li>
         ))}
       </ol>
@@ -1026,8 +1058,7 @@ function TechExplanationDetails({ item = {} }) {
 function TechnicalEvidenceDetails({ items }) {
   if (!Array.isArray(items) || items.length === 0) return null
   return (
-    <details className="tech-row-details tech-evidence-details">
-      <summary>기술 정보 보기</summary>
+    <DeviceScopedDetails accordionKey={`tech-evidence:${items.map((entry) => `${entry.label}:${entry.value}`).join('|')}`} className="tech-row-details tech-evidence-details" summary="기술 정보 보기">
       <dl className="tech-issue-meta">
         {items.map((entry) => (
           <div key={`${entry.label}-${entry.value}`}>
@@ -1036,7 +1067,7 @@ function TechnicalEvidenceDetails({ items }) {
           </div>
         ))}
       </dl>
-    </details>
+    </DeviceScopedDetails>
   )
 }
 
@@ -1061,8 +1092,7 @@ function ProblemElementCard({ entry, owner, index = null }) {
       <span>판정 결과: {formatDecisionResult(entry)}</span>
       <span>확인 이유: {formatElementIssue(entry)}</span>
       <span>{team} 확인: {formatTeamCheck(entry)}</span>
-      <details className="tech-row-details">
-        <summary>기술 정보 보기</summary>
+      <DeviceScopedDetails accordionKey={`tech-problem-evidence:${entry.selector || entry.url || entry.href || entry.label || index || 'item'}`} className="tech-row-details" summary="기술 정보 보기">
         <dl className="tech-issue-meta">
           <Meta label="tag" value={entry.tagName || entry.kind} />
           <Meta label="role" value={entry.role} />
@@ -1100,7 +1130,7 @@ function ProblemElementCard({ entry, owner, index = null }) {
           <Meta label="raw evidence" value={entry.category || entry.altReason || entry.altCategory || entry.status} />
           <Meta label="raw failure" value={entry.safeClickResult?.error || entry.message || entry.stack} />
         </dl>
-      </details>
+      </DeviceScopedDetails>
     </li>
   )
 }
@@ -1290,8 +1320,7 @@ function RawDetails({ view, result, scanOptions }) {
 
 function CountBreakdown({ items }) {
   return (
-    <details className="tech-detail-list">
-      <summary>Count breakdown {items.length}개 검사</summary>
+    <DeviceScopedDetails accordionKey="developer:count-breakdown" className="tech-detail-list" summary={`Count breakdown ${items.length}개 검사`}>
       <ul className="tech-raw-list">
         {items.map((item) => (
           <li key={`${item.type}-${item.id}`}>
@@ -1299,18 +1328,17 @@ function CountBreakdown({ items }) {
           </li>
         ))}
       </ul>
-    </details>
+    </DeviceScopedDetails>
   )
 }
 
 function RawList({ title, items }) {
   return (
-    <details className="tech-detail-list">
-      <summary>{title} {items.length}개</summary>
+    <DeviceScopedDetails accordionKey={`developer:raw:${title}`} className="tech-detail-list" summary={`${title} ${items.length}개`}>
       <ul className="tech-raw-list">
         {items.map((item, index) => <li key={`${title}-${index}`}>{formatRawItem(item)}</li>)}
       </ul>
-    </details>
+    </DeviceScopedDetails>
   )
 }
 

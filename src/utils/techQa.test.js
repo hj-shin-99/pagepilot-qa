@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { createLinkItems, createTechQaViewModel, getSectionVisibility, getVisibleLinkGroups } from './techQa.js'
 import { createTechDetailRows, createTechPanelDisplayModel, createTechQaDetailViewModel, resolveTechQaEngine } from './techQaPanelView.js'
+import { isDeviceAccordionOpen, updateDeviceAccordionState } from './deviceAccordionState.js'
 
 test('A normal internal links show first five and preserve all twelve', () => {
   const view = createTechQaViewModel(result({ links: Array.from({ length: 12 }, (_, index) => link({ label: `Link ${index + 1}`, url: `https://example.com/${index + 1}` })) }))
@@ -339,7 +340,8 @@ test('compact Tech QA source keeps table UI and closed detail policy', () => {
   assert.equal(source.includes('클릭 동작 검사 요약'), false)
   assert.equal(source.includes('안전상 클릭 생략 전체'), true)
   assert.equal(source.includes('tech-kpi-icon'), false)
-  assert.equal(source.includes('<details className="detail-card tech-detail-accordion">'), true)
+  assert.equal(source.includes('className="detail-card tech-detail-accordion"'), true)
+  assert.equal(source.includes('accordionKey="developer-details"'), true)
   assert.equal(source.includes('<details className="detail-card tech-detail-accordion" open>'), false)
   assert.equal(source.includes('문제 예시:'), false)
   assert.equal(source.includes('담당 권장:'), false)
@@ -1018,6 +1020,44 @@ test('priority detail rows can be recreated from display detail rows without los
   assert.equal('priorityRows' in display, false)
   assert.equal('priorityCounts' in display, false)
   assert.equal('priorityVisibility' in display, false)
+})
+
+test('Tech QA device tabs keep accordion state isolated per device without remounting panel', () => {
+  const source = fs.readFileSync('src/components/TechQaPanel.jsx', 'utf8')
+  const appSource = fs.readFileSync('src/App.jsx', 'utf8')
+
+  assert.equal(appSource.includes('<TechQaPanel result={techResult} onNewScan={resetToNewScan} />'), true)
+  assert.equal(appSource.includes('<TechQaPanel key='), false)
+  assert.equal(source.includes('const [expandedByDevice, setExpandedByDevice] = useState({})'), true)
+  assert.equal(source.includes('activeDeviceId: activeDeviceEntry?.deviceId || resolvedActiveDeviceId'), true)
+  assert.equal(source.includes('isDeviceAccordionOpen(context.expandedByDevice, deviceId, accordionKey)'), true)
+  assert.equal(source.includes('updateDeviceAccordionState(previous, deviceId, accordionKey, open)'), true)
+  assert.equal(source.includes('function DetailRow({ id, className, summaryClassName = \'\', children, detail })'), true)
+  assert.equal(source.includes('const [isOpen, setIsOpen] = useDeviceAccordionState(id)'), true)
+  assert.equal(source.includes('stateKey="tech-links:hidden"'), true)
+  assert.equal(source.includes('stateKey="tech-landing:hidden"'), true)
+  assert.equal(source.includes('stateKey={`${id}:hidden`}'), true)
+})
+
+test('Tech QA accordion state transition keeps Desktop Tablet Mobile independent', () => {
+  let expandedByDevice = {}
+
+  expandedByDevice = updateDeviceAccordionState(expandedByDevice, 'desktop', 'tech-landing-row-1', true)
+  assert.equal(isDeviceAccordionOpen(expandedByDevice, 'desktop', 'tech-landing-row-1'), true)
+  assert.equal(isDeviceAccordionOpen(expandedByDevice, 'desktop', 'tech-links:hidden'), false)
+  assert.equal(isDeviceAccordionOpen(expandedByDevice, 'tablet', 'tech-landing-row-1'), false)
+  assert.equal(isDeviceAccordionOpen(expandedByDevice, 'tablet', 'tech-links:hidden'), false)
+
+  expandedByDevice = updateDeviceAccordionState(expandedByDevice, 'tablet', 'tech-links:hidden', true)
+  assert.equal(isDeviceAccordionOpen(expandedByDevice, 'tablet', 'tech-links:hidden'), true)
+  assert.equal(isDeviceAccordionOpen(expandedByDevice, 'tablet', 'tech-landing-row-1'), false)
+  assert.equal(isDeviceAccordionOpen(expandedByDevice, 'desktop', 'tech-landing-row-1'), true)
+  assert.equal(isDeviceAccordionOpen(expandedByDevice, 'desktop', 'tech-links:hidden'), false)
+
+  assert.equal(isDeviceAccordionOpen(expandedByDevice, 'mobile', 'tech-landing-row-1'), false)
+  assert.equal(isDeviceAccordionOpen(expandedByDevice, 'mobile', 'tech-links:hidden'), false)
+  assert.equal(isDeviceAccordionOpen(expandedByDevice, 'desktop', 'tech-landing-row-1'), true)
+  assert.equal(isDeviceAccordionOpen(expandedByDevice, 'tablet', 'tech-links:hidden'), true)
 })
 
 test('Tech QA phase 2 detail view model explains problem results without changing status counts', () => {

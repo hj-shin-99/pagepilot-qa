@@ -1,6 +1,8 @@
 import { normalizeTechScanOptions } from '../shared/techScanOptions.js'
 import { emitQaProgress } from './qaProgress.js'
 
+export const MAX_OPTIONAL_AUDIT_CONCURRENCY = 2
+
 export function createSkippedClickAuditResult() {
   return { items: [], meta: {} }
 }
@@ -57,6 +59,7 @@ export async function runOptionalTechAudits({
   auditPerformanceResources,
   auditSeoReadiness,
   onProgress,
+  auditConcurrencyLimit = MAX_OPTIONAL_AUDIT_CONCURRENCY,
   contextOptions = {},
 }) {
   const normalizedOptions = normalizeTechScanOptions(techScanOptions)
@@ -238,43 +241,12 @@ export async function runOptionalTechAudits({
     emitQaProgress(onProgress, 'tech_image')
   }
 
-  if (normalizedOptions.performance && typeof auditPerformanceResources === 'function') {
-    performanceAuditResult = await Promise.resolve()
-      .then(() => auditPerformanceResources(targetUrl, safeSnapshot, resourceResponses || []))
-      .catch((error) => ({
-      items: [],
-      meta: {
-        candidateCount: 0,
-        inspectedCount: 0,
-        okCount: 0,
-        warningCount: 0,
-        errorCount: 1,
-        skippedCount: 0,
-        noTarget: true,
-        error: error instanceof Error ? error.message : 'performance audit failed',
-      },
-      }))
-    emitQaProgress(onProgress, 'tech_performance')
-  }
-
-  if (normalizedOptions.seo && typeof auditSeoReadiness === 'function') {
-    seoAuditResult = await Promise.resolve()
-      .then(() => auditSeoReadiness(targetUrl, safeSnapshot, resourceResponses || [], instrumentation))
-      .catch((error) => ({
-      items: [],
-      meta: {
-        candidateCount: 0,
-        inspectedCount: 0,
-        okCount: 0,
-        warningCount: 0,
-        errorCount: 1,
-        skippedCount: 0,
-        noTarget: true,
-        error: error instanceof Error ? error.message : 'seo audit failed',
-      },
-      }))
-    emitQaProgress(onProgress, 'tech_seo')
-  }
+  await runWithConcurrency(createIndependentAuditTasks(), normalizeAuditConcurrencyLimit(auditConcurrencyLimit), async (task) => {
+    const result = await task.run()
+    if (task.key === 'performance') performanceAuditResult = result
+    if (task.key === 'seo') seoAuditResult = result
+    emitQaProgress(onProgress, task.progressKey)
+  })
 
   return {
     techScanOptions: normalizedOptions,
@@ -291,6 +263,78 @@ export async function runOptionalTechAudits({
     performanceAuditResult,
     seoAuditResult,
   }
+
+  function createIndependentAuditTasks() {
+    const tasks = []
+    if (normalizedOptions.performance && typeof auditPerformanceResources === 'function') {
+      tasks.push({
+        key: 'performance',
+        progressKey: 'tech_performance',
+        run: () => Promise.resolve()
+          .then(() => auditPerformanceResources(targetUrl, safeSnapshot, resourceResponses || []))
+          .catch((error) => ({
+            items: [],
+            meta: {
+              candidateCount: 0,
+              inspectedCount: 0,
+              okCount: 0,
+              warningCount: 0,
+              errorCount: 1,
+              skippedCount: 0,
+              noTarget: true,
+              error: error instanceof Error ? error.message : 'performance audit failed',
+            },
+          })),
+      })
+    }
+    if (normalizedOptions.seo && typeof auditSeoReadiness === 'function') {
+      tasks.push({
+        key: 'seo',
+        progressKey: 'tech_seo',
+        run: () => Promise.resolve()
+          .then(() => auditSeoReadiness(targetUrl, safeSnapshot, resourceResponses || [], instrumentation))
+          .catch((error) => ({
+            items: [],
+            meta: {
+              candidateCount: 0,
+              inspectedCount: 0,
+              okCount: 0,
+              warningCount: 0,
+              errorCount: 1,
+              skippedCount: 0,
+              noTarget: true,
+              error: error instanceof Error ? error.message : 'seo audit failed',
+            },
+          })),
+      })
+    }
+    return tasks
+  }
+}
+
+async function runWithConcurrency(items, limit, worker) {
+  const safeItems = Array.isArray(items) ? items : []
+  if (safeItems.length === 0) return []
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 1, safeItems.length))
+  const results = new Array(safeItems.length)
+  let nextIndex = 0
+
+  async function runWorker() {
+    while (nextIndex < safeItems.length) {
+      const currentIndex = nextIndex
+      nextIndex += 1
+      results[currentIndex] = await worker(safeItems[currentIndex], currentIndex)
+    }
+  }
+
+  const settlements = await Promise.allSettled(Array.from({ length: safeLimit }, () => runWorker()))
+  const rejection = settlements.find((settled) => settled.status === 'rejected')
+  if (rejection) throw rejection.reason
+  return results
+}
+
+function normalizeAuditConcurrencyLimit(value) {
+  return Math.max(1, Math.min(MAX_OPTIONAL_AUDIT_CONCURRENCY, Number(value) || 1))
 }
 
 export async function runUrlAudit({

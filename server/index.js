@@ -97,6 +97,7 @@ const visualPayloadHandler = createVisualPayloadHandler({
   inspectFigmaNode,
   getFigmaRenderedImage: figmaRenderClient.getFigmaRenderedImage,
   scanUrl,
+  createMobileCompatibilityResult,
   createWebVisualAnalysis,
   matchTextNodes,
   createTextDifferenceCandidates,
@@ -1971,6 +1972,18 @@ async function scanUrl(targetUrl, options = {}) {
     }
     mobileResult = scanOptions.includeMobile ? await scanMobile(browser, targetUrl, scanOptions.instrumentation) : createMobileFallback()
     await context.close()
+    const urlAuditPromise = runUrlAudit({
+      enabled: scanOptions.techScanOptions.url,
+      targetUrl,
+      snapshot: domSnapshot,
+      createTechLinkAudit,
+      getLinksToCheck,
+      checkLinkStatuses,
+      mergeTechLinkAuditResults,
+    }).then((result) => {
+      if (scanOptions.techScanOptions.url) emitQaProgress(scanOptions.onProgress, 'tech_url')
+      return result
+    })
     ;({ clickActionAuditResult, landingAuditResult, formAuditResult, hoverAuditResult, modalAuditResult, scrollAuditResult, responsiveAuditResult, downloadAuditResult, cookieAuditResult, imageAuditResult, performanceAuditResult, seoAuditResult } = await runOptionalTechAudits({
       browser,
       targetUrl,
@@ -1991,8 +2004,10 @@ async function scanUrl(targetUrl, options = {}) {
       auditPerformanceResources,
       auditSeoReadiness,
       onProgress: scanOptions.onProgress,
+      auditConcurrencyLimit: scanOptions.optionalAuditConcurrencyLimit,
       contextOptions: createBrowserContextOptions(scanOptions.deviceId),
     }))
+    scanOptions.urlAuditPromise = urlAuditPromise
   } finally {
     await browser.close()
   }
@@ -2011,7 +2026,7 @@ async function scanUrl(targetUrl, options = {}) {
   const safeImageAuditResult = imageAuditResult || { items: [], meta: {} }
   const safePerformanceAuditResult = performanceAuditResult || { items: [], meta: {} }
   const safeSeoAuditResult = seoAuditResult || { items: [], meta: {} }
-  const urlAuditResult = await runUrlAudit({
+  const urlAuditResult = await (scanOptions.urlAuditPromise || runUrlAudit({
     enabled: scanOptions.techScanOptions.url,
     targetUrl,
     snapshot,
@@ -2019,8 +2034,8 @@ async function scanUrl(targetUrl, options = {}) {
     getLinksToCheck,
     checkLinkStatuses,
     mergeTechLinkAuditResults,
-  })
-  if (scanOptions.techScanOptions.url) emitQaProgress(scanOptions.onProgress, 'tech_url')
+  }))
+  if (scanOptions.techScanOptions.url && !scanOptions.urlAuditPromise) emitQaProgress(scanOptions.onProgress, 'tech_url')
   const linkAuditResult = urlAuditResult.linkAuditResult
   const linkStatuses = urlAuditResult.links
   const images = mergeImageFailures(snapshot.images, failedImageRequests)
@@ -2129,6 +2144,7 @@ function normalizeScanUrlOptions(options = {}) {
     techScanOptions: normalizeTechScanOptions(options.techScanOptions),
     instrumentation: options.instrumentation && typeof options.instrumentation === 'object' ? options.instrumentation : null,
     onProgress: typeof options.onProgress === 'function' ? options.onProgress : null,
+    optionalAuditConcurrencyLimit: Math.max(1, Math.min(2, Number(options.optionalAuditConcurrencyLimit) || 1)),
     deviceId,
     deviceProfile: getDeviceProfile(deviceId),
   }
@@ -3535,6 +3551,16 @@ async function scanMobile(browser, targetUrl, instrumentation) {
     }
   } finally {
     await context.close()
+  }
+}
+
+async function createMobileCompatibilityResult(targetUrl, instrumentation) {
+  const browser = await chromium.launch({ headless: true })
+  incrementInstrumentationCount(instrumentation, 'browserLaunchCount')
+  try {
+    return await scanMobile(browser, targetUrl, instrumentation)
+  } finally {
+    await browser.close()
   }
 }
 

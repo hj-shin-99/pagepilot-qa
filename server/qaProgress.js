@@ -46,6 +46,17 @@ const TECH_PROGRESS_OPTION_KEYS = Object.freeze([
   'url',
 ])
 
+const STAGE_ORDER = Object.freeze([
+  QA_PROGRESS_STAGES.WEB_COLLECT,
+  QA_PROGRESS_STAGES.PAGE_STRUCTURE,
+  QA_PROGRESS_STAGES.TECH_AUDIT,
+  QA_PROGRESS_STAGES.VISUAL_COLLECT,
+  QA_PROGRESS_STAGES.VISUAL_COMPARE,
+  QA_PROGRESS_STAGES.RESULT_PREPARE,
+])
+
+const STAGE_RANK = new Map(STAGE_ORDER.map((stage, index) => [stage, index]))
+
 export function createQaProgressPlan({ figmaUrl = '', scanOptions, devices } = {}) {
   const normalizedScanOptions = normalizeTechScanOptions(scanOptions)
   const normalizedDevices = normalizeDeviceIds(devices)
@@ -88,6 +99,7 @@ export function createQaProgressReporter({ figmaUrl = '', scanOptions, devices, 
   const unitsByKey = new Map(plan.units.map((unit) => [unit.key, unit]))
   const completedKeys = new Set()
   let started = false
+  let currentStage = plan.units[0]?.stage || QA_PROGRESS_STAGES.WEB_COLLECT
 
   function emitStart() {
     if (started) return
@@ -96,7 +108,7 @@ export function createQaProgressReporter({ figmaUrl = '', scanOptions, devices, 
     if (!firstUnit) return
     emitQaProgress(onProgress, {
       type: 'progress',
-      stage: firstUnit.stage,
+      stage: currentStage,
       scope: firstUnit.scope,
       completedUnits: 0,
       totalUnits: plan.totalUnits,
@@ -111,9 +123,10 @@ export function createQaProgressReporter({ figmaUrl = '', scanOptions, devices, 
     const unit = unitsByKey.get(normalizedUnitKey)
     if (!unit || completedKeys.has(normalizedUnitKey)) return
     completedKeys.add(normalizedUnitKey)
+    currentStage = getMonotonicStage(currentStage, unit.stage)
     emitQaProgress(onProgress, {
       type: 'progress',
-      stage: unit.stage,
+      stage: currentStage,
       scope: unit.scope,
       completedUnits: completedKeys.size,
       totalUnits: plan.totalUnits,
@@ -127,6 +140,12 @@ export function createQaProgressReporter({ figmaUrl = '', scanOptions, devices, 
     emitStart,
     complete,
   }
+}
+
+function getMonotonicStage(previousStage, nextStage) {
+  const previousRank = STAGE_RANK.has(previousStage) ? STAGE_RANK.get(previousStage) : 0
+  const nextRank = STAGE_RANK.has(nextStage) ? STAGE_RANK.get(nextStage) : previousRank
+  return nextRank >= previousRank ? nextStage : previousStage
 }
 
 export function emitQaProgress(onProgress, event) {

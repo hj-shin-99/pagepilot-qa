@@ -74,35 +74,14 @@ export async function buildVisualPayloadFromScanResult(input, dependencies) {
     throw dependencies.createHttpError(500, 'Visual QA 생성을 위한 Web scanResult가 없습니다.')
   }
 
-  const { fileKey, nodeId } = dependencies.parseFigmaUrl(input.figmaUrl)
-  const figmaToken = dependencies.getFigmaToken()
-  if (!figmaToken) {
-    throw dependencies.createHttpError(400, 'FIGMA_TOKEN이 설정되지 않았습니다.')
-  }
-
-  const figmaNodeStartedAt = now()
-  const figmaResult = await dependencies.inspectFigmaNode({
-    fileKey,
-    nodeId,
-    token: figmaToken,
-    includeTextNodes: true,
-    includeStructure: true,
-    includeFlatNodes: true,
-  })
-  timings.figmaNodeLoadMs = now() - figmaNodeStartedAt
-  emitQaProgress(input.onProgress, 'visual_figma_node')
-
-  const figmaRenderStartedAt = now()
-  const figmaRender = await dependencies.getFigmaRenderedImage({
-    fileKey,
-    nodeId,
-    token: figmaToken,
-    nodeName: figmaResult.nodeName,
-    format: 'png',
-    scale: 2,
-  })
-  timings.figmaRenderLoadMs = now() - figmaRenderStartedAt
-  emitQaProgress(input.onProgress, 'visual_figma_render')
+  const figmaPreparation = await (input?.figmaPreparationPromise || prepareVisualFigmaData({
+    figmaUrl: input.figmaUrl,
+    onProgress: input.onProgress,
+    timings,
+  }, dependencies))
+  const { nodeId, figmaResult, figmaRender } = figmaPreparation
+  timings.figmaNodeLoadMs = Number(figmaPreparation.timings?.figmaNodeLoadMs || timings.figmaNodeLoadMs || 0)
+  timings.figmaRenderLoadMs = Number(figmaPreparation.timings?.figmaRenderLoadMs || timings.figmaRenderLoadMs || 0)
 
   const webAnalysis = dependencies.createWebVisualAnalysis(scanResult)
 
@@ -185,7 +164,56 @@ export async function buildVisualPayloadFromScanResult(input, dependencies) {
     })
   }
 
+  if (typeof input?.onTiming === 'function') {
+    input.onTiming({ ...timings })
+  }
+
   return response
+}
+
+export async function prepareVisualFigmaData(input, dependencies) {
+  const now = dependencies.now || Date.now
+  const timings = input?.timings && typeof input.timings === 'object' ? input.timings : {}
+  const { fileKey, nodeId } = dependencies.parseFigmaUrl(input.figmaUrl)
+  const figmaToken = dependencies.getFigmaToken()
+  if (!figmaToken) {
+    throw dependencies.createHttpError(400, 'FIGMA_TOKEN이 설정되지 않았습니다.')
+  }
+
+  const figmaNodeStartedAt = now()
+  const figmaResult = await dependencies.inspectFigmaNode({
+    fileKey,
+    nodeId,
+    token: figmaToken,
+    includeTextNodes: true,
+    includeStructure: true,
+    includeFlatNodes: true,
+  })
+  timings.figmaNodeLoadMs = now() - figmaNodeStartedAt
+  emitQaProgress(input.onProgress, 'visual_figma_node')
+
+  const figmaRenderStartedAt = now()
+  const figmaRender = await dependencies.getFigmaRenderedImage({
+    fileKey,
+    nodeId,
+    token: figmaToken,
+    nodeName: figmaResult.nodeName,
+    format: 'png',
+    scale: 2,
+  })
+  timings.figmaRenderLoadMs = now() - figmaRenderStartedAt
+  emitQaProgress(input.onProgress, 'visual_figma_render')
+
+  return {
+    fileKey,
+    nodeId,
+    figmaResult,
+    figmaRender,
+    timings: {
+      figmaNodeLoadMs: Number(timings.figmaNodeLoadMs || 0),
+      figmaRenderLoadMs: Number(timings.figmaRenderLoadMs || 0),
+    },
+  }
 }
 
 function attachDisplayImageUrls(response) {

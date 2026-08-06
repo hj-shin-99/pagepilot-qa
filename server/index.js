@@ -33,7 +33,7 @@ import { runOptionalTechAudits, runUrlAudit } from './techScanOrchestration.js'
 import { buildVisualQaPayloadArtifacts } from './visualQaPayload.js'
 import { buildQaRunResponse, createQaRunHandler, createQaRunStreamHandler, isWebScanNavigationFailure } from './qaRunRoute.js'
 import { emitQaProgress } from './qaProgress.js'
-import { buildVisualPayloadFromScanResult, createVisualPayloadHandler } from './visualPayloadRoute.js'
+import { buildVisualPayloadFromScanResult, createVisualPayloadHandler, prepareVisualFigmaData } from './visualPayloadRoute.js'
 import { createVisualVisionService } from './visualVisionService.js'
 import { createWebVisualAnalysis } from './webVisualAnalysis.js'
 import { extractVisibleWebTextElements } from './webText.js'
@@ -120,6 +120,7 @@ const qaRunDependencies = {
   createTextCompareResponse,
   buildVisualQaPayloadArtifacts,
   buildVisualPayloadFromScanResult,
+  prepareVisualFigmaData,
   isWebScanNavigationFailure,
 }
 

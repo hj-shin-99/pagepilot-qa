@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildVisualPayloadResponse, createVisualPayloadHandler } from './visualPayloadRoute.js'
+import { buildVisualPayloadFromScanResult, buildVisualPayloadResponse, createVisualPayloadHandler } from './visualPayloadRoute.js'
 import { buildVisualQaPayloadArtifacts } from './visualQaPayload.js'
 import { createWebVisualAnalysis } from './webVisualAnalysis.js'
 
@@ -193,6 +193,48 @@ test('createVisualPayloadHandler returns 400 for invalid URL without calling sca
   assert.equal(calls.scanUrl, 0)
   assert.equal(response.statusCode, 400)
   assert.equal(response.body.message.includes('http://'), true)
+})
+
+test('buildVisualPayloadFromScanResult reuses provided figma preparation without refetching', async () => {
+  const { calls, dependencies } = createDependencies()
+  const progress = []
+  let inspectCount = 0
+  let renderCount = 0
+  dependencies.inspectFigmaNode = async () => {
+    inspectCount += 1
+    throw new Error('should not inspect')
+  }
+  dependencies.getFigmaRenderedImage = async () => {
+    renderCount += 1
+    throw new Error('should not render')
+  }
+
+  const result = await buildVisualPayloadFromScanResult({
+    figmaUrl: 'https://www.figma.com/file/abc/test?node-id=123-456',
+    webUrl: 'https://example.com/page',
+    scanResult: dependencies.scanResult || await dependencies.scanUrl('https://example.com/page', { includeVisualPayloadData: true }),
+    figmaPreparationPromise: Promise.resolve({
+      fileKey: 'file-key',
+      nodeId: '123:456',
+      figmaResult: {
+        nodeName: 'Prepared Frame',
+        textNodes: [{ characters: 'Hero title', layerPath: 'Hero / Title', yRatio: 0.05, fontSize: 40, fontWeight: 700, parentFrameName: 'Hero' }],
+        figmaFlatNodes: [],
+        structureSummary: {},
+        figmaStructure: { id: 'prepared' },
+        cache: { source: 'memory' },
+      },
+      figmaRender: { imageUrl: '/api/figma/render/prepared', localImagePath: '.cache/figma/renders/prepared.png', renderId: 'prepared', cache: { source: 'memory' } },
+      timings: { figmaNodeLoadMs: 11, figmaRenderLoadMs: 12 },
+    }),
+    onProgress: (unit) => progress.push(unit),
+  }, dependencies)
+
+  assert.equal(inspectCount, 0)
+  assert.equal(renderCount, 0)
+  assert.equal(calls.webAnalysisInput.targetUrl, 'https://example.com/page')
+  assert.equal(result.figma.displayImageUrl, '/api/figma/render/prepared')
+  assert.deepEqual(progress, ['visual_compare', 'visual_payload'])
 })
 
 function createMockResponse() {

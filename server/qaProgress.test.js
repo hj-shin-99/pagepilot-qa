@@ -93,3 +93,31 @@ test('qa progress reporter emits monotonic progress and ignores duplicate unit c
   assert.deepEqual(events.map((event) => event.completedUnits), [0, 1, 2, 3, 4])
   assert.equal(events.at(-1).stage, 'result_prepare')
 })
+
+test('qa progress reporter keeps stage monotonic for interleaved device events', () => {
+  const events = []
+  const reporter = createQaProgressReporter({ devices: ['desktop', 'mobile'], scanOptions: ONLY_CLICK_SCAN_OPTIONS, onProgress: (event) => events.push(event) })
+
+  reporter.emitStart()
+  reporter.complete('desktop:web_collect')
+  reporter.complete('desktop:page_structure')
+  reporter.complete('desktop:tech_click')
+  reporter.complete('mobile:web_collect')
+  reporter.complete('mobile:web_collect')
+  reporter.complete('mobile:page_structure')
+  reporter.complete('mobile:tech_click')
+  reporter.complete('result_prepare')
+
+  assert.deepEqual(events.map((event) => event.completedUnits), [0, 1, 2, 3, 4, 5, 6, 7])
+  assert.deepEqual(events.map((event) => event.stage), [
+    'web_collect',
+    'web_collect',
+    'page_structure',
+    'tech_audit',
+    'tech_audit',
+    'tech_audit',
+    'tech_audit',
+    'result_prepare',
+  ])
+  assert.equal(events.at(-1).completedUnits, events.at(-1).totalUnits)
+})

@@ -2,6 +2,8 @@ import { createDeviceDescriptor, normalizeDeviceIds } from '../shared/deviceProf
 import { normalizeTechScanOptions } from '../shared/techScanOptions.js'
 import { createQaProgressReporter } from './qaProgress.js'
 
+export const MAX_DEVICE_SCAN_CONCURRENCY = 2
+
 export function createQaRunHandler(dependencies) {
   return async function qaRunHandler(req, res) {
     const webUrl = typeof req.body?.webUrl === 'string' ? req.body.webUrl.trim() : ''
@@ -14,7 +16,7 @@ export function createQaRunHandler(dependencies) {
       return
     }
 
-    const result = await buildQaRunResponse({ webUrl, figmaUrl, scanOptions, devices }, dependencies)
+    const result = await buildQaRunResponse({ webUrl, figmaUrl, scanOptions, devices, signal: createRequestAbortSignal(req) }, dependencies)
     res.json(result)
   }
 }
@@ -40,7 +42,7 @@ export function createQaRunStreamHandler(dependencies) {
     const writeEvent = (event) => writeNdjsonEvent(res, event)
 
     try {
-      const result = await buildQaRunResponse({ webUrl, figmaUrl, scanOptions, devices, onProgress: writeEvent }, dependencies)
+      const result = await buildQaRunResponse({ webUrl, figmaUrl, scanOptions, devices, onProgress: writeEvent, signal: createRequestAbortSignal(req) }, dependencies)
       writeEvent({ type: 'result', result })
     } catch (error) {
       writeEvent({ type: 'error', message: createSafeErrorMessage(error, '통합 검사 요청에 실패했습니다.') })
@@ -53,6 +55,7 @@ export function createQaRunStreamHandler(dependencies) {
 export async function buildQaRunResponse(input, dependencies) {
   const now = dependencies.now || Date.now
   const startedAtMs = now()
+  const wallStartedAtMs = Date.now()
   const startedAt = new Date(startedAtMs).toISOString()
   const hasFigmaUrl = Boolean(input.figmaUrl)
   const normalizedScanOptions = normalizeTechScanOptions(input?.scanOptions)
@@ -71,40 +74,58 @@ export async function buildQaRunResponse(input, dependencies) {
     mobilePageCount: 0,
     webScanInvocationCount: 0,
   }
-  const deviceResults = []
+  const timingMetrics = createQaTimingMetrics()
+  const deviceConcurrency = Math.min(MAX_DEVICE_SCAN_CONCURRENCY, normalizedDevices.length)
+  let figmaPreparationPromise = null
   let visualScanResult = null
   let visualScanError = null
 
-  progressReporter.emitStart()
-
-  for (const deviceId of normalizedDevices) {
-    const device = createDeviceDescriptor(deviceId)
-    try {
-      instrumentation.webScanInvocationCount += 1
-      const result = await dependencies.scanUrl(input.webUrl, {
-        includeVisualPayloadData: hasFigmaUrl && deviceId === 'desktop',
-        includeMobile: true,
-        techScanOptions: normalizedScanOptions,
-        instrumentation,
-        deviceId,
-        onProgress: (unitKey) => progressReporter.complete(`${deviceId}:${unitKey}`, device),
-      })
-
-      if (dependencies.isWebScanNavigationFailure(result)) {
-        deviceResults.push(createFailedDeviceResult(deviceId, result?.navigationError || 'navigation failed', 'navigation'))
-        continue
-      }
-
-      const decoratedResult = decorateDeviceScanResult(result, deviceId, normalizedDevices)
-      deviceResults.push({ ...device, status: 'success', result: decoratedResult, errorType: '', error: '' })
-      if (deviceId === 'desktop') visualScanResult = decoratedResult
-    } catch (error) {
-      deviceResults.push(createFailedDeviceResult(deviceId, error))
-    }
+  const startFigmaPreparation = () => {
+    if (!hasFigmaUrl || figmaPreparationPromise || typeof dependencies.prepareVisualFigmaData !== 'function') return null
+    const figmaStartedAt = Date.now()
+    figmaPreparationPromise = dependencies.prepareVisualFigmaData({
+      figmaUrl: input.figmaUrl,
+      onProgress: progressReporter.complete,
+    }, dependencies).then((prepared) => {
+      timingMetrics.figmaPrepareMs = Math.max(0, Date.now() - figmaStartedAt)
+      return prepared
+    }, (error) => {
+      timingMetrics.figmaPrepareMs = Math.max(0, Date.now() - figmaStartedAt)
+      throw error
+    })
+    return figmaPreparationPromise
   }
 
+  progressReporter.emitStart()
+
+  throwIfAborted(input?.signal)
+
+  const deviceResults = await runWithConcurrency(normalizedDevices, deviceConcurrency, async (deviceId) => {
+    throwIfAborted(input?.signal)
+    return scanDevice({
+      deviceId,
+      input,
+      dependencies,
+      normalizedDevices,
+      normalizedScanOptions,
+      hasFigmaUrl,
+      instrumentation,
+      progressReporter,
+      timingMetrics,
+      startFigmaPreparation,
+      setVisualScanResult(result) {
+        visualScanResult = result
+      },
+    })
+  }, { signal: input?.signal })
+
+  throwIfAborted(input?.signal)
+
   if (hasFigmaUrl && !visualScanResult && !normalizedDevices.includes('desktop')) {
+    const fallbackDeviceStartedAt = Date.now()
     try {
+      timingMetrics.activeDeviceWorkers += 1
+      timingMetrics.maxConcurrentDeviceWorkers = Math.max(timingMetrics.maxConcurrentDeviceWorkers, timingMetrics.activeDeviceWorkers)
       instrumentation.webScanInvocationCount += 1
       const result = await dependencies.scanUrl(input.webUrl, {
         includeVisualPayloadData: true,
@@ -116,9 +137,15 @@ export async function buildQaRunResponse(input, dependencies) {
       })
 
       if (dependencies.isWebScanNavigationFailure(result)) visualScanError = createWebScanFailureMessage(result, null)
-      else visualScanResult = decorateDeviceScanResult(result, 'desktop', normalizedDevices)
+      else {
+        visualScanResult = decorateDeviceScanResult(result, 'desktop', normalizedDevices)
+        startFigmaPreparation()
+      }
     } catch (error) {
       visualScanError = createWebScanFailureMessage(null, error)
+    } finally {
+      timingMetrics.activeDeviceWorkers = Math.max(0, timingMetrics.activeDeviceWorkers - 1)
+      timingMetrics.deviceMs.visualDesktop = Math.max(0, Date.now() - fallbackDeviceStartedAt)
     }
   }
 
@@ -153,6 +180,8 @@ export async function buildQaRunResponse(input, dependencies) {
       : { status: 'skipped', result: null, error: null }
     progressReporter.complete('result_prepare')
     response.meta.completedAt = new Date(now()).toISOString()
+    timingMetrics.totalMs = Math.max(0, Date.now() - wallStartedAtMs)
+    logQaTiming(timingMetrics, deviceConcurrency, dependencies)
     return response
   }
 
@@ -162,6 +191,8 @@ export async function buildQaRunResponse(input, dependencies) {
     response.visual = { status: 'skipped', result: null, error: null }
     progressReporter.complete('result_prepare')
     response.meta.completedAt = new Date(now()).toISOString()
+    timingMetrics.totalMs = Math.max(0, Date.now() - wallStartedAtMs)
+    logQaTiming(timingMetrics, deviceConcurrency, dependencies)
     return response
   }
 
@@ -174,6 +205,11 @@ export async function buildQaRunResponse(input, dependencies) {
       timings: { webScanMs: 0 },
       totalStartedAt: startedAtMs,
       onProgress: progressReporter.complete,
+      figmaPreparationPromise,
+      onTiming: (timings) => {
+        timingMetrics.figmaPrepareMs = timingMetrics.figmaPrepareMs || Number(timings.figmaNodeLoadMs || 0) + Number(timings.figmaRenderLoadMs || 0)
+        timingMetrics.visualCompareMs = Number(timings.textCompareMs || 0) + Number(timings.payloadBuildMs || 0)
+      },
     }, dependencies)
     response.visual = { status: 'success', result: visualResult, error: null }
   } catch (error) {
@@ -182,7 +218,133 @@ export async function buildQaRunResponse(input, dependencies) {
 
   progressReporter.complete('result_prepare')
   response.meta.completedAt = new Date(now()).toISOString()
+  timingMetrics.totalMs = Math.max(0, Date.now() - wallStartedAtMs)
+  logQaTiming(timingMetrics, deviceConcurrency, dependencies)
   return response
+}
+
+async function scanDevice({
+  deviceId,
+  input,
+  dependencies,
+  normalizedDevices,
+  normalizedScanOptions,
+  hasFigmaUrl,
+  instrumentation,
+  progressReporter,
+  timingMetrics,
+  startFigmaPreparation,
+  setVisualScanResult,
+}) {
+  const device = createDeviceDescriptor(deviceId)
+  const deviceStartedAt = Date.now()
+  timingMetrics.activeDeviceWorkers += 1
+  timingMetrics.maxConcurrentDeviceWorkers = Math.max(timingMetrics.maxConcurrentDeviceWorkers, timingMetrics.activeDeviceWorkers)
+  try {
+    instrumentation.webScanInvocationCount += 1
+    const result = await dependencies.scanUrl(input.webUrl, {
+      includeVisualPayloadData: hasFigmaUrl && deviceId === 'desktop',
+      includeMobile: true,
+      techScanOptions: normalizedScanOptions,
+      instrumentation,
+      deviceId,
+      onProgress: (unitKey) => progressReporter.complete(`${deviceId}:${unitKey}`, device),
+    })
+
+    if (dependencies.isWebScanNavigationFailure(result)) {
+      return createFailedDeviceResult(deviceId, result?.navigationError || 'navigation failed', 'navigation')
+    }
+
+    const decoratedResult = decorateDeviceScanResult(result, deviceId, normalizedDevices)
+    if (deviceId === 'desktop') {
+      setVisualScanResult(decoratedResult)
+      startFigmaPreparation()
+    }
+    return { ...device, status: 'success', result: decoratedResult, errorType: '', error: '' }
+  } catch (error) {
+    if (error?.name === 'AbortError') throw error
+    return createFailedDeviceResult(deviceId, error)
+  } finally {
+    timingMetrics.activeDeviceWorkers = Math.max(0, timingMetrics.activeDeviceWorkers - 1)
+    timingMetrics.deviceMs[deviceId] = Math.max(0, Date.now() - deviceStartedAt)
+  }
+}
+
+export async function runWithConcurrency(items, limit, worker, options = {}) {
+  const safeItems = Array.isArray(items) ? items : []
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 1, safeItems.length || 1))
+  const results = new Array(safeItems.length)
+  let nextIndex = 0
+
+  async function runWorker() {
+    while (nextIndex < safeItems.length) {
+      throwIfAborted(options.signal)
+      const currentIndex = nextIndex
+      nextIndex += 1
+      results[currentIndex] = await worker(safeItems[currentIndex], currentIndex)
+    }
+  }
+
+  const settlements = await Promise.allSettled(Array.from({ length: Math.min(safeLimit, safeItems.length) }, () => runWorker()))
+  const rejection = settlements.find((settled) => settled.status === 'rejected')
+  if (rejection) throw rejection.reason
+  return results
+}
+
+function createRequestAbortSignal(req) {
+  if (!req || typeof AbortController !== 'function') return null
+  const controller = new AbortController()
+  const abort = () => controller.abort(createAbortError())
+  if (req.aborted === true || req.destroyed === true) abort()
+  else req.once?.('aborted', abort)
+  return controller.signal
+}
+
+function throwIfAborted(signal) {
+  if (!signal?.aborted) return
+  throw signal.reason instanceof Error ? signal.reason : createAbortError()
+}
+
+function createAbortError() {
+  const error = new Error('QA request aborted')
+  error.name = 'AbortError'
+  return error
+}
+
+function createQaTimingMetrics() {
+  return {
+    totalMs: 0,
+    activeDeviceWorkers: 0,
+    maxConcurrentDeviceWorkers: 0,
+    deviceMs: {},
+    figmaPrepareMs: 0,
+    visualCompareMs: 0,
+    aiReviewMs: 0,
+    resultFinalizationMs: 0,
+  }
+}
+
+function logQaTiming(metrics, deviceConcurrency, dependencies) {
+  if (!shouldLogQaTiming(dependencies)) return
+  const deviceMs = metrics.deviceMs || {}
+  console.info([
+    '[QA Timing]',
+    `totalMs=${Number(metrics.totalMs || 0)}`,
+    `deviceConcurrency=${Number(deviceConcurrency || 0)}`,
+    `maxConcurrentDeviceWorkers=${Number(metrics.maxConcurrentDeviceWorkers || 0)}`,
+    `desktopMs=${Number(deviceMs.desktop || 0)}`,
+    `tabletMs=${Number(deviceMs.tablet || 0)}`,
+    `mobileMs=${Number(deviceMs.mobile || 0)}`,
+    `figmaPrepareMs=${Number(metrics.figmaPrepareMs || 0)}`,
+    `visualCompareMs=${Number(metrics.visualCompareMs || 0)}`,
+    `aiReviewMs=${Number(metrics.aiReviewMs || 0)}`,
+    `resultFinalizationMs=${Number(metrics.resultFinalizationMs || 0)}`,
+  ].join('\n'))
+}
+
+function shouldLogQaTiming(dependencies) {
+  if (dependencies?.debugQaTiming === true) return true
+  return process.env.NODE_ENV === 'development' && process.env.QA_TIMING_LOG !== 'false'
 }
 
 export function isWebScanNavigationFailure(scanResult) {

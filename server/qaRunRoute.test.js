@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildQaRunResponse, createQaRunStreamHandler } from './qaRunRoute.js'
+import { MAX_DEVICE_SCAN_CONCURRENCY, buildQaRunResponse, createQaRunStreamHandler, runWithConcurrency } from './qaRunRoute.js'
 
 function createDependencies(overrides = {}) {
   const calls = { scanUrl: 0, visual: 0, visualScanResult: null }
@@ -344,3 +344,149 @@ test('/api/qa/run-stream writes progress and final result as NDJSON', async () =
   assert.equal(events.at(-1).type, 'result')
   assert.equal(events.at(-1).result.tech.status, 'success')
 })
+
+test('bounded device worker pool uses max concurrency 1 for one device', async () => {
+  const seen = await measureDeviceConcurrency(['desktop'])
+
+  assert.equal(seen.maxActive, 1)
+  assert.deepEqual(seen.starts, ['desktop'])
+  assert.deepEqual(seen.result.deviceResults.map((entry) => entry.deviceId), ['desktop'])
+})
+
+test('bounded device worker pool uses max concurrency 2 for two devices', async () => {
+  const seen = await measureDeviceConcurrency(['desktop', 'tablet'])
+
+  assert.equal(seen.maxActive, 2)
+  assert.deepEqual(seen.starts, ['desktop', 'tablet'])
+  assert.deepEqual(seen.result.deviceResults.map((entry) => entry.deviceId), ['desktop', 'tablet'])
+})
+
+test('bounded device worker pool caps three devices at concurrency 2 and preserves result order', async () => {
+  const seen = await measureDeviceConcurrency(['mobile', 'desktop', 'tablet'], { desktop: 30, tablet: 5, mobile: 1 })
+
+  assert.equal(MAX_DEVICE_SCAN_CONCURRENCY, 2)
+  assert.equal(seen.maxActive, 2)
+  assert.deepEqual(seen.starts, ['desktop', 'tablet', 'mobile'])
+  assert.notDeepEqual(seen.finishes, ['desktop', 'tablet', 'mobile'])
+  assert.deepEqual(seen.result.devices, ['desktop', 'tablet', 'mobile'])
+  assert.deepEqual(seen.result.deviceResults.map((entry) => entry.deviceId), ['desktop', 'tablet', 'mobile'])
+})
+
+test('bounded worker pool preserves result slots when completion order differs', async () => {
+  const starts = []
+  const result = await runWithConcurrency(['desktop', 'tablet', 'mobile'], 2, async (deviceId) => {
+    starts.push(deviceId)
+    await delay(deviceId === 'desktop' ? 20 : 1)
+    return `${deviceId}:result`
+  })
+
+  assert.deepEqual(starts, ['desktop', 'tablet', 'mobile'])
+  assert.deepEqual(result, ['desktop:result', 'tablet:result', 'mobile:result'])
+})
+
+test('/api/qa/run builder overlaps independent figma preparation after desktop scan while other devices continue', async () => {
+  const events = []
+  const { calls, dependencies } = createDependencies({
+    scanResultFactory(url, options) {
+      return {
+        targetUrl: url,
+        scannedAt: '2026-07-13T00:00:00.000Z',
+        pageTitle: options.deviceId,
+        httpStatus: 200,
+        accessible: true,
+        navigationError: '',
+        checks: [],
+        links: [],
+        images: [],
+        counts: { anchors: 0, buttons: 0 },
+        visualPayloadData: options.includeVisualPayloadData ? { textNodes: [{ text: 'Desktop' }] } : null,
+      }
+    },
+  })
+  dependencies.prepareVisualFigmaData = async () => {
+    events.push('figma:start')
+    await delay(1)
+    events.push('figma:end')
+    return { fileKey: 'file', nodeId: '1:2', figmaResult: { textNodes: [], cache: {} }, figmaRender: { cache: {} }, timings: { figmaNodeLoadMs: 1, figmaRenderLoadMs: 1 } }
+  }
+  dependencies.scanUrl = async (url, options) => {
+    calls.scanUrl += 1
+    calls.scanArgsList = [...(calls.scanArgsList || []), { url, options }]
+    events.push(`${options.deviceId}:start`)
+    await delay(options.deviceId === 'desktop' ? 1 : options.deviceId === 'tablet' ? 20 : 1)
+    events.push(`${options.deviceId}:end`)
+    const result = dependencies.scanResultFactory?.(url, options) || {
+      targetUrl: url,
+      httpStatus: 200,
+      accessible: true,
+      navigationError: '',
+      checks: [],
+      links: [],
+      images: [],
+    }
+    result.scanOptions = options.techScanOptions
+    return result
+  }
+  dependencies.scanResultFactory = (url, options) => ({
+    targetUrl: url,
+    scannedAt: '2026-07-13T00:00:00.000Z',
+    pageTitle: options.deviceId,
+    httpStatus: 200,
+    accessible: true,
+    navigationError: '',
+    checks: [],
+    links: [],
+    images: [],
+    counts: { anchors: 0, buttons: 0 },
+    visualPayloadData: options.includeVisualPayloadData ? { textNodes: [{ text: 'Desktop' }] } : null,
+  })
+  dependencies.buildVisualPayloadFromScanResult = async (input) => {
+    assert.ok(input.figmaPreparationPromise)
+    await input.figmaPreparationPromise
+    events.push('visual:build')
+    return { meta: { openAiCalled: false }, comparison: { differenceCount: 0 } }
+  }
+
+  const result = await buildQaRunResponse({ webUrl: 'https://example.com', figmaUrl: 'https://www.figma.com/design/a?node-id=1-2', devices: ['desktop', 'tablet', 'mobile'] }, dependencies)
+
+  assert.equal(result.visual.status, 'success')
+  assert.equal(events.indexOf('figma:start') > events.indexOf('desktop:end'), true)
+  assert.equal(events.indexOf('figma:start') < events.indexOf('tablet:end'), true)
+  assert.equal(events.indexOf('visual:build') > events.indexOf('figma:end'), true)
+})
+
+async function measureDeviceConcurrency(devices, delays = {}) {
+  const { dependencies } = createDependencies()
+  const starts = []
+  const finishes = []
+  let active = 0
+  let maxActive = 0
+  dependencies.scanUrl = async (url, options) => {
+    starts.push(options.deviceId)
+    active += 1
+    maxActive = Math.max(maxActive, active)
+    await delay(delays[options.deviceId] ?? 5)
+    active -= 1
+    finishes.push(options.deviceId)
+    return {
+      targetUrl: url,
+      scannedAt: '2026-07-13T00:00:00.000Z',
+      pageTitle: options.deviceId,
+      httpStatus: 200,
+      accessible: true,
+      navigationError: '',
+      checks: [],
+      links: [],
+      images: [],
+      counts: { anchors: 0, buttons: 0 },
+      scanOptions: options.techScanOptions,
+    }
+  }
+
+  const result = await buildQaRunResponse({ webUrl: 'https://example.com', figmaUrl: '', devices }, dependencies)
+  return { starts, finishes, maxActive, result }
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}

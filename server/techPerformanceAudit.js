@@ -283,7 +283,9 @@ function normalizePerformanceResourceEntry(entry = {}, responseIndex = new Map()
   const normalizedUrl = normalizeResourceUrl(url)
   const responseRecords = responseIndex.get(`GET ${normalizedUrl}`) || []
   const response = responseRecords[0] || {}
-  const resourceType = normalizeResourceType(entry.resourceType || entry.initiatorType)
+  const resourceType = response.resourceType
+    ? normalizeResourceType(response.resourceType, url, response.contentType)
+    : normalizeResourceType(entry.resourceType || entry.initiatorType, url, response.contentType)
   return {
     url,
     normalizedUrl,
@@ -326,15 +328,17 @@ function createFailedResourceEvidence(resourceResponses = [], origin = '') {
     .filter((response) => Number(response.statusCode || 0) >= 400 || String(response.failureMessage || '').trim())
     .map((response) => ({
       url: String(response.url || '').trim(),
-      resourceType: normalizeResourceType(response.resourceType),
+      resourceType: normalizeResourceType(response.resourceType, response.url, response.contentType),
       statusCode: Number(response.statusCode || 0) || 0,
       message: String(response.failureMessage || '').trim(),
       party: isSameOrigin(String(response.url || '').trim(), origin) ? 'first-party' : 'third-party',
     }))
 }
 
-function normalizeResourceType(value = '') {
+function normalizeResourceType(value = '', url = '', contentType = '') {
   const type = String(value || '').trim().toLowerCase()
+  const extensionType = inferResourceTypeFromUrl(url)
+  if (!type || ['css', 'link', 'other', 'resource'].includes(type)) return extensionType || normalizeResourceTypeFromContentType(contentType) || (type === 'css' || type === 'link' ? 'stylesheet' : 'other')
   if (type === 'script') return 'script'
   if (type === 'stylesheet' || type === 'css' || type === 'link') return 'stylesheet'
   if (type === 'image' || type === 'img') return 'image'
@@ -342,7 +346,31 @@ function normalizeResourceType(value = '') {
   if (type === 'media' || type === 'video' || type === 'audio') return 'media'
   if (type === 'fetch' || type === 'xmlhttprequest' || type === 'xhr') return type === 'xhr' ? 'xhr' : 'fetch'
   if (type === 'navigation' || type === 'document') return 'document'
-  return type || 'other'
+  return type || extensionType || normalizeResourceTypeFromContentType(contentType) || 'other'
+}
+
+function inferResourceTypeFromUrl(value = '') {
+  try {
+    const extension = new URL(String(value || '')).pathname.split('.').pop().toLowerCase()
+    if (['css'].includes(extension)) return 'stylesheet'
+    if (['js', 'mjs', 'cjs'].includes(extension)) return 'script'
+    if (['jpg', 'jpeg', 'png', 'svg', 'webp', 'gif', 'avif'].includes(extension)) return 'image'
+    if (['woff', 'woff2', 'ttf', 'otf', 'eot'].includes(extension)) return 'font'
+    if (['mp4', 'webm', 'mov', 'm4v', 'mp3', 'wav', 'ogg'].includes(extension)) return 'media'
+    if (['html', 'htm'].includes(extension)) return 'document'
+  } catch {}
+  return ''
+}
+
+function normalizeResourceTypeFromContentType(value = '') {
+  const contentType = String(value || '').toLowerCase()
+  if (/text\/css/.test(contentType)) return 'stylesheet'
+  if (/javascript|ecmascript/.test(contentType)) return 'script'
+  if (/image\//.test(contentType)) return 'image'
+  if (/font\//.test(contentType) || /application\/(font|x-font|vnd\.ms-fontobject)/.test(contentType)) return 'font'
+  if (/video\/|audio\//.test(contentType)) return 'media'
+  if (/text\/html/.test(contentType)) return 'document'
+  return ''
 }
 
 function getLargeResourceThreshold(resourceType = '') {

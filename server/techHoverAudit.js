@@ -125,8 +125,8 @@ async function collectHoverCandidates(page, targetUrl) {
       const style = window.getComputedStyle(element)
       if (rect.width <= 0 || rect.height <= 0 || style.display === 'none' || style.visibility === 'hidden') return
       const panelSelector = getPanelSelector(element)
-      const kindHint = getKindHint(element, panelSelector)
-      if (!kindHint && !panelSelector) return
+      if (!hasHoverInteractionEvidence(element, panelSelector)) return
+      const kindHint = getKindHint(element, panelSelector) || 'ui-change'
       raw.push({
         auditId: `hover-${index + 1}`,
         selector: getCssSelector(element),
@@ -158,9 +158,20 @@ async function collectHoverCandidates(page, targetUrl) {
       const text = `${element.getAttribute('title') || ''} ${element.getAttribute('aria-haspopup') || ''} ${element.getAttribute('class') || ''} ${panelSelector}`.toLowerCase()
       if (element.getAttribute('title')) return 'tooltip'
       if (/tooltip/.test(text)) return 'tooltip'
-      if (/menu|submenu|nav/.test(text)) return 'menu'
+      if (/menu|submenu/.test(text)) return 'menu'
       if (/dropdown|listbox|popup/.test(text)) return 'dropdown'
       return panelSelector ? 'ui-change' : ''
+    }
+
+    function hasHoverInteractionEvidence(element, panelSelector) {
+      if (panelSelector) return true
+      const text = `${element.getAttribute('aria-haspopup') || ''} ${element.getAttribute('aria-expanded') || ''} ${element.getAttribute('data-toggle') || ''} ${element.getAttribute('data-bs-toggle') || ''} ${element.getAttribute('class') || ''} ${element.getAttribute('id') || ''} ${element.getAttribute('role') || ''} ${element.getAttribute('title') || ''}`.toLowerCase()
+      if (element.getAttribute('aria-haspopup') && element.getAttribute('aria-haspopup') !== 'false') return true
+      if (element.hasAttribute('aria-expanded')) return true
+      if (/dropdown|tooltip|popover|submenu|\bmenu\b/.test(text)) return true
+      if ((element.hasAttribute('onmouseover') || element.hasAttribute('onmouseenter')) && /hover|dropdown|tooltip|popover|submenu|\bmenu\b/.test(text)) return true
+      if (element.getAttribute('role') === 'menuitem') return Boolean(element.closest('[role="menu"], .dropdown-menu, .submenu, .menu'))
+      return false
     }
 
     function estimateSection(element) {

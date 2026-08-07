@@ -273,11 +273,16 @@ export function getTechQaStatusLabel(item = {}) {
 export function normalizeTechQaDisplayText(value) {
   const text = String(value || '').trim()
   if (!text) return ''
+  const badProblemSubject = new RegExp(`${TECH_QA_STATUS_LABELS.problem}${'가'} 발생했습니다`, 'g')
+  const badHreflangProblem = new RegExp(`hreflang 링크가 없어도 자동 ${TECH_QA_STATUS_LABELS.problem}${'로'} 보지 않았습니다\\.`, 'g')
   return text
+    .replace(/hreflang 링크가 없어도 자동 오류로 보지 않았습니다\./g, 'hreflang 링크가 없다는 이유만으로 문제 확인 상태로 분류하지 않았습니다.')
     .replace(/검사 대상 없음/g, TECH_QA_STATUS_LABELS.notApplicable)
     .replace(/수집됨/g, TECH_QA_STATUS_LABELS.normal)
     .replace(/확인 필요/g, TECH_QA_STATUS_LABELS.review)
     .replace(/오류/g, TECH_QA_STATUS_LABELS.problem)
+    .replace(badHreflangProblem, 'hreflang 링크가 없다는 이유만으로 문제 확인 상태로 분류하지 않았습니다.')
+    .replace(badProblemSubject, '문제가 확인되었습니다')
 }
 
 export function formatTechQaStatusCounts(counts = createEmptyTechQaStatusCounts()) {

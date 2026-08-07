@@ -2,9 +2,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { createLinkItems, createTechQaViewModel, getSectionVisibility, getVisibleLinkGroups } from './techQa.js'
-import { createTechDetailRows, createTechPanelDisplayModel, createTechQaDetailViewModel, resolveTechQaEngine } from './techQaPanelView.js'
+import { createTechDetailRows, createTechPanelDisplayModel, createTechQaDetailViewModel, getDisplayPriorityOwner, resolveTechQaEngine } from './techQaPanelView.js'
 import { isDeviceAccordionOpen, updateDeviceAccordionState } from './deviceAccordionState.js'
-import { TECH_QA_EXPLANATION_INVENTORY } from './techQaExplanationCatalog.js'
+import { formatStatusClassificationTitle, TECH_QA_EXPLANATION_INVENTORY } from './techQaExplanationCatalog.js'
 
 test('A normal internal links show first five and preserve all twelve', () => {
   const view = createTechQaViewModel(result({ links: Array.from({ length: 12 }, (_, index) => link({ label: `Link ${index + 1}`, url: `https://example.com/${index + 1}` })) }))
@@ -1109,7 +1109,7 @@ test('Tech QA phase 2 not applicable detail keeps target absence reason', () => 
   const detail = createTechQaDetailViewModel({ id: 'modal-interaction', status: 'info', meta: { noTarget: true } })
 
   assert.equal(detail.displayStatus, '해당 없음')
-  assert.equal(detail.meaning.includes('검사 대상이 확인되지 않았습니다'), true)
+  assert.equal(detail.meaning.includes('확인할 대상이 없습니다'), true)
   assert.equal(detail.classificationReason.includes('noTarget'), true)
 })
 
@@ -1142,12 +1142,198 @@ test('Tech QA phase 2 detail UI keeps inline closed expansion behavior', () => {
   assert.equal(source.includes('function TechExplanationDetails'), true)
   assert.equal(source.includes('이 결과의 의미'), true)
   assert.equal(source.includes('대표 원인'), true)
-  assert.equal(source.includes("왜 '{displayStatus}'로 분류됐나요?"), true)
+  assert.equal(source.includes('formatStatusClassificationTitle(displayStatus)'), true)
   assert.equal(source.includes('웹에서 확인하는 방법'), true)
   assert.equal(source.includes('확인 후 판단 기준'), true)
+  assert.equal(source.includes('function NormalExplanationDetails'), true)
+  assert.equal(source.includes('function NotApplicableExplanationDetails'), true)
+  assert.equal(source.includes('확인된 내용'), true)
+  assert.equal(source.includes('현재 페이지 상태와 검사 시점 기준 결과입니다.'), true)
   assert.equal(source.includes('function TechnicalEvidenceDetails'), true)
   assert.equal(source.includes('open={isOpen}'), true)
   assert.equal(source.includes('aria-expanded={isOpen}'), true)
+})
+
+test('Tech QA display priority owner is hidden only for normal and not applicable rows', () => {
+  assert.equal(getDisplayPriorityOwner({ status: 'ok', owner: 'UID팀' }), '-')
+  assert.equal(getDisplayPriorityOwner({ status: 'info', owner: 'UID팀' }), '-')
+  assert.equal(getDisplayPriorityOwner({ displayStatus: '정상', owner: '개발팀' }), '-')
+  assert.equal(getDisplayPriorityOwner({ displayStatus: '해당 없음', owner: 'UID팀' }), '-')
+  assert.equal(getDisplayPriorityOwner({ status: 'warn', owner: 'UID팀' }), 'UID팀')
+  assert.equal(getDisplayPriorityOwner({ status: 'error', owner: '개발팀' }), '개발팀')
+  assert.equal(getDisplayPriorityOwner({ status: 'unavailable', owner: '개발팀' }), '개발팀')
+})
+
+test('Tech QA status classification title uses the correct Korean postposition', () => {
+  assert.equal(formatStatusClassificationTitle('정상'), "왜 '정상'으로 분류됐나요?")
+  assert.equal(formatStatusClassificationTitle('문제 확인'), "왜 '문제 확인'으로 분류됐나요?")
+  assert.equal(formatStatusClassificationTitle('검토 필요'), "왜 '검토 필요'로 분류됐나요?")
+  assert.equal(formatStatusClassificationTitle('해당 없음'), "왜 '해당 없음'으로 분류됐나요?")
+  assert.equal(formatStatusClassificationTitle('검사 불가'), "왜 '검사 불가'로 분류됐나요?")
+})
+
+test('Tech QA markup and accessibility table keeps standard column order', () => {
+  const source = fs.readFileSync('src/components/TechQaPanel.jsx', 'utf8')
+  const headerStart = source.indexOf('<div className="tech-markup-head">')
+  const headerEnd = source.indexOf('</div>', headerStart)
+  const headerSource = source.slice(headerStart, headerEnd)
+  const rowStart = source.indexOf('function MarkupCheckRow')
+  const rowEnd = source.indexOf('function MarkupCheckDetails', rowStart)
+  const rowSource = source.slice(rowStart, rowEnd)
+
+  assert.equal(headerSource.indexOf('<span>상태</span>') < headerSource.indexOf('<span>검사 대상</span>'), true)
+  assert.equal(headerSource.indexOf('<span>검사 대상</span>') < headerSource.indexOf('<span>유형</span>'), true)
+  assert.equal(headerSource.indexOf('<span>유형</span>') < headerSource.indexOf('<span>결과</span>'), true)
+  assert.equal(headerSource.indexOf('<span>결과</span>') < headerSource.indexOf('<span>우선 확인</span>'), true)
+  assert.equal(headerSource.indexOf('<span>우선 확인</span>') < headerSource.indexOf('<span>상세</span>'), true)
+  assert.equal(rowSource.indexOf('status-badge') < rowSource.indexOf('<strong>{item.title}</strong>'), true)
+  assert.equal(rowSource.indexOf('<strong>{item.title}</strong>') < rowSource.indexOf('tech-category-chip'), true)
+  assert.equal(rowSource.includes('getDisplayPriorityOwner(item)'), true)
+})
+
+test('Tech QA markup review element fallback never reports review rows as normal', () => {
+  const source = fs.readFileSync('src/components/TechQaPanel.jsx', 'utf8')
+  const formatStart = source.indexOf('function formatElementIssue')
+  const formatEnd = source.indexOf('function getReviewElementFallbackReason', formatStart)
+  const fallbackStart = source.indexOf('function getReviewElementFallbackReason')
+  const fallbackEnd = source.indexOf('function getEntryStatus', fallbackStart)
+  const formatSource = source.slice(formatStart, formatEnd)
+  const fallbackSource = source.slice(fallbackStart, fallbackEnd)
+
+  assert.equal(formatSource.includes('item.reason || item.message || item.detail || item.issue'), true)
+  assert.equal(formatSource.includes("getEntryStatus(item) !== 'ok'"), true)
+  assert.equal(formatSource.includes('정상으로 확인되었습니다.'), false)
+  assert.equal(fallbackSource.includes('canonical URL이 확인되지 않았습니다.'), true)
+  assert.equal(fallbackSource.includes('OG 메타 값이 확인되지 않았습니다.'), true)
+  assert.equal(fallbackSource.includes('접근 가능한 이름이 없거나 불명확합니다.'), true)
+})
+
+test('Tech QA normal explanations override issue-oriented generic copy for download and failed resources', () => {
+  const download = createTechQaDetailViewModel({ status: 'ok', category: 'download-ok', label: '자료 및 양식 다운로드', value: '정상' })
+  const failedResource = createTechQaDetailViewModel({ rowId: 'tech-performance-failed-resource', status: 'ok', category: 'failed-resource', label: '실패 리소스', value: '정상' })
+
+  assert.equal(download.displayStatus, '정상')
+  assert.equal(download.meaning, '다운로드 링크의 응답 상태와 주요 헤더가 현재 검사 조건에서 정상 범위로 확인됐습니다.')
+  assert.equal(download.meaning.includes('추가 확인이 필요한 신호'), false)
+  assert.equal(failedResource.displayStatus, '정상')
+  assert.equal(failedResource.meaning, '페이지 구성에 필요한 핵심 first-party 리소스 요청에서 실패 신호가 확인되지 않았습니다.')
+  assert.equal(failedResource.meaning.includes('실패 응답이 확인됐습니다'), false)
+})
+
+test('Tech QA modal and hreflang display paths fix remaining Korean grammar mistakes', () => {
+  const modalView = createTechQaViewModel(result({
+    scanOptions: { modal: true },
+    checks: [check({ id: 'modal-interaction', status: 'error', meta: { candidateCount: 1 } })],
+    modalInteractions: [{ status: 'error', category: 'runtime-error', label: 'Modal', note: '모달 검사 중 오류가 발생했습니다.' }],
+  }))
+  const seoView = createTechQaViewModel(result({
+    scanOptions: { seo: true },
+    checks: [check({ id: 'seo-readiness', status: 'info', meta: { candidateCount: 1 } })],
+    seoItems: [{ status: 'info', category: 'hreflang', label: 'hreflang', note: 'hreflang 링크가 없어도 자동 오류로 보지 않았습니다.' }],
+  }))
+
+  const modalRow = createTechDetailRows(modalView).modalRows[0]
+  const seoRow = createTechDetailRows(seoView).seoRows[0]
+
+  assert.equal(modalRow.value, '모달 검사 중 문제가 확인되었습니다.')
+  assert.equal(modalRow.value.includes(['문제 확인', '가'].join('')), false)
+  assert.equal(seoRow.value, 'hreflang 링크가 없다는 이유만으로 문제 확인 상태로 분류하지 않았습니다.')
+  assert.equal(seoRow.value.includes(['문제 확인', '로'].join('')), false)
+})
+
+test('Tech QA unavailable landing explanation follows display status instead of landing-ok category', () => {
+  const detail = createTechQaDetailViewModel({ rowId: 'tech-landing-bmwfs', status: 'error', statusLabel: '검사 불가', category: 'landing-ok', statusCode: 200, label: 'BMW Financial Services', value: '검사 불가 · HTTP 200' })
+
+  assert.equal(detail.displayStatus, '검사 불가')
+  assert.equal(detail.meaning.includes('끝까지 확인하지 못했습니다'), true)
+  assert.equal(detail.meaning.includes('기본 콘텐츠와 성공 응답'), false)
+  assert.equal(detail.classificationReason.includes('정상으로 분류했습니다'), false)
+})
+
+test('Tech QA technical owner guidance is hidden only for normal and not applicable detail entries', () => {
+  const source = fs.readFileSync('src/components/TechQaPanel.jsx', 'utf8')
+  const helperStart = source.indexOf('function shouldShowTeamCheck')
+  const helperEnd = source.indexOf('function formatDecisionResult', helperStart)
+  const helperSource = source.slice(helperStart, helperEnd)
+  const cardStart = source.indexOf('function ProblemElementCard')
+  const cardEnd = source.indexOf('function shouldShowTeamCheck', cardStart)
+  const cardSource = source.slice(cardStart, cardEnd)
+
+  assert.equal(cardSource.includes('showTeamCheck ?'), true)
+  assert.equal(helperSource.includes("displayStatus !== '정상' && displayStatus !== '해당 없음'"), true)
+  assert.equal(helperSource.includes('getDisplayStatusLabel'), true)
+})
+
+test('Tech QA evidence labels are selected from display status without changing issue arrays', () => {
+  const source = fs.readFileSync('src/components/TechQaPanel.jsx', 'utf8')
+
+  assert.equal(source.includes('function getInteractionEvidenceDisplay'), true)
+  assert.equal(source.includes("displayStatus === '정상') return { label: '확인된 내용', items }"), true)
+  assert.equal(source.includes("displayStatus === '해당 없음') return { label: '참고 정보', items }"), true)
+  assert.equal(source.includes("displayStatus === '문제 확인') return { label: '문제 확인 사유', items }"), true)
+  assert.equal(source.includes("displayStatus === '검사 불가') return { label: '검사 불가 사유', items }"), true)
+  assert.equal(source.includes("return { label: '검토 필요 사유', items }"), true)
+  assert.equal(source.includes('isRepeatedEvidenceSummary(item, items)'), true)
+  assert.equal(source.includes('item.issues.filter'), true)
+})
+
+test('Tech QA detail display copy fixes remaining Korean postposition mistakes', () => {
+  const sources = [
+    'src/components/TechQaPanel.jsx',
+    'src/utils/techQaExplanationCatalog.js',
+    'src/utils/techQaPanelView.js',
+    'src/utils/techQa.test.js',
+    'src/utils/inputPanelSource.test.js',
+  ].map((filePath) => fs.readFileSync(filePath, 'utf8')).join('\n')
+  const badPatterns = [
+    ['문제 확인', '로'].join(''),
+    ['정상', '로'].join(''),
+    ['해당 없음', '로'].join(''),
+    ['검사 불가', '로'].join(''),
+    ['문제 확인', '가'].join(''),
+    ['검토 필요', '가 발생'].join(''),
+  ]
+
+  badPatterns.forEach((pattern) => assert.equal(sources.includes(pattern), false))
+  assert.equal(sources.includes('hreflang 링크가 없다는 이유만으로 문제 확인 상태로 분류하지 않았습니다.'), true)
+})
+
+test('Tech QA normal Title row uses Title-specific explanation instead of SEO-wide fallback', () => {
+  const detail = createTechQaDetailViewModel({ rowId: 'tech-basic-title', id: 'title', status: 'ok', value: 'BMWFS' })
+
+  assert.equal(detail.displayStatus, '정상')
+  assert.equal(detail.meaning, '문서 title이 존재하고 현재 값이 정상적으로 수집됐는지 확인한 결과입니다.')
+  assert.equal(detail.meaning.includes('description, robots, OG, hreflang, sitemap'), false)
+})
+
+test('Tech QA detail explanation changes do not mutate original status result or evidence arrays', () => {
+  const item = {
+    rowId: 'tech-performance-render-blocking',
+    status: 'ok',
+    category: 'render-blocking',
+    value: '정상 · 렌더링 차단 가능 리소스 없음',
+    issues: ['렌더링 차단 가능 리소스 없음'],
+    owner: '개발팀',
+  }
+  const original = JSON.parse(JSON.stringify(item))
+  const detail = createTechQaDetailViewModel(item)
+
+  assert.deepEqual(item, original)
+  assert.equal(item.status, original.status)
+  assert.equal(item.value, original.value)
+  assert.deepEqual(item.issues, original.issues)
+  assert.equal(detail.technicalEvidence.some((entry) => entry.label === 'raw value' && entry.value === original.value), true)
+})
+
+test('Tech QA responsive explanation accepts non-array history issues safely', () => {
+  const stringIssue = createTechQaDetailViewModel({ id: 'responsive-layout', category: 'overflow', raw: { issues: '가로 overflow' } })
+  const objectIssue = createTechQaDetailViewModel({ id: 'responsive-layout', category: 'overflow', raw: { issues: { message: '모바일 잘림' } } })
+  const emptyIssue = createTechQaDetailViewModel({ id: 'responsive-layout', category: 'overflow', raw: { issues: null } })
+
+  assert.match(stringIssue.reason, /가로 overflow/)
+  assert.match(objectIssue.reason, /모바일 잘림/)
+  assert.equal(objectIssue.reason.includes('[object Object]'), false)
+  assert.match(emptyIssue.reason, /viewport 관찰값/)
 })
 
 test('Tech QA phase 2 detail view remains safe for restored history-shaped rows', () => {

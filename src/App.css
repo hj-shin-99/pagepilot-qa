@@ -4888,7 +4888,7 @@
 
 .tech-markup-check-list {
   display: grid;
-  --tech-markup-columns: minmax(180px, 1.3fr) 92px minmax(110px, 0.8fr) minmax(110px, 0.7fr) 40px;
+  --tech-markup-columns: 88px minmax(150px, 0.9fr) minmax(104px, 0.6fr) minmax(0, 1.7fr) 100px 40px;
   min-width: 0;
   overflow: hidden;
   border: 1px solid #e5edf6;
@@ -4910,6 +4910,15 @@
   display: grid;
   gap: 10px;
   padding-top: 10px;
+}
+
+.tech-markup-row > .tech-row-summary > strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tech-normal-markup-list {

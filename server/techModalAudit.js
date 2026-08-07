@@ -53,6 +53,7 @@ export function createModalAuditCandidates(clickItems = [], domCandidates = []) 
   const merged = []
   const seen = new Set()
   ;[...(Array.isArray(clickItems) ? clickItems : []), ...(Array.isArray(domCandidates) ? domCandidates : [])].forEach((item, index) => {
+    if (isModalCloseCandidate(item)) return
     const selector = textOf(item.selector)
     if (!selector) return
     const key = `${selector}|${textOf(item.ariaControls || item.dataTarget || item.dialogSelector)}`
@@ -118,6 +119,7 @@ async function collectModalCandidates(page, targetUrl, clickItems = []) {
       const rect = element.getBoundingClientRect()
       const style = window.getComputedStyle(element)
       if (rect.width <= 0 || rect.height <= 0 || style.display === 'none' || style.visibility === 'hidden') return
+      if (isModalCloseControl(element)) return
       const text = `${element.getAttribute('aria-controls') || ''} ${element.getAttribute('data-target') || element.getAttribute('data-bs-target') || ''} ${element.getAttribute('data-toggle') || element.getAttribute('data-bs-toggle') || ''} ${element.getAttribute('class') || ''} ${element.getAttribute('aria-label') || ''} ${element.textContent || ''}`.toLowerCase()
       if (!/modal|dialog|popup|layer|overlay/.test(text) && !/(모달|팝업|레이어|오버레이|대화상자)/.test(text)) return
       items.push({
@@ -169,6 +171,13 @@ async function collectModalCandidates(page, targetUrl, clickItems = []) {
       return String(value || '').replace(/\s+/g, ' ').trim()
     }
 
+    function isModalCloseControl(element) {
+      if (element.hasAttribute('data-dismiss') || element.hasAttribute('data-bs-dismiss')) return true
+      const text = normalizeText(`${element.getAttribute('aria-label') || ''} ${element.getAttribute('title') || ''} ${element.getAttribute('class') || ''} ${element.textContent || ''}`).toLowerCase()
+      if (/\b(close|dismiss|cancel|btn-close)\b|^(x|×)$/.test(text) || /(닫기|취소)/.test(text)) return true
+      return Boolean(element.closest('dialog, [role="dialog"], [aria-modal="true"]') && /\b(close|dismiss|cancel|btn-close)\b|닫기|취소/.test(text))
+    }
+
     function cssEscape(value) {
       if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(value)
       return String(value || '').replace(/[^a-zA-Z0-9_-]/g, '\\$&')
@@ -176,6 +185,7 @@ async function collectModalCandidates(page, targetUrl, clickItems = []) {
   }).catch(() => [])
 
   const modalClickItems = (Array.isArray(clickItems) ? clickItems : []).filter((item) => {
+    if (isModalCloseCandidate(item)) return false
     const text = `${item.ariaControls || ''} ${item.dataTarget || ''} ${item.dataToggle || ''} ${item.uiControlSemantic || ''} ${item.label || ''} ${item.text || ''} ${item.interactionOutcome || ''}`
     return item.interactionOutcome === 'modal' || MODAL_TRIGGER_PATTERN.test(text) || MODAL_TRIGGER_KO_PATTERN.test(text)
   })
@@ -358,6 +368,14 @@ function textOf(value) {
   return String(value || '').trim()
 }
 
+function isModalCloseCandidate(item = {}) {
+  if (textOf(item.dataDismiss || item.dataBsDismiss || item.dataDismissTarget)) return true
+  if (/dialog-close-control/i.test(textOf(item.uiControlSemantic || item.actionEvidence))) return true
+  const text = textOf(`${item.label || ''} ${item.text || ''} ${item.ariaLabel || ''} ${item.title || ''} ${item.className || ''}`).toLowerCase()
+  return /\b(close|dismiss|cancel|btn-close)\b|^(x|×)$/.test(text) || /(닫기|취소)/.test(text)
+}
+
 export const MODAL_AUDIT_TEST_ONLY = {
   createModalAuditMeta,
+  isModalCloseCandidate,
 }

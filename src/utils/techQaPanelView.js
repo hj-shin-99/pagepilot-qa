@@ -157,6 +157,12 @@ export function createTechQaDetailViewModel(item = {}) {
   }
 }
 
+export function getDisplayPriorityOwner(item = {}, fallbackOwner = '') {
+  const displayStatus = item.displayStatus || item.statusLabel || getTechQaStatusLabel(item)
+  if (displayStatus === '정상' || displayStatus === '해당 없음') return '-'
+  return item.owner || fallbackOwner || '-'
+}
+
 function createTechnicalEvidence(item = {}) {
   const raw = item.raw || item
   return [

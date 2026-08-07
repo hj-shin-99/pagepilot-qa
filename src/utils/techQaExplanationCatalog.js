@@ -26,7 +26,7 @@ export function createTechQaExplanation(item = {}, context = {}) {
   const auditType = resolveAuditType(item)
   const category = getCategory(item)
   const target = getTargetName(item)
-  const helpers = { item, raw, displayStatus, auditType, category, target, statusTitle: `왜 '${displayStatus}'로 분류됐나요?` }
+  const helpers = { item, raw, displayStatus, auditType, category, target, statusTitle: formatStatusClassificationTitle(displayStatus) }
   const factory = selectFactory(helpers)
   return normalizeExplanation(factory(helpers), helpers)
 }
@@ -223,8 +223,9 @@ function createClickExplanation({ raw, displayStatus, category, target }) {
   return createGenericTypedExplanation({ displayStatus, auditType: 'click', category, target, raw })
 }
 
-function createLandingExplanation({ raw, category, target }) {
+function createLandingExplanation({ raw, displayStatus, category, target }) {
   const statusCode = getStatusCode(raw)
+  if (displayStatus === '검사 불가') return createUnavailableExplanation({ raw, category })
   if (category === 'landing-ok' || category === 'landing-redirect-ok') return {
     meaning: `'${target}' 클릭 후 도착한 랜딩 페이지에서 기본 콘텐츠와 성공 응답이 확인됐습니다.`,
     commonCauses: ['정상 랜딩 페이지가 로드됐습니다.', '리다이렉트 후 최종 페이지가 정상일 수 있습니다.'],
@@ -295,16 +296,24 @@ function createScrollExplanation({ raw }) {
 
 function createResponsiveExplanation({ raw, target }) {
   const viewport = raw.type || raw.viewport || raw.viewportState || target
+  const issueText = formatIssueText(raw.issues)
   return {
     meaning: `${viewport} viewport에서 레이아웃 넘침, 잘림, 빈 화면 또는 실행 오류 신호를 확인한 결과입니다.`,
     commonCauses: ['일부 요소의 고정 너비가 viewport보다 클 수 있습니다.', '의도된 가로 스크롤 영역과 실제 overflow가 구분되어야 합니다.', '숨겨진 duplicate slide나 off-canvas 메뉴가 측정에 영향을 줄 수 있습니다.', '특정 viewport에서만 JavaScript 오류가 발생할 수 있습니다.'],
-    classificationReason: `${raw.issues?.join(' ') || raw.note || raw.reason || 'viewport 관찰값'} 신호를 기준으로 현재 상태를 분류했습니다.`,
+    classificationReason: `${issueText || formatIssueText(raw.note) || formatIssueText(raw.reason) || 'viewport 관찰값'} 신호를 기준으로 현재 상태를 분류했습니다.`,
     verifySteps: [`브라우저 viewport를 ${viewport || '해당 결과의 화면 크기'}로 맞춥니다.`, '페이지를 새로고침합니다.', '좌우로 의도치 않은 가로 스크롤이 생기는지 확인합니다.', 'CTA, 카드, 텍스트가 viewport 밖으로 잘리는지 확인합니다.', '의도된 carousel 또는 table 가로 스크롤인지 구분합니다.'],
     decisionGuide: ['전체 페이지가 좌우로 밀리면 레이아웃 overflow 확인이 필요합니다.', 'carousel/table 내부만 스크롤되면 디자인 의도일 수 있습니다.', '특정 요소만 잘리면 해당 breakpoint 스타일 확인이 필요합니다.', '빈 화면이나 오류가 반복되면 해당 viewport 실행 오류를 확인합니다.'],
   }
 }
 
-function createDownloadExplanation({ raw, target }) {
+function formatIssueText(value) {
+  if (Array.isArray(value)) return value.map(formatIssueText).filter(Boolean).join(' ')
+  if (value && typeof value === 'object') return formatIssueText(value.message || value.note || value.reason || value.title || value.label || value.value)
+  return String(value || '').trim()
+}
+
+function createDownloadExplanation({ raw, target, displayStatus }) {
+  if (displayStatus === '정상') return createNormalExplanation({ auditType: 'download-resource', category: 'download-ok', raw })
   return createInteractionExplanation('Download QA', `'${target}' 다운로드 링크의 응답 상태, 파일 형식, 파일 크기 신호를 확인한 결과입니다.`, ['파일 URL이 삭제되었거나 권한이 필요할 수 있습니다.', '서버가 파일 대신 HTML 오류 페이지를 반환할 수 있습니다.', 'HEAD 요청과 실제 GET 응답이 다를 수 있습니다.', '파일 확장자와 Content-Type이 맞지 않을 수 있습니다.'], [`'${target}' 다운로드 링크를 클릭합니다.`, '파일이 다운로드되거나 새 탭에서 정상 표시되는지 확인합니다.', 'DevTools Network에서 status, Content-Type, Content-Length를 확인합니다.', '파일명이 의도한 확장자와 맞는지 확인합니다.'], raw)
 }
 
@@ -316,15 +325,24 @@ function createImageExplanation({ raw, target }) {
   return createInteractionExplanation('Image QA', `'${target}' 이미지의 로딩 응답, 실제 렌더링 크기, 비율, 리소스 상태를 확인한 결과입니다.`, ['이미지 요청이 404/5xx 또는 HTML 응답을 받을 수 있습니다.', '원본 비율과 렌더링 비율이 맞지 않을 수 있습니다.', '작은 원본을 크게 확대했을 수 있습니다.', 'SVG, data, blob 이미지는 일부 raster 기준이 적용되지 않을 수 있습니다.'], ['페이지에서 해당 이미지를 찾습니다.', '이미지가 깨지거나 빈 영역으로 보이는지 확인합니다.', 'DevTools Network에서 이미지 status와 Content-Type을 확인합니다.', 'Elements에서 rendered size와 natural size를 비교합니다.'], raw)
 }
 
-function createPerformanceExplanation({ raw, category }) {
+function createPerformanceExplanation({ raw, category, displayStatus }) {
   const networkStep = 'DevTools Network 탭에서 해당 리소스의 Size, Time, Status, Encoding 값을 확인합니다.'
+  if (displayStatus === '정상') return createNormalExplanation({ auditType: 'performance-resource', category, raw })
   if (category === 'failed-resource') return createInteractionExplanation('Performance QA', '페이지 구성에 필요한 리소스 요청 중 실패 응답이 확인됐습니다.', ['JS, CSS, font, image 요청이 4xx/5xx로 실패했을 수 있습니다.', 'first-party 핵심 리소스가 배포 경로에서 누락됐을 수 있습니다.', 'CDN 또는 cache purge 상태가 맞지 않을 수 있습니다.'], ['페이지를 새로고침합니다.', networkStep, '실패 리소스가 화면 기능이나 스타일에 영향을 주는지 확인합니다.'], raw)
   if (category === 'large-resource' || category === 'slow-resource') return createInteractionExplanation('Performance QA', '큰 용량 또는 느린 리소스가 로딩 시간에 영향을 줄 수 있는 신호로 수집됐습니다.', ['이미지, 영상, JS bundle 크기가 클 수 있습니다.', 'first-party 리소스 응답 시간이 길 수 있습니다.', '외부 스크립트 지연이 체감 속도에 영향을 줄 수 있습니다.'], ['페이지를 새로고침합니다.', networkStep, '가장 큰 리소스와 가장 오래 걸린 요청을 정렬해 확인합니다.', '해당 리소스가 첫 화면 표시 전에 필요한지 확인합니다.'], raw)
   return createInteractionExplanation('Performance QA', 'Network 기반으로 압축, 캐시, 중복 요청, render-blocking 후보를 확인한 결과입니다.', ['텍스트 리소스에 gzip/br 압축이 없을 수 있습니다.', 'fingerprinted 정적 리소스 cache policy가 짧을 수 있습니다.', '동일 파일이 중복 요청될 수 있습니다.', 'head script가 렌더링을 지연할 수 있습니다.'], ['페이지를 새로고침합니다.', networkStep, 'Disable cache를 끄고 다시 측정해 cache policy를 확인합니다.', '문제 리소스가 실제 초기 화면에 필요한지 확인합니다.'], raw)
 }
 
-function createSeoExplanation({ raw, category }) {
+function createSeoExplanation({ raw, category, displayStatus }) {
   const sourceStep = '페이지 소스 또는 Elements에서 해당 meta/link/script 태그를 확인합니다.'
+  if (displayStatus === '정상') return createNormalExplanation({ auditType: 'seo-readiness', category, raw })
+  if (category === 'hreflang' && displayStatus === '해당 없음') return {
+    meaning: '현재 페이지에서 hreflang 링크가 확인되지 않았습니다.',
+    commonCauses: [],
+    classificationReason: 'hreflang 링크가 없다는 이유만으로 문제 확인 상태로 분류하지 않았습니다.',
+    verifySteps: [],
+    decisionGuide: ['다국어 또는 지역별 대체 페이지가 필요하지 않다면 조치하지 않아도 됩니다.'],
+  }
   if (category === 'structured-data') return createInteractionExplanation('SEO QA', 'JSON-LD 구조화 데이터가 검색 엔진이 읽을 수 있는 JSON 형식인지 확인한 결과입니다.', ['JSON 문법이 깨졌을 수 있습니다.', '템플릿 변수 치환이 실패했을 수 있습니다.', '여러 JSON-LD 중 일부만 오류일 수 있습니다.'], [sourceStep, 'application/ld+json script 내용을 확인합니다.', '따옴표, 쉼표, 중괄호가 올바른지 확인합니다.'], raw)
   if (category === 'canonical') return createInteractionExplanation('SEO QA', 'canonical URL이 검색 대표 주소로 적절하게 설정됐는지 확인한 결과입니다.', ['canonical 태그가 없거나 여러 개일 수 있습니다.', '현재 도메인과 다른 canonical이 설정됐을 수 있습니다.', 'http/https 또는 trailing slash 정책이 섞였을 수 있습니다.'], [sourceStep, 'link rel="canonical" href 값을 확인합니다.', '현재 페이지의 대표 URL 정책과 맞는지 확인합니다.'], raw)
   return createInteractionExplanation('SEO QA', '검색 노출과 공유 미리보기에 필요한 title, description, robots, OG, hreflang, sitemap 신호를 확인한 결과입니다.', ['title 또는 meta description이 없거나 중복될 수 있습니다.', 'robots noindex/disallow 설정이 의도와 다를 수 있습니다.', 'OG/Twitter 일부 값이 누락됐을 수 있습니다.', 'hreflang 또는 sitemap 경로가 맞지 않을 수 있습니다.'], [sourceStep, 'title, meta description, robots, OG 태그를 확인합니다.', 'robots.txt와 sitemap.xml 응답을 브라우저에서 확인합니다.', '검색 노출을 막아야 하는 페이지인지 정책을 확인합니다.'], raw)
@@ -343,27 +361,28 @@ function createBasicCheckExplanation({ auditType, raw }) {
   const labels = {
     access: ['페이지 접속', '검사 대상 페이지가 브라우저에서 열리는지 확인한 결과입니다.', '일반 브라우저에서 페이지를 엽니다.'],
     'http-status': ['HTTP 상태', '메인 문서 요청에 서버가 반환한 HTTP status를 확인한 결과입니다.', 'DevTools Network에서 document 요청 status를 확인합니다.'],
-    title: ['Title', '문서 title이 브라우저와 검색 결과에 표시될 수 있는지 확인한 결과입니다.', '페이지 소스에서 title 태그를 확인합니다.'],
-    'console-errors': ['Console', '페이지 실행 중 브라우저 콘솔 오류가 발생했는지 확인한 결과입니다.', 'DevTools Console에서 first-party 오류를 확인합니다.'],
-    images: ['이미지 로딩', '페이지 이미지 요청과 렌더링 실패 여부를 확인한 결과입니다.', 'DevTools Network와 화면에서 깨진 이미지를 확인합니다.'],
-    links: ['링크 수집', '페이지에서 링크가 수집되고 요청 문제가 있는지 확인한 결과입니다.', 'URL 검사 섹션의 문제 링크를 함께 확인합니다.'],
+    title: ['Title', '문서 title이 존재하고 현재 값이 정상적으로 수집됐는지 확인한 결과입니다.', '페이지 소스에서 title 태그를 확인합니다.'],
+    'console-errors': ['Console', 'first-party와 third-party console error 관찰 결과를 확인한 항목입니다.', 'DevTools Console에서 first-party 오류를 확인합니다.'],
+    images: ['이미지 로딩', '이미지 요청 및 렌더링 실패 여부를 확인한 결과입니다.', 'DevTools Network와 화면에서 깨진 이미지를 확인합니다.'],
+    'resource-size': ['큰 리소스', '설정된 기준을 초과한 대형 리소스가 있는지 확인한 결과입니다.', 'DevTools Network에서 리소스 크기를 확인합니다.'],
+    links: ['링크 수집', '링크 수집 및 요청 문제 여부를 확인한 결과입니다.', 'URL 검사 섹션의 문제 링크를 함께 확인합니다.'],
     'missing-href': ['버튼 URL', '이동 목적 버튼에 URL 또는 action 근거가 있는지 확인한 결과입니다.', '대상 버튼을 클릭하고 href 또는 이벤트 연결을 확인합니다.'],
-    mobile: ['모바일 viewport', '모바일 화면 크기에서 페이지 접속 상태를 확인한 결과입니다.', '모바일 viewport로 페이지를 새로고침합니다.'],
-    headings: ['Heading', '페이지 heading 구조와 H1 신호를 확인한 결과입니다.', 'Elements 또는 접근성 트리에서 heading 순서를 확인합니다.'],
-    'duplicate-ids': ['중복 ID', '같은 id 값이 여러 요소에 중복 사용됐는지 확인한 결과입니다.', 'Elements에서 동일 id를 가진 요소를 검색합니다.'],
-    'network-failures': ['네트워크 요청', '페이지 구성 중 실패한 document, API, JS, CSS, font 요청을 확인한 결과입니다.', 'DevTools Network에서 실패 요청의 status와 URL을 확인합니다.'],
-    forms: ['Form 기본 검사', '입력 요소에 label 또는 접근성 이름이 연결되어 있는지 확인한 결과입니다.', 'Elements에서 input과 label 또는 aria-label 연결을 확인합니다.'],
+    mobile: ['모바일 viewport', '모바일 viewport 접속 및 overflow 기본 상태를 확인한 결과입니다.', '모바일 viewport로 페이지를 새로고침합니다.'],
+    headings: ['Heading', 'heading 구조와 검토 대상 여부를 확인한 결과입니다.', 'Elements 또는 접근성 트리에서 heading 순서를 확인합니다.'],
+    'duplicate-ids': ['중복 ID', 'duplicate id 여부를 확인한 결과입니다.', 'Elements에서 동일 id를 가진 요소를 검색합니다.'],
+    'network-failures': ['네트워크 요청', '페이지 구성 중 실패 요청 여부를 확인한 결과입니다.', 'DevTools Network에서 실패 요청의 status와 URL을 확인합니다.'],
+    forms: ['Form 기본 검사', 'form 요소와 기본 validation 관찰 결과를 확인한 항목입니다.', 'Elements에서 input과 label 또는 aria-label 연결을 확인합니다.'],
   }
   const [title, meaning, step] = labels[auditType] || ['주요 검사 결과', '페이지 기본 Tech QA 신호를 확인한 결과입니다.', '해당 항목을 브라우저에서 직접 확인합니다.']
   return createInteractionExplanation(title, meaning, ['페이지 상태나 실행 시점에 따라 결과가 달라질 수 있습니다.', '렌더링, 권한, 네트워크 조건이 영향을 줄 수 있습니다.', '마크업 또는 리소스 설정이 의도와 다를 수 있습니다.'], [step, '자동 검사에 기록된 기술 정보를 실제 화면과 대조합니다.', '동일 조건에서 반복 재현되는지 확인합니다.'], raw)
 }
 
-function createNotApplicableExplanation({ auditType }) {
+function createNotApplicableExplanation() {
   return {
-    meaning: '현재 페이지 또는 선택한 검사 옵션에서 이 항목에 해당하는 검사 대상이 확인되지 않았습니다.',
-    commonCauses: ['해당 기능이나 요소가 현재 페이지에 없을 수 있습니다.', '선택한 viewport 또는 상태에서 대상이 숨겨져 있을 수 있습니다.'],
+    meaning: '현재 페이지 또는 선택한 검사 조건에서 확인할 대상이 없습니다.',
+    commonCauses: [],
     classificationReason: '자동 검사 메타에서 noTarget 또는 정보성 생략 신호가 확인되어 해당 없음으로 분류했습니다.',
-    verifySteps: auditType === 'link' ? ['현재 페이지에 해당 링크나 버튼이 필요한지 확인합니다.'] : ['현재 페이지에 해당 기능 또는 요소가 필요한지 확인합니다.'],
+    verifySteps: [],
     decisionGuide: ['페이지 목적상 대상이 없다면 조치하지 않아도 됩니다.', '있어야 하는 기능이라면 노출 조건이나 렌더링 여부를 확인합니다.'],
   }
 }
@@ -385,14 +404,39 @@ function createUnavailableExplanation({ raw, category }) {
   }
 }
 
-function createNormalExplanation({ auditType, target, raw }) {
+function createNormalExplanation({ auditType, category, raw }) {
+  const meaning = getNormalMeaning(auditType, category)
   return {
-    meaning: `현재 자동 검사 조건에서 '${target}' 항목의 기대 신호가 확인됐습니다. 페이지 전체에 문제가 없다는 의미는 아닙니다.`,
-    commonCauses: ['현재 viewport와 실행 시점에서는 실패 신호가 수집되지 않았습니다.', '배포 이후 콘텐츠나 외부 서비스 상태가 바뀌면 결과가 달라질 수 있습니다.'],
+    meaning,
+    commonCauses: [],
     classificationReason: `${raw.note || raw.reason || raw.category || auditType || '검사 조건'} 기준으로 실패 또는 검토 필요 신호가 확인되지 않아 '정상'으로 분류했습니다.`,
-    verifySteps: ['필요 시 동일 조건에서 페이지를 다시 확인합니다.', '배포 직후 또는 콘텐츠 변경 후 같은 항목을 재검사합니다.'],
-    decisionGuide: ['동일 조건에서 기대 동작이 유지되면 현재 검사 범위에서는 정상으로 볼 수 있습니다.', '다른 viewport, 로그인 상태, 시간대에서는 별도로 확인할 수 있습니다.'],
+    verifySteps: [],
+    decisionGuide: ['현재 페이지 상태와 검사 시점 기준 결과입니다.'],
   }
+}
+
+function getNormalMeaning(auditType = '', category = '') {
+  if (auditType === 'download-resource') return '다운로드 링크의 응답 상태와 주요 헤더가 현재 검사 조건에서 정상 범위로 확인됐습니다.'
+  if (auditType === 'performance-resource' && category === 'failed-resource') return '페이지 구성에 필요한 핵심 first-party 리소스 요청에서 실패 신호가 확인되지 않았습니다.'
+  if (auditType === 'performance-resource' && (category === 'large-resource' || category === 'slow-resource')) return '설정된 기준을 초과한 대형 또는 지연 리소스 신호가 현재 검사 조건에서 확인되지 않았습니다.'
+  if (auditType === 'performance-resource') return '페이지 리소스의 전송량, 요청 시간, 압축 및 캐시 관련 관찰값이 현재 검사 조건에서 정상 범위로 확인됐습니다.'
+  if (auditType === 'seo-readiness' && category === 'structured-data') return '구조화 데이터가 현재 검사 조건에서 정상 범위로 확인됐습니다.'
+  if (auditType === 'seo-readiness' && category === 'canonical') return 'canonical URL이 현재 검사 조건에서 정상 범위로 확인됐습니다.'
+  if (auditType === 'seo-readiness') return '검색 노출 관련 메타 신호가 현재 검사 조건에서 정상 범위로 확인됐습니다.'
+  return '현재 검사 조건에서 이상 신호가 확인되지 않았습니다.'
+}
+
+export function formatStatusClassificationTitle(status = '') {
+  return `왜 '${status}'${getKoreanDirectionPostposition(status)} 분류됐나요?`
+}
+
+function getKoreanDirectionPostposition(value = '') {
+  const chars = Array.from(String(value || '').trim())
+  const last = chars[chars.length - 1] || ''
+  const code = last.charCodeAt(0)
+  if (code < 0xac00 || code > 0xd7a3) return '로'
+  const jong = (code - 0xac00) % 28
+  return jong === 0 || jong === 8 ? '로' : '으로'
 }
 
 function createInteractionExplanation(name, meaning, commonCauses, verifySteps, raw = {}) {
@@ -415,6 +459,7 @@ function createGenericTypedExplanation({ displayStatus, auditType, category, tar
 }
 
 function createGenericExplanation({ displayStatus, auditType, category, target, raw }) {
+  if (displayStatus === '정상') return createNormalExplanation({ auditType, category, raw })
   return {
     meaning: `자동 검사에서 '${target}' 항목에 추가 확인이 필요한 신호가 발견됐습니다.`,
     commonCauses: ['페이지 상태 또는 실행 시점에 따라 결과가 달라질 수 있습니다.', '자동화만으로 서비스 의도를 판단하기 어려울 수 있습니다.', '접근 권한, viewport, 네트워크 조건이 결과에 영향을 줄 수 있습니다.'],
@@ -438,6 +483,8 @@ function normalizeExplanation(explanation = {}, helpers = {}) {
 function resolveAuditType(item = {}) {
   const raw = getRaw(item)
   const rowId = String(item.rowId || item.detailTargetId || '')
+  const category = getCategory(item)
+  if (rowId.startsWith('tech-basic')) return item.id || raw.id || 'generic'
   if (item.type === 'link' || rowId.startsWith('tech-link')) return 'link'
   if (rowId.startsWith('tech-click') || raw.actionClassification || raw.hrefState) return 'click'
   if (rowId.startsWith('tech-landing') || raw.requestedUrl && Array.isArray(raw.sources)) return 'landing'
@@ -446,7 +493,7 @@ function resolveAuditType(item = {}) {
   if (rowId.startsWith('tech-modal') || item.id === 'modal-interaction') return 'modal-interaction'
   if (rowId.startsWith('tech-scroll') || item.id === 'scroll-interaction') return 'scroll-interaction'
   if (rowId.startsWith('tech-responsive') || item.id === 'responsive-layout') return 'responsive-layout'
-  if (rowId.startsWith('tech-download') || item.id === 'download-resource') return 'download-resource'
+  if (rowId.startsWith('tech-download') || item.id === 'download-resource' || ['http-error', 'zero-byte', 'mime-mismatch', 'download-ok', 'skipped'].includes(category)) return 'download-resource'
   if (rowId.startsWith('tech-cookie') || item.id === 'cookie-security') return 'cookie-security'
   if (rowId.startsWith('tech-image') || item.id === 'image-rendering') return 'image-rendering'
   if (rowId.startsWith('tech-performance') || item.id === 'performance-resource' || item.id === 'resource-size') return 'performance-resource'

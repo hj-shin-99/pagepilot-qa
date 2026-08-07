@@ -163,6 +163,25 @@ test('landing audit treats timeout and access restriction as warn', () => {
   assert.equal(restricted.category, 'restricted')
 })
 
+test('landing audit keeps healthy 200 page ok when only load timeout is observed', () => {
+  const result = classifyLandingObservation({
+    requestedUrl: 'https://example.com/ok',
+    finalUrl: 'https://example.com/ok',
+    statusCode: 200,
+    pageTitle: 'BMW Financial Services',
+    navigationError: 'page.waitForLoadState Timeout 4000ms exceeded',
+    bodyChildCount: 4,
+    visibleElementCount: 8,
+    bodyTextLength: 160,
+    hasMainContent: true,
+    browserErrorPage: false,
+    criticalConsoleErrorCount: 0,
+  }, candidate('https://example.com/ok'))
+
+  assert.equal(result.status, 'ok')
+  assert.equal(result.category, 'landing-ok')
+})
+
 test('landing audit treats browser error page and critical page error as error', () => {
   const browserError = classifyLandingObservation({
     statusCode: 200,

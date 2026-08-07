@@ -1,7 +1,8 @@
 import { createContext, useContext, useState } from 'react'
 import { createEmptyTechQaStatusCounts, createTechQaViewModel, formatTechQaStatusCounts, formatTechQaStatusCountsForItems, getSectionVisibility, getTechQaStatusLabel, getVisibleLinkGroups } from '../utils/techQa'
-import { createTechPanelDisplayModel, getBasicCheckDetailId, getMarkupDetailId } from '../utils/techQaPanelView'
+import { createTechPanelDisplayModel, getBasicCheckDetailId, getDisplayPriorityOwner, getMarkupDetailId } from '../utils/techQaPanelView'
 import { isDeviceAccordionOpen, updateDeviceAccordionState } from '../utils/deviceAccordionState'
+import { formatStatusClassificationTitle } from '../utils/techQaExplanationCatalog'
 import { formatScanTime } from '../utils/report'
 import { createTechQaTitle } from '../utils/techTitle'
 import { createDeviceDescriptor, formatDeviceViewport, normalizeDeviceIds } from '../../shared/deviceProfiles.js'
@@ -12,14 +13,15 @@ const MARKUP_ACCESSIBILITY_DETAIL_IDS = ['meta', 'image-alt', 'external-links', 
 const TechAccordionStateContext = createContext(null)
 
 function TechQaPanel({ result, onNewScan }) {
-  const deviceEntries = createTechDeviceEntries(result)
+  const safeResult = result && typeof result === 'object' ? result : {}
+  const deviceEntries = createTechDeviceEntries(safeResult)
   const defaultDeviceId = getDefaultActiveDeviceId(deviceEntries)
   const [activeDeviceId, setActiveDeviceId] = useState(defaultDeviceId)
   const resolvedActiveDeviceId = deviceEntries.some((entry) => entry.deviceId === activeDeviceId) ? activeDeviceId : defaultDeviceId
   const activeDeviceEntry = deviceEntries.find((entry) => entry.deviceId === resolvedActiveDeviceId) || deviceEntries[0]
   const activeResult = activeDeviceEntry?.result
-    ? { ...activeDeviceEntry.result, totalDurationMs: activeDeviceEntry.result.totalDurationMs ?? result?.totalDurationMs }
-    : result
+    ? { ...activeDeviceEntry.result, totalDurationMs: activeDeviceEntry.result.totalDurationMs ?? safeResult.totalDurationMs }
+    : safeResult
   const view = createTechQaViewModel(activeResult)
   const display = createTechPanelDisplayModel(activeResult, view)
   const linkGroups = getVisibleLinkGroups(display.detailRows.linkRows)
@@ -294,18 +296,28 @@ function DeviceFailure({ entry }) {
 }
 
 function createTechDeviceEntries(result = {}) {
-  const entries = Array.isArray(result.deviceResults) && result.deviceResults.length > 0
-    ? result.deviceResults
-    : [{ ...createDeviceDescriptor(result.deviceId || 'desktop'), status: 'success', result, error: '', errorType: '' }]
+  const safeResult = result && typeof result === 'object' ? result : {}
+  const entries = Array.isArray(safeResult.deviceResults) && safeResult.deviceResults.length > 0
+    ? safeResult.deviceResults
+    : [{ ...createDeviceDescriptor(safeResult.deviceId || 'desktop'), status: 'success', result: safeResult, error: '', errorType: '' }]
   return entries.map((entry) => {
     const descriptor = createDeviceDescriptor(entry.deviceId || 'desktop')
+    const entryResult = entry.result && typeof entry.result === 'object'
+      ? {
+        ...entry.result,
+        targetUrl: entry.result.targetUrl || safeResult.targetUrl,
+        scannedAt: entry.result.scannedAt || safeResult.scannedAt,
+        scanOptions: entry.result.scanOptions || safeResult.scanOptions,
+        devices: entry.result.devices || [entry.deviceId || descriptor.deviceId],
+      }
+      : null
     return {
       ...descriptor,
       ...entry,
       viewport: entry.viewport || descriptor.viewport,
       deviceLabel: entry.deviceLabel || descriptor.deviceLabel,
       status: entry.status === 'error' ? 'error' : 'success',
-      result: entry.result && typeof entry.result === 'object' ? entry.result : null,
+      result: entryResult,
     }
   })
 }
@@ -387,7 +399,7 @@ function TechTableRow({ item }) {
         </div>
         <span className={`status-badge ${getStatusClass(item.status)}`}>{getDisplayStatusLabel(item)}</span>
         <span className="tech-table-value">{item.value || '-'}</span>
-        <OwnerBadge owner={item.status === 'ok' ? '-' : item.owner} />
+        <OwnerBadge owner={getDisplayPriorityOwner(item)} />
     </DetailRow>
   )
 }
@@ -407,8 +419,9 @@ function MarkupAccessibilitySection({ items }) {
       {problemItems.length > 0 ? (
         <div className="tech-markup-check-list">
           <div className="tech-markup-head">
-            <span>검사 항목</span>
             <span>상태</span>
+            <span>검사 대상</span>
+            <span>유형</span>
             <span>결과</span>
             <span>우선 확인</span>
             <span>상세</span>
@@ -428,13 +441,11 @@ function MarkupCheckRow({ item }) {
       className={`tech-table-row tech-row-details tech-row-with-details tech-markup-row tech-markup-check-row ${getStatusClass(item.status)}`}
       detail={<MarkupCheckDetails item={item} />}
     >
-      <div className="tech-table-title">
-        <span className="tech-category-chip">{item.categoryLabel || 'Markup'}</span>
-        <strong>{item.title}</strong>
-      </div>
       <span className={`status-badge ${getStatusClass(item.status)}`}>{getDisplayStatusLabel(item)}</span>
+      <strong>{item.title}</strong>
+      <span className="tech-category-chip">{item.categoryLabel || item.category || item.type || 'Markup'}</span>
       <span className="tech-table-value">{item.value || '-'}</span>
-      <OwnerBadge owner={item.status === 'ok' ? '-' : item.owner} />
+      <OwnerBadge owner={getDisplayPriorityOwner(item)} />
     </DetailRow>
   )
 }
@@ -497,7 +508,7 @@ function LinkTableRow({ item }) {
         <strong>{item.title}</strong>
         <span className="tech-url-cell">{raw.url || raw.href || '-'}</span>
         <span>{raw.statusCode || '-'}</span>
-        <OwnerBadge owner={item.status === 'ok' ? '-' : item.owner} />
+        <OwnerBadge owner={getDisplayPriorityOwner(item)} />
     </DetailRow>
   )
 }
@@ -568,7 +579,7 @@ function ClickActionRow({ item }) {
         <strong>{item.title || getElementName(item)}</strong>
         <span>{getUserLocation(item)}</span>
         <span>{item.value || formatElementResult(item)}</span>
-        <OwnerBadge owner={item.owner || getUidOwner()} />
+        <OwnerBadge owner={getDisplayPriorityOwner(item, getUidOwner())} />
     </DetailRow>
   )
 }
@@ -662,7 +673,7 @@ function InteractionAuditRow({ item }) {
       <strong>{item.title || getElementName(item)}</strong>
       <span>{formatInteractionCategory(item)}</span>
       <span>{item.value || item.note || item.reason || '확인 결과가 기록되었습니다.'}</span>
-      <OwnerBadge owner={item.owner || getUidOwner()} />
+      <OwnerBadge owner={getDisplayPriorityOwner(item, getUidOwner())} />
     </DetailRow>
   )
 }
@@ -704,7 +715,7 @@ function LandingPageRow({ item }) {
       <strong>{item.title || item.label || '랜딩 페이지'}</strong>
       <span className="tech-url-cell">{item.finalUrl || item.requestedUrl || '-'}</span>
       <span>{item.statusCode || '-'}</span>
-      <OwnerBadge owner={item.owner || getLandingOwner(item)} />
+      <OwnerBadge owner={getDisplayPriorityOwner(item, getLandingOwner(item))} />
     </DetailRow>
   )
 }
@@ -737,19 +748,40 @@ function LandingPageDetails({ item }) {
 }
 
 function InteractionAuditDetails({ item }) {
+  const evidenceDisplay = getInteractionEvidenceDisplay(item)
   return (
     <>
       <TechExplanationDetails item={item} />
-      {Array.isArray(item.issues) && item.issues.length > 0 ? (
+      {evidenceDisplay ? (
         <div className="tech-problem-elements is-single">
-          <strong>검토 필요 사유 {item.issues.length}개</strong>
+          <strong>{evidenceDisplay.label} {evidenceDisplay.items.length}개</strong>
           <ol>
-            {item.issues.map((entry, index) => <li key={`${item.rowId || item.auditId || item.selector}-${index}`}><span>{entry}</span></li>)}
+            {evidenceDisplay.items.map((entry, index) => <li key={`${item.rowId || item.auditId || item.selector}-${index}`}><span>{formatDetailDisplayText(entry)}</span></li>)}
           </ol>
         </div>
       ) : null}
     </>
   )
+}
+
+function getInteractionEvidenceDisplay(item = {}) {
+  const items = Array.isArray(item.issues) ? item.issues.filter((entry) => String(entry || '').trim()) : []
+  if (items.length === 0) return null
+  const displayStatus = getDisplayStatusLabel(item)
+  if ((displayStatus === '정상' || displayStatus === '해당 없음') && isRepeatedEvidenceSummary(item, items)) return null
+  if (displayStatus === '정상') return { label: '확인된 내용', items }
+  if (displayStatus === '해당 없음') return { label: '참고 정보', items }
+  if (displayStatus === '문제 확인') return { label: '문제 확인 사유', items }
+  if (displayStatus === '검사 불가') return { label: '검사 불가 사유', items }
+  return { label: '검토 필요 사유', items }
+}
+
+function isRepeatedEvidenceSummary(item = {}, items = []) {
+  const repeatedTexts = [item.value, item.summary, item.note, item.reason, item.message]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+  if (repeatedTexts.length === 0) return false
+  return items.every((entry) => repeatedTexts.includes(String(entry || '').trim()))
 }
 
 function DetailRow({ id, className, summaryClassName = '', children, detail }) {
@@ -877,7 +909,23 @@ function formatLandingSourceOutcome(source = {}) {
 }
 
 function formatElementIssue(item = {}) {
+  const explicitReason = item.reason || item.message || item.detail || item.issue || item.note || item.altReason || item.altCategory
+  if (explicitReason) return sanitizeUserFacingText(explicitReason)
+  if (getEntryStatus(item) !== 'ok') return getReviewElementFallbackReason(item)
   return sanitizeUserFacingText(formatElementResult(item))
+}
+
+function getReviewElementFallbackReason(item = {}) {
+  const text = String([item.id, item.category, item.label, item.name, item.property, item.type, item.technicalTerm].filter(Boolean).join(' ')).toLowerCase()
+  if (/canonical/.test(text)) return 'canonical URL이 확인되지 않았습니다.'
+  if (/og:title/.test(text)) return 'og:title 메타 값이 확인되지 않았습니다.'
+  if (/og:description/.test(text)) return 'og:description 메타 값이 확인되지 않았습니다.'
+  if (/og:image/.test(text)) return 'og:image 메타 값이 확인되지 않았습니다.'
+  if (/\bog[:\s_-]|open graph|social/.test(text)) return '해당 OG 메타 값이 확인되지 않았습니다.'
+  if (/alt|image/.test(text)) return '이미지의 alt 값이 없거나 적절성 확인이 필요합니다.'
+  if (/rel|target|blank|external|새 창|외부/.test(text)) return 'target="_blank" 링크의 rel 보안 속성 확인이 필요합니다.'
+  if (/click|button|name|label|unlabeled|aria|접근 가능한 이름/.test(text)) return '접근 가능한 이름이 없거나 불명확합니다.'
+  return '자동 검사에서 추가 확인이 필요한 항목으로 분류되었습니다.'
 }
 
 function getEntryStatus(item = {}) {
@@ -1035,6 +1083,9 @@ function TechExplanationDetails({ item = {} }) {
   const verifySteps = Array.isArray(item.verifySteps) ? item.verifySteps.slice(0, 6) : []
   const decisionGuide = Array.isArray(item.decisionGuide) ? item.decisionGuide.slice(0, 4) : []
   const displayStatus = getDisplayStatusLabel(item)
+  if (displayStatus === '정상') return <NormalExplanationDetails item={item} />
+  if (displayStatus === '해당 없음') return <NotApplicableExplanationDetails item={item} decisionGuide={decisionGuide} />
+
   return (
     <div className="tech-explanation-detail">
       <section className="tech-explanation-section">
@@ -1050,7 +1101,7 @@ function TechExplanationDetails({ item = {} }) {
         </section>
       ) : null}
       <section className="tech-explanation-section">
-        <h4>왜 '{displayStatus}'로 분류됐나요?</h4>
+        <h4>{formatStatusClassificationTitle(displayStatus)}</h4>
         <p>{item.classificationReason || item.reason || '수집된 검사 결과를 기준으로 표시했습니다.'}</p>
       </section>
       {verifySteps.length > 0 ? (
@@ -1074,9 +1125,56 @@ function TechExplanationDetails({ item = {} }) {
   )
 }
 
+function NormalExplanationDetails({ item = {} }) {
+  return (
+    <div className="tech-explanation-detail">
+      <section className="tech-explanation-section">
+        <h4>이 결과의 의미</h4>
+        <p>{formatDetailDisplayText(item.meaning || item.finding || '현재 검사 조건에서 이상 신호가 확인되지 않았습니다.')}</p>
+      </section>
+      <section className="tech-explanation-section">
+        <h4>확인된 내용</h4>
+        <p>{formatDetailDisplayText(item.summary || item.classificationReason || item.reason || '해당 검사에서 확인한 핵심 관찰값 기준으로 정상 신호가 표시되었습니다.')}</p>
+      </section>
+      <section className="tech-explanation-section">
+        <h4>참고</h4>
+        <p>현재 페이지 상태와 검사 시점 기준 결과입니다.</p>
+      </section>
+      <TechnicalEvidenceDetails items={item.technicalEvidence} />
+    </div>
+  )
+}
+
+function NotApplicableExplanationDetails({ item = {}, decisionGuide = [] }) {
+  return (
+    <div className="tech-explanation-detail">
+      <section className="tech-explanation-section">
+        <h4>이 결과의 의미</h4>
+        <p>{formatDetailDisplayText(item.meaning || item.finding || '현재 페이지 또는 선택한 검사 조건에서 확인할 대상이 없습니다.')}</p>
+      </section>
+      <section className="tech-explanation-section">
+        <h4>확인 후 판단 기준</h4>
+        {decisionGuide.length > 0 ? (
+          <ul className="tech-detail-list-items">
+            {decisionGuide.map((guide) => <li key={typeof guide === 'string' ? guide : `${guide.condition}-${guide.judgment}`}>{formatDecisionGuide(guide)}</li>)}
+          </ul>
+        ) : <p>페이지 목적상 대상이 필요하지 않다면 조치하지 않아도 됩니다.</p>}
+      </section>
+      <TechnicalEvidenceDetails items={item.technicalEvidence} />
+    </div>
+  )
+}
+
 function formatDecisionGuide(guide) {
   if (!guide || typeof guide !== 'object') return String(guide || '')
   return [guide.condition, guide.judgment].filter(Boolean).join(' → ')
+}
+
+function formatDetailDisplayText(value = '') {
+  const badHreflangProblemCopy = new RegExp(`hreflang 링크가 없어도 자동 ${['문제 확인', '로'].join('')} 보지 않았습니다\\.`, 'g')
+  return String(value || '')
+    .replace(badHreflangProblemCopy, 'hreflang 링크가 없다는 이유만으로 문제 확인 상태로 분류하지 않았습니다.')
+    .replace(/hreflang 링크가 없어도 자동 오류로 보지 않았습니다\./g, 'hreflang 링크가 없다는 이유만으로 문제 확인 상태로 분류하지 않았습니다.')
 }
 
 function TechnicalEvidenceDetails({ items }) {
@@ -1109,13 +1207,14 @@ function ProblemElementList({ items, owner }) {
 
 function ProblemElementCard({ entry, owner, index = null }) {
   const team = entry.owner || owner || '담당 팀'
+  const showTeamCheck = shouldShowTeamCheck(entry)
   return (
     <li>
       <strong>{getElementName(entry, index)} · {getUserLocation(entry)}</strong>
       <span>상태: {getDisplayStatusLabel({ ...entry, status: getEntryStatus(entry) })}</span>
       <span>판정 결과: {formatDecisionResult(entry)}</span>
       <span>확인 이유: {formatElementIssue(entry)}</span>
-      <span>{team} 확인: {formatTeamCheck(entry)}</span>
+      {showTeamCheck ? <span>{team} 확인: {formatTeamCheck(entry)}</span> : null}
       <DeviceScopedDetails accordionKey={`tech-problem-evidence:${entry.selector || entry.url || entry.href || entry.label || index || 'item'}`} className="tech-row-details" summary="기술 정보 보기">
         <dl className="tech-issue-meta">
           <Meta label="tag" value={entry.tagName || entry.kind} />
@@ -1354,6 +1453,11 @@ function CountBreakdown({ items }) {
       </ul>
     </DeviceScopedDetails>
   )
+}
+
+function shouldShowTeamCheck(entry = {}) {
+  const displayStatus = getDisplayStatusLabel({ ...entry, status: getEntryStatus(entry) })
+  return displayStatus !== '정상' && displayStatus !== '해당 없음'
 }
 
 function RawList({ title, items }) {

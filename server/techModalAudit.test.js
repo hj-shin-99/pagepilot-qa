@@ -61,6 +61,17 @@ test('modal audit candidate builder merges click and dom candidates by selector'
   assert.equal(candidates.length, 2)
 })
 
+test('modal audit excludes close controls from opener candidates', () => {
+  assert.equal(MODAL_AUDIT_TEST_ONLY.isModalCloseCandidate({ label: '닫기', ariaLabel: '닫기', dataDismiss: 'modal' }), true)
+  const candidates = createModalAuditCandidates([
+    candidate({ auditId: 'close-1', selector: '#close-modal', label: '닫기', dataDismiss: 'modal', interactionOutcome: 'modal' }),
+    candidate({ auditId: 'open-1', selector: '#open-modal', label: 'Open modal', interactionOutcome: 'modal' }),
+  ])
+
+  assert.equal(candidates.length, 1)
+  assert.equal(candidates[0].selector, '#open-modal')
+})
+
 test('modal audit meta reports no target safely', () => {
   const meta = MODAL_AUDIT_TEST_ONLY.createModalAuditMeta([], { candidateCount: 0, noTarget: true })
 

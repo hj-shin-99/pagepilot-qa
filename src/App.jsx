@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import './App.css'
 import { createResultSummary } from './utils/report'
-import { createHistoryItemId } from './utils/history'
+import { createHistoryItemId, getHistoryTechResult, getHistoryVisualResult } from './utils/history'
 import { clearHistoryItems, deleteHistoryItem, loadHistoryItems, saveHistoryItem } from './utils/historyStorage'
 import { buildAiReviewPayloadFromSession, sanitizeAiReviewResponse } from './utils/aiReview'
 import { confirmWebUrlInput, createDebouncedWebUrlConfirmScheduler, createPublicWebUrlState, createWebUrlInputState, isValidHttpUrl } from './utils/scanSession'
@@ -242,10 +242,12 @@ function App() {
     setScanProgressEvent(null)
 
     if (item.type === 'combined') {
-      setVisualResult(item.visual?.compactResult || null)
-      setTechResult(item.tech?.compactResult || null)
-      setTechScanOptions(resolveHistoryScanOptions(item.tech?.compactResult || item.tech))
-      setDevices(resolveHistoryDevices(item.tech?.compactResult || item.tech || item))
+      const restoredVisualResult = getHistoryVisualResult(item)
+      const restoredTechResult = getHistoryTechResult(item)
+      setVisualResult(restoredVisualResult)
+      setTechResult(restoredTechResult)
+      setTechScanOptions(resolveHistoryScanOptions(restoredTechResult || item.tech))
+      setDevices(resolveHistoryDevices(restoredTechResult || item.tech || item))
       setVisualScanState(item.visual?.status || 'skipped')
       setTechScanState(item.tech?.status || 'idle')
       setVisualScanError(item.visual?.error || '')
@@ -267,10 +269,11 @@ function App() {
     }
 
     if (item.type === 'tech' || item.result?.targetUrl) {
+      const restoredTechResult = getHistoryTechResult(item)
       setVisualResult(null)
-      setTechResult(item.result)
-      setTechScanOptions(resolveHistoryScanOptions(item.result))
-      setDevices(resolveHistoryDevices(item.result || item))
+      setTechResult(restoredTechResult)
+      setTechScanOptions(resolveHistoryScanOptions(restoredTechResult || item.result))
+      setDevices(resolveHistoryDevices(restoredTechResult || item.result || item))
       setVisualScanState('skipped')
       setTechScanState('success')
       setActiveTab('tech')
@@ -824,19 +827,21 @@ function createHistoryRestoreState(item) {
 
   if (item.type === 'combined') {
     const aiReview = item.aiReview || null
+    const restoredVisualResult = getHistoryVisualResult(item)
+    const restoredTechResult = getHistoryTechResult(item)
     return {
       ...baseState,
       url: item.url,
       figmaUrl: item.figmaUrl || '',
-      visualResult: item.visual?.compactResult || null,
-      techResult: item.tech?.compactResult || null,
+      visualResult: restoredVisualResult,
+      techResult: restoredTechResult,
       visualScanState: item.visual?.status || 'skipped',
       techScanState: item.tech?.status || 'idle',
       aiReview,
       aiReviewState: aiReview ? aiReview.meta?.fallbackUsed ? 'fallback' : 'success' : 'idle',
       activeTab: 'visual',
-      techScanOptions: resolveHistoryScanOptions(item.tech?.compactResult || item.tech),
-      devices: resolveHistoryDevices(item.tech?.compactResult || item.tech || item),
+      techScanOptions: resolveHistoryScanOptions(restoredTechResult || item.tech),
+      devices: resolveHistoryDevices(restoredTechResult || item.tech || item),
     }
   }
 
@@ -851,16 +856,17 @@ function createHistoryRestoreState(item) {
   }
 
   if (item.type === 'tech' || item.result?.targetUrl) {
+    const restoredTechResult = getHistoryTechResult(item)
     return {
       ...baseState,
       url: item.url,
       figmaUrl: item.figmaUrl || '',
-      techResult: item.result,
+      techResult: restoredTechResult,
       visualScanState: 'skipped',
       techScanState: 'success',
       activeTab: 'tech',
-      techScanOptions: resolveHistoryScanOptions(item.result),
-      devices: resolveHistoryDevices(item.result || item),
+      techScanOptions: resolveHistoryScanOptions(restoredTechResult || item.result),
+      devices: resolveHistoryDevices(restoredTechResult || item.result || item),
     }
   }
 

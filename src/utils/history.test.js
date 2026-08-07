@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createHistoryCardSummary, createHistoryDetailMeta, createHistoryItemId, getHistoryDisplayStatus, sortHistoryItems } from './history.js'
+import { createCompactHistoryItemForStorage, createHistoryCardSummary, createHistoryDetailMeta, createHistoryItemId, getHistoryDisplayStatus, getHistoryTechResult, getHistoryVisualResult, MAX_HISTORY_ITEMS, sortHistoryItems } from './history.js'
 import { clearHistoryItems, countHistoryItems, deleteHistoryItem, loadHistoryItems, migrateLegacyHistory, resetHistoryStorageForTests, saveHistoryItem } from './historyStorage.js'
+import { createTechQaViewModel } from './techQa.js'
 
 function installLocalStorage() {
   const store = new Map()
@@ -194,6 +195,53 @@ test('history stores and restores combined session data without raw payloads', a
   assert.equal(serialized.includes('debug raw'), false)
   assert.equal(serialized.includes('networkRequests'), false)
   assert.equal(serialized.includes('SECRET_TOKEN_VALUE_123'), false)
+})
+
+test('combined history exposes restorable Visual and Tech results for tab switching without API replay', async () => {
+  await resetStorage()
+  await saveHistoryItem(createCombinedItem('combined-restore', 2))
+
+  const [item] = await loadHistoryItems()
+  const visualResult = getHistoryVisualResult(item)
+  const techResult = getHistoryTechResult(item)
+  const techView = createTechQaViewModel(techResult)
+
+  assert.equal(item.type, 'combined')
+  assert.equal(Boolean(visualResult), true)
+  assert.equal(Boolean(techResult), true)
+  assert.equal(techResult.targetUrl, 'https://combined-restore.example')
+  assert.deepEqual(techResult.devices, ['desktop', 'tablet', 'mobile'])
+  assert.equal(techResult.deviceResults.length, 3)
+  assert.equal(techResult.deviceResults.every((entry) => entry.result && entry.result.scanOptions), true)
+  assert.equal(techView.targetUrl, 'https://combined-restore.example')
+})
+
+test('combined history restore supports legacy tech.result and keeps multi-device shape', () => {
+  const combined = createCombinedItem('combined-legacy', 3)
+  const legacy = {
+    ...combined,
+    tech: { status: 'success', summary: 'Tech ok', result: combined.tech.compactResult, compactResult: null, scanOptions: combined.tech.scanOptions, devices: combined.tech.devices, error: '' },
+  }
+  const stored = createCompactHistoryItemForStorage(legacy)
+  const techResult = getHistoryTechResult(stored)
+
+  assert.equal(stored.tech.status, 'success')
+  assert.equal(Boolean(stored.tech.compactResult), true)
+  assert.equal(techResult.deviceResults.length, 3)
+  assert.deepEqual(techResult.devices, ['desktop', 'tablet', 'mobile'])
+})
+
+test('tech-only history restore keeps existing Tech result behavior', () => {
+  const item = createCompactHistoryItemForStorage(createTechItem('tech-only-restore', 4))
+  const techResult = getHistoryTechResult(item)
+
+  assert.equal(item.type, 'tech')
+  assert.equal(techResult.targetUrl, 'https://tech-only-restore.example')
+  assert.deepEqual(techResult.devices, ['desktop'])
+})
+
+test('history max item limit remains unchanged', () => {
+  assert.equal(MAX_HISTORY_ITEMS, 5)
 })
 
 test('history id helper never derives ids from URL type or scannedAt only', () => {

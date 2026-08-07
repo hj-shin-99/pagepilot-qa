@@ -106,8 +106,8 @@ function sanitizeHistoryItem(item, index = 0, options = {}) {
   const designImageFilenames = sanitizeDesignImageFilenames(item.designImageFilenames, item.inputs?.designImages)
   const figmaUrl = getString(item.figmaUrl)
   const result = item.result && typeof item.result === 'object' ? item.result : null
-  const visual = sanitizeSessionBranch(item.visual)
-  const tech = sanitizeSessionBranch(item.tech)
+  const visual = sanitizeSessionBranch(item.visual, 'visual')
+  const tech = sanitizeSessionBranch(item.tech, 'tech')
   const aiReview = sanitizeAiReview(item.aiReview)
   const type = sanitizeHistoryType(item.type, result, figmaUrl, visual, tech)
   const totalDurationMs = getOptionalDurationMs(item.totalDurationMs)
@@ -203,16 +203,65 @@ function sanitizeHistoryType(type, result, figmaUrl, visual, tech) {
   return 'tech'
 }
 
-function sanitizeSessionBranch(branch) {
+function sanitizeSessionBranch(branch, kind = '') {
   if (!branch || typeof branch !== 'object') return null
+  const compactResult = branch.compactResult && typeof branch.compactResult === 'object'
+    ? branch.compactResult
+    : branch.result && typeof branch.result === 'object' ? compactHistoryResult(kind, branch.result) : null
   return {
     status: sanitizeBranchStatus(branch.status),
     summary: getString(branch.summary),
-    compactResult: branch.compactResult && typeof branch.compactResult === 'object' ? branch.compactResult : null,
+    compactResult,
     scanOptions: branch.scanOptions && typeof branch.scanOptions === 'object' ? branch.scanOptions : null,
-    devices: normalizeDeviceIds(branch.devices || branch.compactResult?.devices),
+    devices: normalizeDeviceIds(branch.devices || compactResult?.devices),
     error: getString(branch.error),
   }
+}
+
+export function getHistoryVisualResult(item = {}) {
+  if (item.type === 'combined') return item.visual?.compactResult || item.visual?.result || null
+  if (item.type === 'visual') return item.result || null
+  return null
+}
+
+export function getHistoryTechResult(item = {}) {
+  const techResult = item.type === 'combined'
+    ? item.tech?.compactResult || item.tech?.result || item.techResult || null
+    : item.type === 'tech' || item.result?.targetUrl ? item.result : null
+  return normalizeRestoredTechResult(techResult, item)
+}
+
+function normalizeRestoredTechResult(result, item = {}) {
+  if (!result || typeof result !== 'object') return null
+  const branch = item.tech && typeof item.tech === 'object' ? item.tech : {}
+  const parentDevices = normalizeDeviceIds(result.devices || branch.devices || item.devices)
+  const parentScanOptions = result.scanOptions || branch.scanOptions || null
+  const deviceResults = Array.isArray(result.deviceResults)
+    ? result.deviceResults.map((entry) => normalizeRestoredDeviceResult(entry, result, parentDevices, parentScanOptions))
+    : []
+  return {
+    ...result,
+    targetUrl: result.targetUrl || item.url || item.webUrl,
+    devices: parentDevices,
+    ...(parentScanOptions ? { scanOptions: normalizeTechScanOptions(parentScanOptions) } : {}),
+    deviceResults,
+  }
+}
+
+function normalizeRestoredDeviceResult(entry = {}, parentResult = {}, parentDevices = [], parentScanOptions = null) {
+  if (!entry || typeof entry !== 'object') return entry
+  const deviceId = getString(entry.deviceId) || parentDevices[0] || ''
+  const result = entry.result && typeof entry.result === 'object'
+    ? {
+      ...entry.result,
+      targetUrl: entry.result.targetUrl || parentResult.targetUrl,
+      scannedAt: entry.result.scannedAt || parentResult.scannedAt,
+      totalDurationMs: entry.result.totalDurationMs ?? parentResult.totalDurationMs,
+      scanOptions: normalizeTechScanOptions(entry.result.scanOptions || parentScanOptions || parentResult.scanOptions),
+      devices: normalizeDeviceIds(entry.result.devices || [deviceId]),
+    }
+    : null
+  return { ...entry, deviceId, result }
 }
 
 export function createHistoryItemId(prefix = 'history') {
@@ -421,8 +470,8 @@ function getHistorySortTime(item = {}) {
 }
 
 function getHistoryBranches(item = {}) {
-  const visualResult = item.visual?.compactResult || (item.type === 'visual' ? item.result : null)
-  const techResult = item.tech?.compactResult || (item.type === 'tech' ? item.result : null)
+  const visualResult = getHistoryVisualResult(item)
+  const techResult = getHistoryTechResult(item)
   const expectsVisual = item.type === 'visual' || item.type === 'combined' || Boolean(item.visual)
   const expectsTech = item.type === 'tech' || item.type === 'combined' || Boolean(item.tech)
   return [
@@ -439,7 +488,7 @@ function createHistoryBranch(kind, expected, branch, result, item) {
 }
 
 function getHistoryTechIssueCounts(item = {}) {
-  const result = item.tech?.compactResult || (item.type === 'tech' ? item.result : null)
+  const result = getHistoryTechResult(item)
   if (result && typeof result === 'object') {
     try {
       const counts = createTechQaViewModel(result).issueCounts || {}
@@ -479,7 +528,7 @@ function getHistoryVisualDifferenceCount(item = {}) {
 }
 
 function hasFailedDeviceResult(item = {}) {
-  const result = item.tech?.compactResult || (item.type === 'tech' ? item.result : null)
+  const result = getHistoryTechResult(item)
   return Array.isArray(result?.deviceResults) && result.deviceResults.some((entry) => entry?.status === 'error')
 }
 

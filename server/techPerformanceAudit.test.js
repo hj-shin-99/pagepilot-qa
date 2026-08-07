@@ -165,6 +165,16 @@ test('performance audit source does not use lighthouse or site-specific hardcodi
   assert.equal(PERFORMANCE_AUDIT_TEST_ONLY.normalizeResourceType('xmlhttprequest'), 'fetch')
 })
 
+test('performance audit infers static resource types from URL when performance initiator is css', () => {
+  assert.equal(PERFORMANCE_AUDIT_TEST_ONLY.normalizeResourceType('css', 'https://example.com/banner_wrap_pc.jpg'), 'image')
+  assert.equal(PERFORMANCE_AUDIT_TEST_ONLY.normalizeResourceType('css', 'https://example.com/footer_top_myfincar.svg'), 'image')
+  assert.equal(PERFORMANCE_AUDIT_TEST_ONLY.normalizeResourceType('css', 'https://example.com/font.woff2'), 'font')
+  assert.equal(PERFORMANCE_AUDIT_TEST_ONLY.normalizeResourceType('css', 'https://example.com/app.css'), 'stylesheet')
+  assert.equal(PERFORMANCE_AUDIT_TEST_ONLY.normalizeResourceType('other', 'https://example.com/app.js'), 'script')
+  assert.equal(PERFORMANCE_AUDIT_TEST_ONLY.normalizeResourceType('other', 'https://example.com/video.mp4'), 'media')
+  assert.equal(PERFORMANCE_AUDIT_TEST_ONLY.normalizeResourceType('other', 'https://example.com/index.html'), 'document')
+})
+
 test('performance audit phase 3-b fixtures cover status boundaries and missing header false positive', () => {
   const problem = auditPerformanceResources('https://example.com', snapshot({ performanceInfo: { resources: [], renderBlockingCandidates: [] } }), responses([{ url: 'https://example.com/app.js', resourceType: 'script', statusCode: 500 }]))
   const review = auditPerformanceResources('https://example.com', snapshot({ performanceInfo: { resources: [resource({ url: 'https://example.com/large.js', resourceType: 'script', transferSize: 360000, encodedBodySize: 360000 })], renderBlockingCandidates: [] } }), responses())

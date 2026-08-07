@@ -141,6 +141,7 @@ export function classifyLandingObservation(observation = {}, candidate = {}) {
   const blankScreenLikely = isBlankScreenLikely(observation)
   const weakContent = hasWeakContentSignal(observation)
   const hasContent = hasContentSignal(observation)
+  const healthyLandingEvidence = hasHealthyLandingEvidence(observation, { statusCode, pageTitle, hasContent, blankScreenLikely, criticalConsoleErrorCount })
   const unexpectedRedirect = observation.unexpectedRedirect === true
 
   if (navigationError) {
@@ -151,6 +152,7 @@ export function classifyLandingObservation(observation = {}, candidate = {}) {
       return { status: 'warn', category: 'restricted', note: '로그인, 인증 또는 접근 제한으로 자동 확인이 제한될 수 있습니다.' }
     }
     if (/timeout|timed out/i.test(navigationError)) {
+      if (healthyLandingEvidence) return createHealthyLandingStatus(candidate, redirected)
       return hasContent
         ? { status: 'warn', category: 'timeout', note: '랜딩 페이지 로딩 시간이 초과되었지만 일부 콘텐츠는 확인되었습니다.' }
         : { status: 'error', category: 'navigation-failed', note: '랜딩 페이지 로딩이 완료되지 않아 정상 화면을 확인하지 못했습니다.' }
@@ -179,6 +181,10 @@ export function classifyLandingObservation(observation = {}, candidate = {}) {
     }
   }
 
+  return createHealthyLandingStatus(candidate, redirected)
+}
+
+function createHealthyLandingStatus(candidate = {}, redirected = false) {
   return {
     status: 'ok',
     category: redirected ? candidate.openedInNewWindow ? 'new-window-redirect-ok' : 'landing-redirect-ok' : candidate.openedInNewWindow ? 'new-window-ok' : 'landing-ok',
@@ -358,6 +364,15 @@ function hasContentSignal(observation = {}) {
       || observation.hasMedia === true
       || observation.hasMainContent === true
     )
+}
+
+function hasHealthyLandingEvidence(observation = {}, context = {}) {
+  const statusCode = Number(context.statusCode || observation.statusCode || 0) || 0
+  if (statusCode < 200 || statusCode >= 400) return false
+  if (!isHttpUrl(textOf(observation.finalUrl || observation.requestedUrl))) return false
+  if (context.blankScreenLikely === true || observation.browserErrorPage === true) return false
+  if (Number(context.criticalConsoleErrorCount || observation.criticalConsoleErrorCount || 0) > 0) return false
+  return context.hasContent === true && textOf(context.pageTitle || observation.pageTitle)
 }
 
 function isBlankScreenLikely(observation = {}) {

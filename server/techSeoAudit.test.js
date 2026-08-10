@@ -73,6 +73,7 @@ test('phase 3A SEO fixtures keep intent-dependent signals review or not applicab
   assert.equal(review.items.find((item) => item.category === 'hreflang').status, 'warn')
   assert.equal(normal.items.find((item) => item.category === 'structured-data').status, 'ok')
   assert.equal(normal.items.find((item) => item.category === 'hreflang').status, 'info')
+  assert.equal(normal.items.find((item) => item.category === 'social-meta').status, 'info')
 })
 
 test('phase 3A SEO fixture keeps invalid JSON-LD as objective problem', async () => {

@@ -57,9 +57,10 @@ test('responsive audit errors on blank screens, navigation failure, and runtime 
   assert.equal(runtimeError.status, 'error')
 })
 
-test('responsive candidate filters exclude hidden carousel duplicates and off-canvas menus', () => {
-  assert.equal(shouldIgnoreResponsiveCandidate({ className: 'swiper-slide-duplicate', display: 'block', visibility: 'visible' }), true)
-  assert.equal(shouldIgnoreResponsiveCandidate({ className: 'mobile offcanvas menu', display: 'block', visibility: 'visible' }), true)
+test('responsive candidate filters exclude hidden inactive and offscreen UI without class-name assumptions', () => {
+  assert.equal(shouldIgnoreResponsiveCandidate({ className: 'slide copy', display: 'block', visibility: 'visible', ariaHidden: 'true' }), true)
+  assert.equal(shouldIgnoreResponsiveCandidate({ className: 'mobile panel', display: 'block', visibility: 'visible', offscreen: true }), true)
+  assert.equal(shouldIgnoreResponsiveCandidate({ className: 'option', display: 'block', visibility: 'visible', selected: false, insideCompositeWidget: true }), true)
   assert.equal(shouldIgnoreResponsiveCandidate({ className: 'hero-title', display: 'block', visibility: 'visible' }), false)
 })
 
@@ -87,7 +88,7 @@ test('phase 3A responsive fixtures separate problem review normal excluded and n
   assert.equal(review.status, 'warn')
   assert.equal(normal.status, 'ok')
   assert.equal(noTarget.status, 'info')
-  assert.equal(shouldIgnoreResponsiveCandidate({ className: 'swiper-slide-duplicate', display: 'block', visibility: 'visible' }), true)
+  assert.equal(shouldIgnoreResponsiveCandidate({ className: 'duplicate slide', display: 'block', visibility: 'visible', ariaHidden: 'true' }), true)
   assert.equal(shouldFlagResponsiveTextClip({ scrollWidth: 180, clientWidth: 120, hasEllipsis: true }), false)
 })
 

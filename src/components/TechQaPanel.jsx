@@ -55,11 +55,11 @@ function TechQaPanel({ result, onNewScan }) {
 
       <TechCompletionCard completion={display.completion} />
 
-      <section className="detail-card tech-compact-card" id="tech-basic-section" aria-label="주요 검사 결과">
+      <section className="detail-card tech-compact-card" id="tech-basic-section" aria-label="핵심 기본 검사 결과">
         <SectionHead
-          title="주요 검사 결과"
-          meta={formatTechQaStatusCountsForItems(display.detailRows.basicRows)}
-          note="페이지의 주요 Tech QA 검사 결과를 한눈에 확인할 수 있습니다."
+          title="핵심 기본 검사 결과"
+          meta={formatBasicCheckSectionMeta(display.detailRows.basicRows)}
+          note="페이지 기본 검사 결과입니다. 아래 선택 QA 섹션의 문제 확인 및 검토 필요와는 별도로 확인해 주세요."
         />
         <TechCompactTable items={display.detailRows.basicRows} mode="basic" />
       </section>
@@ -842,6 +842,10 @@ function formatClickSectionMeta(groups = {}, rows = []) {
   counts.normal = Number(groups.verified?.length || 0)
   counts.notApplicable = Number(groups.safeSkipped?.length || 0) + Number(groups.uiControls?.length || 0)
   return formatTechQaStatusCounts(counts)
+}
+
+function formatBasicCheckSectionMeta(rows = []) {
+  return `기본 검사 · ${formatTechQaStatusCountsForItems(rows)}`
 }
 
 function formatNotApplicableMeta() {

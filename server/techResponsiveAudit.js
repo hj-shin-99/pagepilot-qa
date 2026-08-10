@@ -95,18 +95,15 @@ export function classifyResponsiveViewportObservation(candidate = {}, observatio
 }
 
 export function shouldIgnoreResponsiveCandidate(candidate = {}) {
-  const className = String(candidate.className || '')
   const styleDisplay = String(candidate.display || '').toLowerCase()
   const styleVisibility = String(candidate.visibility || '').toLowerCase()
   const opacity = Number(candidate.opacity)
   const pointerEvents = String(candidate.pointerEvents || '').toLowerCase()
-  const text = `${className} ${candidate.role || ''} ${candidate.ariaHidden || ''}`.toLowerCase()
   if (candidate.hidden === true || candidate.ariaHidden === true || candidate.ariaHidden === 'true' || candidate.ancestorAriaHidden === true) return true
   if (candidate.inert === true || candidate.ancestorInert === true) return true
   if (styleDisplay === 'none' || styleVisibility === 'hidden') return true
   if (Number.isFinite(opacity) && opacity === 0 && (pointerEvents === 'none' || candidate.interactive !== true)) return true
-  if (/swiper-slide-duplicate|slick-cloned|clone/.test(text)) return true
-  if (/offcanvas|drawer|side-menu|sidemenu|gnb-drawer/.test(text)) return true
+  if (candidate.activeDescendant === false || candidate.current === false || candidate.selected === false && candidate.insideCompositeWidget === true) return true
   if (candidate.dialogClosed === true) return true
   if (candidate.insideScrollableContainer === true) return true
   if (candidate.offscreen === true) return true
@@ -140,7 +137,8 @@ async function readResponsiveObservation(page, viewport) {
     const body = document.body || document.createElement('body')
     const viewportWidth = window.innerWidth || doc.clientWidth || 0
     const viewportHeight = window.innerHeight || doc.clientHeight || 0
-    const documentWidth = Math.max(Number(doc.scrollWidth || 0), Number(body.scrollWidth || 0), viewportWidth)
+    const visibleGeometry = getVisibleDocumentGeometry()
+    const documentWidth = Math.max(viewportWidth, visibleGeometry.right)
     const overflowAmount = Math.max(0, documentWidth - viewportWidth)
     const visibleTextLength = String(document.body?.innerText || '').replace(/\s+/g, ' ').trim().length
     const main = document.querySelector('main, [role="main"]')
@@ -181,6 +179,10 @@ async function readResponsiveObservation(page, viewport) {
         ancestorAriaHidden: Boolean(element.closest('[aria-hidden="true"]')),
         inert: element.hasAttribute('inert'),
         ancestorInert: Boolean(element.closest('[inert]')),
+        activeDescendant: isActiveDescendant(element),
+        selected: getSelectedState(element),
+        current: getCurrentState(element),
+        insideCompositeWidget: Boolean(element.closest('[role="tablist"], [role="listbox"], [role="menu"], [aria-roledescription]')),
         hidden: element.hasAttribute('hidden'),
         display: window.getComputedStyle(element).display,
         visibility: window.getComputedStyle(element).visibility,
@@ -205,6 +207,10 @@ async function readResponsiveObservation(page, viewport) {
         ancestorAriaHidden: Boolean(element.closest('[aria-hidden="true"]')),
         inert: element.hasAttribute('inert'),
         ancestorInert: Boolean(element.closest('[inert]')),
+        activeDescendant: isActiveDescendant(element),
+        selected: getSelectedState(element),
+        current: getCurrentState(element),
+        insideCompositeWidget: Boolean(element.closest('[role="tablist"], [role="listbox"], [role="menu"], [aria-roledescription]')),
         hidden: element.hasAttribute('hidden'),
         display: style.display,
         visibility: style.visibility,
@@ -220,23 +226,32 @@ async function readResponsiveObservation(page, viewport) {
     }
 
     function ignoreCandidate(candidate) {
-      const text = `${candidate.className || ''} ${candidate.role || ''} ${candidate.ariaHidden || ''}`.toLowerCase()
-      return shouldIgnoreCandidateLocally(candidate, text)
+      return shouldIgnoreCandidateLocally(candidate)
     }
 
-    function shouldIgnoreCandidateLocally(candidate, text) {
+    function shouldIgnoreCandidateLocally(candidate) {
       const opacity = Number(candidate.opacity)
       const pointerEvents = String(candidate.pointerEvents || '').toLowerCase()
       if (candidate.hidden || candidate.ariaHidden === 'true' || candidate.ancestorAriaHidden) return true
       if (candidate.inert || candidate.ancestorInert) return true
       if (candidate.display === 'none' || candidate.visibility === 'hidden') return true
       if (Number.isFinite(opacity) && opacity === 0 && (pointerEvents === 'none' || candidate.interactive !== true)) return true
-      if (/swiper-slide-duplicate|slick-cloned|clone/.test(text)) return true
-      if (/offcanvas|drawer|side-menu|sidemenu|gnb-drawer/.test(text)) return true
+      if (candidate.activeDescendant === false || candidate.current === false || candidate.selected === false && candidate.insideCompositeWidget === true) return true
       if (candidate.dialogClosed === true) return true
       if (candidate.insideScrollableContainer === true) return true
       if (candidate.offscreen === true) return true
       return false
+    }
+
+    function getVisibleDocumentGeometry() {
+      const elements = Array.from(document.body?.querySelectorAll('*') || [])
+      return elements.reduce((geometry, element, index) => {
+        const candidate = buildEvidenceCandidate(element, index)
+        if (ignoreCandidate(candidate)) return geometry
+        const rect = element.getBoundingClientRect()
+        if (rect.width <= 0 || rect.height <= 0) return geometry
+        return { right: Math.max(geometry.right, Math.ceil(rect.right)) }
+      }, { right: viewportWidth })
     }
 
     function isVisible(element) {
@@ -251,7 +266,7 @@ async function readResponsiveObservation(page, viewport) {
     }
 
     function isInsideScrollableContainer(element) {
-      const container = element.closest('[data-scroll-container], [role="tablist"], [role="listbox"], .swiper, .slick-slider, .carousel') || findScrollableAncestor(element)
+      const container = element.closest('[role="tablist"], [role="listbox"]') || findScrollableAncestor(element)
       if (!container || container === document.body) return false
       const style = window.getComputedStyle(container)
       const scrollableX = ['auto', 'scroll', 'overlay'].includes(String(style.overflowX || '').toLowerCase())
@@ -270,7 +285,7 @@ async function readResponsiveObservation(page, viewport) {
     }
 
     function isInsideClosedDialog(element) {
-      const dialog = element.closest('dialog, [role="dialog"], [aria-modal="true"], .modal, .dialog')
+      const dialog = element.closest('dialog, [role="dialog"], [aria-modal="true"]')
       if (!dialog) return false
       const style = window.getComputedStyle(dialog)
       if (dialog.hasAttribute('hidden')) return true
@@ -279,6 +294,24 @@ async function readResponsiveObservation(page, viewport) {
       if (style.display === 'none' || style.visibility === 'hidden') return true
       if (dialog.tagName.toLowerCase() === 'dialog' && dialog.open !== true) return true
       return false
+    }
+
+    function isActiveDescendant(element) {
+      const owner = element.closest('[aria-activedescendant]')
+      if (!owner) return true
+      const activeId = owner.getAttribute('aria-activedescendant')
+      if (!activeId) return true
+      return element.id === activeId || Boolean(element.querySelector(`#${cssEscape(activeId)}`))
+    }
+
+    function getSelectedState(element) {
+      const value = element.getAttribute('aria-selected')
+      return value === null ? null : value === 'true'
+    }
+
+    function getCurrentState(element) {
+      const value = element.getAttribute('aria-current')
+      return value === null ? null : value !== 'false'
     }
 
     function getCssSelector(element) {

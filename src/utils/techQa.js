@@ -51,7 +51,7 @@ const CHECK_DEFINITIONS = {
   links: { section: 'link', owner: 'UID팀', label: '링크 수집', description: '페이지에서 수집한 링크와 실제 요청 오류 수를 확인합니다.' },
   'missing-href': { section: 'link', owner: 'UID팀', label: '버튼 URL', description: '이동 목적 요소에 href, URL, action 근거가 있는지 확인합니다.' },
   'bad-links': { section: 'link', owner: 'UID팀', label: '페이지 링크 검사', description: '페이지 HTML에 연결된 링크 주소를 수집하여 각 URL의 응답 상태를 확인합니다. 실제 클릭 동작이 아니라 href에 지정된 주소를 기준으로 정상 연결, 오류, 리다이렉트 및 특수 링크 여부를 검사합니다.' },
-  'interaction-count': { section: 'planning', owner: 'UID팀', label: '클릭 요소 수', description: '페이지에서 수집된 링크와 버튼 개수를 확인합니다.' },
+  'interaction-count': { section: 'planning', owner: 'UID팀', label: '링크/버튼 요소', description: '페이지 DOM에서 수집된 a 태그와 버튼 요소 개수를 확인합니다.' },
   mobile: { section: 'planning', owner: 'UID팀', label: '모바일 viewport', description: '모바일 viewport에서 페이지 접속 상태를 확인합니다.' },
   meta: { section: 'seo', owner: 'UID팀', label: 'Meta description / OG', description: '검색과 공유에 사용하는 기본 meta markup이 있는지 확인합니다.' },
   'image-alt': { section: 'planning', owner: 'UID팀', label: '이미지 alt', description: '의미 있는 이미지에 alt 값이 있는지 확인합니다.' },
@@ -422,7 +422,7 @@ function createSummaryCards(result, counts, linkSummary) {
     { label: '페이지 접속', value: `${accessStatus} · HTTP ${result.httpStatus || '응답 없음'}`, status: result.accessible ? 'ok' : 'error' },
     { label: TECH_QA_STATUS_LABELS.problem, value: `${counts.errorUniqueElementCount}개`, detail: errorDetail, status: counts.errorUniqueElementCount > 0 ? 'error' : 'ok' },
     { label: TECH_QA_STATUS_LABELS.review, value: `${counts.warningUniqueElementCount}개`, detail: warningDetail, status: counts.warningUniqueElementCount > 0 ? 'warn' : 'ok' },
-    { label: TECH_QA_STATUS_LABELS.normal, value: `링크 ${linkSummary.total}개 · 이미지 ${imageTotal}개`, detail: `정상 검사 ${counts.normalCheckCount}개 항목`, status: 'info' },
+    { label: TECH_QA_STATUS_LABELS.normal, value: `고유 URL ${linkSummary.total}개 · 이미지 ${imageTotal}개`, detail: `정상 검사 ${counts.normalCheckCount}개 항목`, status: 'info' },
   ]
 }
 
@@ -533,7 +533,7 @@ function getObjectiveCheckValue(check = {}, context = {}, problemItems = []) {
     if (normalizeStatus(check.status) === 'warn') return check.value || '검토 필요'
     return '큰 리소스 없음'
   }
-  if (check.id === 'links') return `총 ${getLinkTotal(check, linkSummary)}개 · 요청 문제 ${Number(linkSummary.error || 0)}개`
+  if (check.id === 'links') return `고유 URL ${getLinkTotal(check, linkSummary)}개 · HTTP 요청 문제 ${Number(linkSummary.error || 0)}개`
   if (check.id === 'missing-href') return `총 ${getButtonTotal(result, check)}개 · URL 검토 필요 ${problemCount}개`
   if (check.id === 'mobile') return formatMobileCheckValue(check, result)
   if (check.id === 'headings') return check.value ? `${check.value} · 검토 필요 ${problemCount}개` : `검토 필요 ${problemCount}개`

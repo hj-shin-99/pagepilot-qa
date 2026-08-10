@@ -263,7 +263,7 @@ function createCompletionMeta(result = {}, view = {}) {
   const totalDurationText = formatTechQaDuration(result.totalDurationMs)
 
   if (engine) meta.push({ label: '검사 엔진', value: engine })
-  if (linkCount !== null) meta.push({ label: '링크 검사', value: `${linkCount}개` })
+  if (linkCount !== null) meta.push({ label: '고유 URL 검사', value: `${linkCount}개` })
   if (imageCount !== null) meta.push({ label: '이미지 검사', value: `${imageCount}개` })
   if (durationText) meta.push({ label: '처리시간', value: durationText })
   if (totalDurationText) meta.push({ label: '총 검사 시간', value: totalDurationText })

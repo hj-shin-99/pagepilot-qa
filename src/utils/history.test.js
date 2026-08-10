@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createCompactHistoryItemForStorage, createHistoryCardSummary, createHistoryDetailMeta, createHistoryItemId, getHistoryDisplayStatus, getHistoryTechResult, getHistoryVisualResult, MAX_HISTORY_ITEMS, sortHistoryItems } from './history.js'
+import { createCompactHistoryItemForStorage, createCompactTechResult, createHistoryCardSummary, createHistoryDetailMeta, createHistoryItemId, getHistoryDisplayStatus, getHistoryTechResult, getHistoryVisualResult, MAX_HISTORY_ITEMS, sortHistoryItems } from './history.js'
 import { clearHistoryItems, countHistoryItems, deleteHistoryItem, loadHistoryItems, migrateLegacyHistory, resetHistoryStorageForTests, saveHistoryItem } from './historyStorage.js'
 import { createTechQaViewModel } from './techQa.js'
 
@@ -79,6 +79,128 @@ function createCombinedItem(id, index) {
     visual: { status: 'success', summary: 'Visual ok', compactResult: { meta: { webUrl: `https://${id}.example`, totalDurationMs: 42000 + index }, comparison: { differenceCount: 2, differences: [{ area: 'Main Visual', category: 'Text', figmaText: 'A', webText: 'B' }] } }, error: '' },
     tech: { status: 'success', summary: 'Tech ok', compactResult: techResult, scanOptions: techResult.scanOptions, devices: ['desktop', 'tablet', 'mobile'], error: '' },
     aiReview: { meta: { openAiCalled: true, model: 'gpt-5.6-terra', fallbackUsed: false, aiReviewDurationMs: 3200, totalDurationMs: 42000 + index }, review: { releaseDecision: 'caution', summary: '확인 필요', mustFix: [], verify: [], developerNotes: [], visualDifferences: [], clientReplyDraft: '' } },
+  }
+}
+
+const FULL_TECH_SCAN_OPTIONS = { url: true, click: true, landing: true, form: true, hover: true, modal: true, scroll: true, responsive: true, download: true, cookie: true, image: true, performance: true, seo: true, markup: true }
+
+function createFullTechResult(id = 'full-tech', deviceId = 'desktop') {
+  const targetUrl = `https://${id}.example`
+  const landingPages = [{ auditId: `${deviceId}-landing`, label: 'Landing CTA', requestedUrl: `${targetUrl}/landing`, finalUrl: `${targetUrl}/landing`, statusCode: 200, status: 'ok', note: 'landing ok', sources: [{ label: '프로모션 바로가기', section: 'header', selector: '#landing', domPath: 'header>a.promo', href: '/landing', interactionOutcome: 'navigation', requestedUrl: `${targetUrl}/landing` }] }]
+  const formInteractions = [{ auditId: `${deviceId}-form`, label: 'Email form', selector: '#email', status: 'warn', category: 'validation', note: 'label 확인 필요', issues: { legacy: 'object issue should not crash' } }]
+  const hoverInteractions = [{ auditId: `${deviceId}-hover`, label: 'Menu', selector: '#menu', status: 'ok', category: 'dropdown', note: 'hover ok', issues: ['menu visible'] }]
+  const modalInteractions = [{ auditId: `${deviceId}-modal`, label: 'Open modal', selector: '#modal', status: 'ok', category: 'modal', note: 'modal ok' }]
+  const scrollInteractions = [{ auditId: `${deviceId}-scroll`, label: 'Page scroll', status: 'ok', category: 'scroll', note: 'bottom reached' }]
+  const responsiveLayouts = [{ auditId: `${deviceId}-responsive`, label: 'Mobile', type: '390x844', status: 'warn', category: 'needs-review', note: 'visible CTA clipped', overflowAmount: 0, clippedCount: 1 }]
+  const downloadResources = [{ auditId: `${deviceId}-download`, label: 'PDF', url: `${targetUrl}/file.pdf`, status: 'ok', category: 'download-ok', statusCode: 200, contentType: 'application/pdf' }]
+  const cookieItems = [{ auditId: `${deviceId}-cookie`, label: 'session', name: 'session', status: 'warn', category: 'secure', note: 'Secure 확인 필요' }]
+  const imageItems = [{ auditId: `${deviceId}-image`, label: 'Hero image', currentSrc: `${targetUrl}/hero.webp`, status: 'ok', category: 'image-ok', contentType: 'image/webp' }]
+  const performanceItems = [{ auditId: `${deviceId}-performance`, label: '전체 리소스', category: 'overview', type: 'performance', status: 'ok', note: '리소스 2개 · 이번 navigation 총 전송 10.0 KB', issues: ['script 전송 10.0 KB'] }]
+  const seoItems = [{ auditId: `${deviceId}-seo`, label: '소셜 메타', category: 'social-meta', type: 'seo', status: 'info', note: 'OG/Twitter 소셜 메타가 명시되지 않았습니다.', issues: ['OG/Twitter 소셜 메타가 명시되지 않았습니다.'] }]
+  const metaIssues = [{ auditId: `${deviceId}-meta-description`, label: 'meta description', name: 'description', section: 'head', type: 'meta', status: 'warn', category: 'missing-meta', reason: 'meta description 값이 확인되지 않았습니다.' }]
+  const imageAltIssues = [
+    { auditId: `${deviceId}-image-alt-1`, label: 'Hero visual', selector: '#hero-img', domPath: 'main>img.hero', section: 'main visual', type: 'image', status: 'warn', category: 'missing-alt', reason: '의미 있는 이미지의 alt 값이 비어 있습니다.' },
+    { auditId: `${deviceId}-image-alt-duplicate`, label: 'Hero visual duplicate', selector: '#hero-img', domPath: 'main>img.hero', section: 'main visual', type: 'image', status: 'warn', category: 'missing-alt', reason: '동일 이미지 alt 근거가 중복 수집되었습니다.' },
+  ]
+  const externalLinkIssues = [
+    { auditId: `${deviceId}-external-1`, label: 'Partner link', href: 'https://partner.example', rel: 'noopener', section: 'footer', type: 'external-link', status: 'warn', category: 'blank-rel', reason: 'target="_blank" 링크에 noreferrer 포함 여부 확인이 필요합니다.' },
+    { auditId: `${deviceId}-external-2`, label: 'Partner link copy', href: 'https://partner.example', rel: 'noopener', section: 'footer', type: 'external-link', status: 'warn', category: 'blank-rel', reason: '동일 외부 링크 rel 근거가 중복 수집되었습니다.' },
+  ]
+  return {
+    targetUrl,
+    scannedAt: '2026-03-01T00:00:00.000Z',
+    durationMs: 1234,
+    totalDurationMs: 4321,
+    pageTitle: `${id} title`,
+    httpStatus: 200,
+    accessible: true,
+    checks: [
+      { id: 'access', status: 'ok', value: '접속 가능 · HTTP 200' },
+      { id: 'http-status', status: 'ok', value: '200' },
+      { id: 'title', status: 'ok', value: `${id} title` },
+      { id: 'console-errors', status: 'ok', items: [] },
+      { id: 'images', status: 'ok', items: [] },
+      { id: 'resource-size', status: 'ok', items: [] },
+      { id: 'links', status: 'ok', value: '1개' },
+      { id: 'missing-href', status: 'ok', items: [] },
+      { id: 'mobile', status: 'ok', value: '200' },
+      { id: 'headings', status: 'ok', value: 'h1 1개' },
+      { id: 'duplicate-ids', status: 'ok', items: [] },
+      { id: 'network-failures', status: 'ok', items: [] },
+      { id: 'forms', status: 'ok', value: '폼 요소 1개 / required 0개' },
+      { id: 'meta', status: 'warn', value: '총 3개', totalCount: 3, items: metaIssues },
+      { id: 'image-alt', status: 'warn', value: '총 2개', totalCount: 2, items: imageAltIssues },
+      { id: 'external-links', status: 'warn', value: '총 2개', totalCount: 2, items: externalLinkIssues },
+      { id: 'click-actions', status: 'ok', items: [{ auditId: `${deviceId}-click`, label: 'Open page', selector: '#open', domPath: 'main>a', href: '/open', url: `${targetUrl}/open`, role: 'link', status: 'ok', actionClassification: 'verified-working', interactionOutcome: 'navigation', reason: '정상 이동 URL이 확인되었습니다.' }], meta: { candidateCount: 1, verifiedWorkingCount: 1 } },
+      { id: 'landing-pages', status: 'ok', items: landingPages, meta: { candidateCount: 1, inspectedCount: 1, noTarget: false } },
+      { id: 'form-interaction', status: 'warn', items: formInteractions, meta: { candidateCount: 1, inspectedCount: 1, warningCount: 1, noTarget: false } },
+      { id: 'hover-interaction', status: 'ok', items: hoverInteractions, meta: { candidateCount: 1, inspectedCount: 1, noTarget: false } },
+      { id: 'modal-interaction', status: 'ok', items: modalInteractions, meta: { candidateCount: 1, inspectedCount: 1, noTarget: false } },
+      { id: 'scroll-interaction', status: 'ok', items: scrollInteractions, meta: { candidateCount: 1, inspectedCount: 1, noTarget: false } },
+      { id: 'responsive-layout', status: 'warn', items: responsiveLayouts, meta: { candidateCount: 1, inspectedCount: 1, warningCount: 1, noTarget: false } },
+      { id: 'download-resource', status: 'ok', items: downloadResources, meta: { candidateCount: 1, inspectedCount: 1, noTarget: false } },
+      { id: 'cookie-security', status: 'warn', items: cookieItems, meta: { candidateCount: 1, inspectedCount: 1, warningCount: 1, noTarget: false } },
+      { id: 'image-rendering', status: 'ok', items: imageItems, meta: { candidateCount: 1, inspectedCount: 1, noTarget: false } },
+      { id: 'performance-resource', status: 'ok', items: performanceItems, meta: { candidateCount: 2, inspectedCount: 1, noTarget: false } },
+      { id: 'seo-readiness', status: 'ok', items: seoItems, meta: { candidateCount: 1, inspectedCount: 1, skippedCount: 1, noTarget: false } },
+    ],
+    links: [{ url: `${targetUrl}/open`, status: 'ok', statusCode: 200, label: 'Open page' }],
+    images: [{ src: `${targetUrl}/hero.webp`, status: 'ok' }, { src: `${targetUrl}/hero-mobile.webp`, status: 'ok' }],
+    consoleMessages: [],
+    counts: { anchors: 1, buttons: 1 },
+    mobile: { viewport: { width: 390, height: 844 }, statusCode: 200, note: 'ok' },
+    linkAudit: { discoveredLinkCount: 2, uniqueRequestUrlCount: 1, actualHttpRequestCount: 1, dedupedLinkCount: 1 },
+    clickActions: [{ auditId: `${deviceId}-click`, label: 'Open page', selector: '#open', domPath: 'main>a', href: '/open', url: `${targetUrl}/open`, role: 'link', status: 'ok', actionClassification: 'verified-working', interactionOutcome: 'navigation', reason: '정상 이동 URL이 확인되었습니다.' }],
+    clickActionAudit: { candidateCount: 1, verifiedWorkingCount: 1 },
+    landingPages,
+    landingAudit: { candidateCount: 1, inspectedCount: 1, noTarget: false },
+    formInteractions,
+    formAudit: { candidateCount: 1, inspectedCount: 1, warningCount: 1, noTarget: false },
+    hoverInteractions,
+    hoverAudit: { candidateCount: 1, inspectedCount: 1, noTarget: false },
+    modalInteractions,
+    modalAudit: { candidateCount: 1, inspectedCount: 1, noTarget: false },
+    scrollInteractions,
+    scrollAudit: { candidateCount: 1, inspectedCount: 1, noTarget: false },
+    responsiveLayouts,
+    responsiveAudit: { candidateCount: 1, inspectedCount: 1, warningCount: 1, noTarget: false },
+    downloadResources,
+    downloadAudit: { candidateCount: 1, inspectedCount: 1, noTarget: false },
+    cookieItems,
+    cookieAudit: { candidateCount: 1, inspectedCount: 1, warningCount: 1, noTarget: false },
+    imageItems,
+    imageAudit: { candidateCount: 1, inspectedCount: 1, noTarget: false },
+    performanceItems,
+    performanceAudit: { candidateCount: 2, inspectedCount: 1, noTarget: false },
+    seoItems,
+    seoAudit: { candidateCount: 1, inspectedCount: 1, skippedCount: 1, noTarget: false },
+    scanOptions: FULL_TECH_SCAN_OPTIONS,
+    devices: [deviceId],
+    deviceId,
+  }
+}
+
+function createRuntimeLikeTechHistoryItem(result) {
+  const techView = createTechQaViewModel(result)
+  const techCounts = techView.issueCounts
+  const totalIssueCount = techCounts.errorElementCount + techCounts.warningElementCount
+  return {
+    type: 'tech',
+    id: 'runtime-like-tech-history',
+    url: result.targetUrl,
+    scannedAt: result.scannedAt,
+    totalDurationMs: result.totalDurationMs,
+    summary: 'runtime-like Tech QA result',
+    devices: result.devices,
+    totalIssueCount,
+    counts: {
+      total: totalIssueCount,
+      high: techCounts.errorElementCount,
+      techError: techCounts.errorElementCount,
+      techWarn: techCounts.warningElementCount,
+    },
+    topIssueSummaries: ['runtime-like Tech QA'],
+    result: createCompactTechResult(result),
   }
 }
 
@@ -229,6 +351,141 @@ test('combined history restore supports legacy tech.result and keeps multi-devic
   assert.equal(Boolean(stored.tech.compactResult), true)
   assert.equal(techResult.deviceResults.length, 3)
   assert.deepEqual(techResult.devices, ['desktop', 'tablet', 'mobile'])
+})
+
+test('full Tech QA synthetic result round-trips canonical phase collections without API replay', () => {
+  const desktop = createFullTechResult('full-desktop', 'desktop')
+  const tablet = createFullTechResult('full-tablet', 'tablet')
+  const mobile = createFullTechResult('full-mobile', 'mobile')
+  const fullResult = {
+    ...desktop,
+    targetUrl: 'https://full-tech.example',
+    devices: ['desktop', 'tablet', 'mobile'],
+    deviceResults: [
+      { deviceId: 'desktop', status: 'success', result: desktop },
+      { deviceId: 'tablet', status: 'success', result: tablet },
+      { deviceId: 'mobile', status: 'success', result: mobile },
+    ],
+  }
+
+  const compact = createCompactHistoryItemForStorage({ type: 'tech', id: 'full-tech-roundtrip', url: fullResult.targetUrl, scannedAt: fullResult.scannedAt, devices: fullResult.devices, result: fullResult })
+  const restored = getHistoryTechResult(JSON.parse(JSON.stringify(compact)))
+  const view = createTechQaViewModel(restored.deviceResults[0].result)
+
+  assert.equal(restored.targetUrl, 'https://full-tech.example')
+  assert.deepEqual(restored.devices, ['desktop', 'tablet', 'mobile'])
+  assert.deepEqual(restored.deviceResults.map((entry) => entry.deviceId), ['desktop', 'tablet', 'mobile'])
+  assert.equal(view.linkSummary.total, 1)
+  assert.equal(view.clickActionGroups.total, 1)
+  assert.equal(view.landingPageGroups.total, 1)
+  assert.equal(view.landingPageGroups.hasTargets, true)
+  assert.equal(view.formInteractionGroups.total, 1)
+  assert.equal(view.formInteractionGroups.hasTargets, true)
+  assert.equal(view.hoverInteractionGroups.total, 1)
+  assert.equal(view.modalInteractionGroups.total, 1)
+  assert.equal(view.scrollInteractionGroups.total, 1)
+  assert.equal(view.responsiveLayoutGroups.total, 1)
+  assert.equal(view.downloadResourceGroups.total, 1)
+  assert.equal(view.cookieGroups.total, 1)
+  assert.equal(view.imageGroups.total, 1)
+  assert.equal(view.performanceGroups.total, 1)
+  assert.equal(view.seoGroups.total, 1)
+  assert.equal(view.checkItems.some((item) => item.id === 'forms'), true)
+  assert.equal(view.formInteractionGroups.items[0].issues?.legacy, 'object issue should not crash')
+})
+
+test('runtime-like frontend History save path preserves Landing and Form after App precompact and storage load', async () => {
+  await resetStorage()
+  const desktop = createFullTechResult('runtime-desktop', 'desktop')
+  const tablet = createFullTechResult('runtime-tablet', 'tablet')
+  const mobile = createFullTechResult('runtime-mobile', 'mobile')
+  const runtimeResult = {
+    ...desktop,
+    targetUrl: 'https://runtime-tech.example',
+    devices: ['desktop', 'tablet', 'mobile'],
+    deviceResults: [
+      { deviceId: 'desktop', status: 'success', result: desktop },
+      { deviceId: 'tablet', status: 'success', result: tablet },
+      { deviceId: 'mobile', status: 'success', result: mobile },
+    ],
+  }
+  const expectedView = createTechQaViewModel(desktop)
+
+  await saveHistoryItem(createRuntimeLikeTechHistoryItem(runtimeResult))
+  const [storedItem] = await loadHistoryItems()
+  const serializedItem = JSON.parse(JSON.stringify(storedItem))
+  const restored = getHistoryTechResult(serializedItem)
+  const desktopResult = restored.deviceResults.find((entry) => entry.deviceId === 'desktop')?.result
+  const view = createTechQaViewModel(desktopResult)
+  const headingCheck = view.basicCheckItems.find((item) => item.id === 'headings')
+  const formCheck = view.basicCheckItems.find((item) => item.id === 'forms')
+  const metaCheck = view.checkItems.find((item) => item.id === 'meta')
+  const imageAltCheck = view.checkItems.find((item) => item.id === 'image-alt')
+  const externalLinksCheck = view.checkItems.find((item) => item.id === 'external-links')
+  const landingSource = view.landingPageGroups.items[0]?.sources?.[0]
+
+  assert.equal(storedItem.result.landingPages.length, 1)
+  assert.equal(storedItem.result.formInteractions.length, 1)
+  assert.equal(serializedItem.result.deviceResults[0].result.landingPages.length, 1)
+  assert.equal(serializedItem.result.deviceResults[0].result.formInteractions.length, 1)
+  assert.equal(restored.targetUrl, 'https://runtime-tech.example')
+  assert.deepEqual(restored.deviceResults.map((entry) => entry.deviceId), ['desktop', 'tablet', 'mobile'])
+  assert.equal(view.landingPageGroups.total, 1)
+  assert.equal(view.landingPageGroups.hasTargets, true)
+  assert.equal(view.formInteractionGroups.total, 1)
+  assert.equal(view.formInteractionGroups.hasTargets, true)
+  assert.equal(view.linkSummary.total, 1)
+  assert.equal(view.clickActionGroups.total, 1)
+  assert.equal(view.scrollInteractionGroups.total, 1)
+  assert.equal(view.responsiveLayoutGroups.total, 1)
+  assert.equal(view.downloadResourceGroups.total, 1)
+  assert.equal(view.cookieGroups.total, 1)
+  assert.equal(view.imageGroups.total, 1)
+  assert.equal(view.performanceGroups.total, 1)
+  assert.equal(view.seoGroups.total, 1)
+  assert.equal(headingCheck.value, 'h1 1개 · 검토 필요 0개')
+  assert.equal(formCheck.value, '폼 요소 1개 / required 0개 · 검토 필요 0개')
+  assert.deepEqual(pickIssueCounts(view.issueCounts), pickIssueCounts(expectedView.issueCounts))
+  assert.deepEqual(landingSource, { label: '프로모션 바로가기', section: 'header', selector: '#landing', domPath: 'header>a.promo', href: '/landing', interactionOutcome: 'navigation', requestedUrl: 'https://runtime-desktop.example/landing' })
+  assert.equal(metaCheck.value, '총 3개 항목 검토 필요')
+  assert.deepEqual(metaCheck.problemItems[0], { auditId: 'desktop-meta-description', label: 'meta description', name: 'description', section: 'head', type: 'meta', status: 'warn', category: 'missing-meta', reason: 'meta description 값이 확인되지 않았습니다.' })
+  assert.equal(imageAltCheck.value, '총 2개 · alt 검토 필요 2개')
+  assert.equal(imageAltCheck.problemItems[0].label, 'Hero visual')
+  assert.equal(imageAltCheck.problemItems[0].section, 'main visual')
+  assert.equal(imageAltCheck.problemItems[0].reason, '의미 있는 이미지의 alt 값이 비어 있습니다.')
+  assert.equal(imageAltCheck.problemItems[0].type, 'image')
+  assert.equal(externalLinksCheck.value, '총 2개 · rel 검토 필요 2개')
+  assert.equal(externalLinksCheck.problemItems[0].label, 'Partner link')
+  assert.equal(externalLinksCheck.problemItems[0].href, 'https://partner.example')
+  assert.equal(externalLinksCheck.problemItems[0].section, 'footer')
+  assert.equal(externalLinksCheck.problemItems[0].reason, 'target="_blank" 링크에 noreferrer 포함 여부 확인이 필요합니다.')
+})
+
+function pickIssueCounts(counts = {}) {
+  return {
+    errorCheckCount: counts.errorCheckCount,
+    errorEvidenceCount: counts.errorEvidenceCount,
+    errorUniqueElementCount: counts.errorUniqueElementCount,
+    warningCheckCount: counts.warningCheckCount,
+    warningEvidenceCount: counts.warningEvidenceCount,
+    warningUniqueElementCount: counts.warningUniqueElementCount,
+    duplicateEvidenceMergedCount: counts.duplicateEvidenceMergedCount,
+  }
+}
+
+test('Tech QA history restore keeps legacy landing and form check item fallback when top-level collections are missing', () => {
+  const legacyResult = createFullTechResult('legacy-fallback', 'desktop')
+  delete legacyResult.landingPages
+  delete legacyResult.formInteractions
+
+  const compact = createCompactHistoryItemForStorage({ type: 'tech', id: 'legacy-fallback', url: legacyResult.targetUrl, scannedAt: legacyResult.scannedAt, result: legacyResult })
+  const restored = getHistoryTechResult(JSON.parse(JSON.stringify(compact)))
+  const view = createTechQaViewModel(restored)
+
+  assert.equal(view.landingPageGroups.total, 1)
+  assert.equal(view.landingPageGroups.hasTargets, true)
+  assert.equal(view.formInteractionGroups.total, 1)
+  assert.equal(view.formInteractionGroups.hasTargets, true)
 })
 
 test('tech-only history restore keeps existing Tech result behavior', () => {

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import { applySafeClickResult, classifyClickableCandidate, summarizeClickActionAudit } from './techClickAudit.js'
+import { applySafeClickResult, classifyClickableCandidate, mergeClickActionObservations, summarizeClickActionAudit } from './techClickAudit.js'
 
 test('A normal anchor is valid-url and ok', () => {
   const item = classifyClickableCandidate(candidate({ tagName: 'a', href: '/product', url: 'https://example.com/product', label: 'Product' }))
@@ -338,6 +338,34 @@ test('one anchor with text descendants stays one verified action in classificati
   assert.equal(summary.meta.verifiedWorkingCount, 1)
   assert.equal(summary.meta.actualErrorCount, 0)
   assert.equal(summary.meta.actionableWarningCount, 0)
+})
+
+test('click action observations merge only when generic target identity matches', () => {
+  const sameTargetWarning = classifyClickableCandidate(candidate({ auditId: 'warn-1', selector: '#promo', domPath: 'main>a:nth-child(1)', label: 'Promotion', href: 'javascript:void(0)', hasOnClick: true, section: 'hero' }))
+  const sameTargetOk = applySafeClickResult(classifyClickableCandidate(candidate({ auditId: 'ok-1', selector: '#promo', domPath: 'main>a:nth-child(1)', label: 'Promotion', href: 'javascript:void(0)', hasOnClick: true, section: 'hero' })), { clicked: true, changed: true, interactionOutcome: 'navigation', interactionEvidence: ['현재 창 URL 변경'] })
+  const distinctSameLabel = classifyClickableCandidate(candidate({ auditId: 'warn-2', selector: '#footer-promo', domPath: 'footer>a:nth-child(1)', label: 'Promotion', href: 'javascript:void(0)', hasOnClick: true, section: 'footer' }))
+
+  const merged = mergeClickActionObservations([sameTargetWarning, sameTargetOk, distinctSameLabel])
+
+  assert.equal(merged.length, 2)
+  assert.equal(merged[0].selector, '#promo')
+  assert.equal(merged[0].actionClassification, 'actionable-warning')
+  assert.equal(merged[0].observationCount, 2)
+  assert.deepEqual(merged[0].mergedInteractionOutcomes.sort(), ['navigation', 'unknown'])
+  assert.equal(merged[1].selector, '#footer-promo')
+})
+
+test('click action summary counts merged target observations once and keeps distinct same-label elements', () => {
+  const items = [
+    classifyClickableCandidate(candidate({ auditId: 'blocked', selector: '#cta', label: 'Open', pointerEvents: 'none' })),
+    applySafeClickResult(classifyClickableCandidate(candidate({ auditId: 'safe', selector: '#cta', label: 'Open', hasOnClick: true })), { clicked: false, changed: false, error: 'Timeout 2500ms exceeded' }),
+    classifyClickableCandidate(candidate({ auditId: 'other', selector: '#other-cta', label: 'Open', href: '/open', url: 'https://example.com/open' })),
+  ]
+  const summary = summarizeClickActionAudit(items)
+
+  assert.equal(summary.meta.candidateCount, 2)
+  assert.equal(summary.meta.actualErrorCount, 1)
+  assert.equal(summary.meta.verifiedWorkingCount, 1)
 })
 
 function candidate(overrides = {}) {

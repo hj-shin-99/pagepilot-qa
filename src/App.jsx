@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import './App.css'
 import { createResultSummary } from './utils/report'
-import { createHistoryItemId, getHistoryTechResult, getHistoryVisualResult } from './utils/history'
+import { createCompactTechResult, createHistoryItemId, getHistoryTechResult, getHistoryVisualResult } from './utils/history'
 import { clearHistoryItems, deleteHistoryItem, loadHistoryItems, saveHistoryItem } from './utils/historyStorage'
 import { buildAiReviewPayloadFromSession, sanitizeAiReviewResponse } from './utils/aiReview'
 import { confirmWebUrlInput, createDebouncedWebUrlConfirmScheduler, createPublicWebUrlState, createWebUrlInputState, isValidHttpUrl } from './utils/scanSession'
@@ -714,73 +714,6 @@ function createTechTopIssueSummaries(result) {
     .slice(0, 3)
 
   return summaries.length > 0 ? summaries : ['Tech QA 주요 항목 정상']
-}
-
-function createCompactTechResult(result) {
-  return {
-    targetUrl: result.targetUrl,
-    scannedAt: result.scannedAt,
-    durationMs: result.durationMs,
-    totalDurationMs: result.totalDurationMs,
-    pageTitle: result.pageTitle,
-    httpStatus: result.httpStatus,
-    accessible: result.accessible,
-    navigationError: result.navigationError,
-    checks: result.checks || [],
-    links: Array.isArray(result.links) ? result.links : [],
-    uncheckedLinkCount: result.uncheckedLinkCount || 0,
-    missingHrefLinks: Array.isArray(result.missingHrefLinks) ? result.missingHrefLinks : [],
-    images: Array.isArray(result.images) ? result.images : [],
-    consoleMessages: Array.isArray(result.consoleMessages) ? result.consoleMessages : [],
-    consoleAudit: result.consoleAudit || {},
-    counts: result.counts || {},
-    mobile: result.mobile || { viewport: { width: 0, height: 0 }, statusCode: null, note: '' },
-    linkAudit: result.linkAudit || {},
-    scanOptions: normalizeTechScanOptions(result.scanOptions),
-    devices: normalizeDeviceIds(result.devices),
-    device: result.device || null,
-    deviceId: result.deviceId || result.device?.deviceId || '',
-    deviceLabel: result.deviceLabel || result.device?.deviceLabel || '',
-    viewport: result.viewport || result.device?.viewport || null,
-    hasTouch: result.hasTouch === true || result.device?.hasTouch === true,
-    isMobile: result.isMobile === true || result.device?.isMobile === true,
-    deviceResults: Array.isArray(result.deviceResults) ? result.deviceResults.map((entry) => ({
-      deviceId: entry.deviceId,
-      deviceLabel: entry.deviceLabel,
-      viewport: entry.viewport,
-      hasTouch: entry.hasTouch === true,
-      isMobile: entry.isMobile === true,
-      status: entry.status,
-      errorType: entry.errorType || '',
-      error: entry.error || '',
-      result: entry.result && typeof entry.result === 'object' ? createCompactTechResult({ ...entry.result, deviceResults: [] }) : null,
-    })) : [],
-    clickActions: Array.isArray(result.clickActions) ? result.clickActions : [],
-    clickActionAudit: result.clickActionAudit || {},
-    scrollInteractions: Array.isArray(result.scrollInteractions) ? result.scrollInteractions : [],
-    scrollAudit: result.scrollAudit || {},
-    responsiveLayouts: Array.isArray(result.responsiveLayouts) ? result.responsiveLayouts : [],
-    responsiveAudit: result.responsiveAudit || {},
-    downloadResources: Array.isArray(result.downloadResources) ? result.downloadResources : [],
-    downloadAudit: result.downloadAudit || {},
-    uiControlWithoutUrlCount: result.uiControlWithoutUrlCount || 0,
-    ...(Array.isArray(result.cookieItems) || result.cookieAudit ? {
-      cookieItems: Array.isArray(result.cookieItems) ? result.cookieItems : [],
-      cookieAudit: result.cookieAudit || {},
-    } : {}),
-    ...(Array.isArray(result.imageItems) || result.imageAudit ? {
-      imageItems: Array.isArray(result.imageItems) ? result.imageItems : [],
-      imageAudit: result.imageAudit || {},
-    } : {}),
-    ...(Array.isArray(result.performanceItems) || result.performanceAudit ? {
-      performanceItems: Array.isArray(result.performanceItems) ? result.performanceItems : [],
-      performanceAudit: result.performanceAudit || {},
-    } : {}),
-    ...(Array.isArray(result.seoItems) || result.seoAudit ? {
-      seoItems: Array.isArray(result.seoItems) ? result.seoItems : [],
-      seoAudit: result.seoAudit || {},
-    } : {}),
-  }
 }
 
 function resolveHistoryScanOptions(result) {

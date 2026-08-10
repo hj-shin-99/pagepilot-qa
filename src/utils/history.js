@@ -9,7 +9,45 @@ export const MAX_HISTORY_ITEMS = 5
 const MAX_HISTORY_STRING_LENGTH = 800
 const MAX_HISTORY_ARRAY_ITEMS = 40
 const MAX_HISTORY_OBJECT_DEPTH = 8
+const MAX_TECH_HISTORY_OBJECT_DEPTH = 12
 const OMIT_HISTORY_PAYLOAD_KEY_PATTERN = /^(raw|raw[A-Z].*|debug|stack|stackTrace|trace|html|body|headers|request|response|networkRequests|displayModel|viewModel|screenshot|screenshotPath|screenshotBase64|imageBase64|base64|dataUrl|cookieValue|value)$/
+const TECH_CANONICAL_ARRAY_KEYS = new Set([
+  'checks',
+  'links',
+  'missingHrefLinks',
+  'images',
+  'consoleMessages',
+  'clickActions',
+  'landingPages',
+  'formInteractions',
+  'hoverInteractions',
+  'modalInteractions',
+  'scrollInteractions',
+  'responsiveLayouts',
+  'downloadResources',
+  'cookieItems',
+  'imageItems',
+  'performanceItems',
+  'seoItems',
+  'deviceResults',
+])
+const TECH_CANONICAL_OBJECT_KEYS = new Set([
+  'consoleAudit',
+  'linkAudit',
+  'clickActionAudit',
+  'landingAudit',
+  'formAudit',
+  'hoverAudit',
+  'modalAudit',
+  'scrollAudit',
+  'responsiveAudit',
+  'downloadAudit',
+  'cookieAudit',
+  'imageAudit',
+  'performanceAudit',
+  'seoAudit',
+])
+const TECH_CANONICAL_COLLECTION_KEY_PATTERN = /(?:Actions|Pages|Interactions|Layouts|Resources|Items)$/
 const EMPTY_COUNTS = {
   total: 0,
   high: 0,
@@ -305,7 +343,7 @@ function compactHistoryResult(kind, result) {
 }
 
 export function createCompactTechResult(result = {}) {
-  return {
+  const compactResult = {
     targetUrl: result.targetUrl,
     scannedAt: result.scannedAt,
     durationMs: result.durationMs,
@@ -345,6 +383,14 @@ export function createCompactTechResult(result = {}) {
     })) : [],
     clickActions: Array.isArray(result.clickActions) ? result.clickActions : [],
     clickActionAudit: result.clickActionAudit || {},
+    landingPages: Array.isArray(result.landingPages) ? result.landingPages : [],
+    landingAudit: result.landingAudit || {},
+    formInteractions: Array.isArray(result.formInteractions) ? result.formInteractions : [],
+    formAudit: result.formAudit || {},
+    hoverInteractions: Array.isArray(result.hoverInteractions) ? result.hoverInteractions : [],
+    hoverAudit: result.hoverAudit || {},
+    modalInteractions: Array.isArray(result.modalInteractions) ? result.modalInteractions : [],
+    modalAudit: result.modalAudit || {},
     scrollInteractions: Array.isArray(result.scrollInteractions) ? result.scrollInteractions : [],
     scrollAudit: result.scrollAudit || {},
     responsiveLayouts: Array.isArray(result.responsiveLayouts) ? result.responsiveLayouts : [],
@@ -369,27 +415,58 @@ export function createCompactTechResult(result = {}) {
       seoAudit: result.seoAudit || {},
     } : {}),
   }
+  return preserveCanonicalTechFields(compactResult, result)
 }
 
-function pruneHistoryPayload(value, key = '', depth = 0) {
-  if (key !== 'rawVisionCount' && OMIT_HISTORY_PAYLOAD_KEY_PATTERN.test(key)) return undefined
+function preserveCanonicalTechFields(compactResult = {}, result = {}) {
+  Object.entries(result || {}).forEach(([key, value]) => {
+    if (key === 'deviceResults') return
+    if (Array.isArray(value) && (TECH_CANONICAL_ARRAY_KEYS.has(key) || TECH_CANONICAL_COLLECTION_KEY_PATTERN.test(key))) compactResult[key] = value
+    else if (value && typeof value === 'object' && TECH_CANONICAL_OBJECT_KEYS.has(key)) compactResult[key] = value
+  })
+  return compactResult
+}
+
+function pruneHistoryPayload(value, key = '', depth = 0, options = {}) {
+  if (shouldOmitHistoryPayloadKey(key, options)) return undefined
   if (value === null || value === undefined) return value
   if (typeof value === 'string') return compactHistoryString(value)
   if (typeof value !== 'object') return value
-  if (depth >= MAX_HISTORY_OBJECT_DEPTH) return '[truncated]'
+  if (depth >= getHistoryObjectDepthLimit(options)) return '[truncated]'
 
   if (Array.isArray(value)) {
-    return value
-      .slice(0, MAX_HISTORY_ARRAY_ITEMS)
-      .map((item) => pruneHistoryPayload(item, '', depth + 1))
+    const sourceItems = options.isTechResult && shouldPreserveTechArrayKey(key) ? value : value.slice(0, MAX_HISTORY_ARRAY_ITEMS)
+    return sourceItems
+      .map((item) => pruneHistoryPayload(item, '', depth + 1, options))
       .filter((item) => item !== undefined)
   }
 
   return Object.entries(value).reduce((nextValue, [entryKey, entryValue]) => {
-    const prunedValue = pruneHistoryPayload(entryValue, entryKey, depth + 1)
+    const prunedValue = pruneHistoryPayload(entryValue, entryKey, depth + 1, {
+      ...options,
+      isTechResult: options.isTechResult || isTechResultContainer(entryKey, entryValue),
+    })
     if (prunedValue !== undefined) nextValue[entryKey] = prunedValue
     return nextValue
   }, {})
+}
+
+function shouldOmitHistoryPayloadKey(key = '', options = {}) {
+  if (key === 'rawVisionCount') return false
+  if (options.isTechResult && key === 'value') return false
+  return OMIT_HISTORY_PAYLOAD_KEY_PATTERN.test(key)
+}
+
+function getHistoryObjectDepthLimit(options = {}) {
+  return options.isTechResult ? MAX_TECH_HISTORY_OBJECT_DEPTH : MAX_HISTORY_OBJECT_DEPTH
+}
+
+function isTechResultContainer(key = '', value = {}) {
+  return (key === 'result' || key === 'compactResult') && Boolean(value && typeof value === 'object' && value.targetUrl)
+}
+
+function shouldPreserveTechArrayKey(key = '') {
+  return TECH_CANONICAL_ARRAY_KEYS.has(key) || TECH_CANONICAL_COLLECTION_KEY_PATTERN.test(key)
 }
 
 function compactHistoryString(value) {

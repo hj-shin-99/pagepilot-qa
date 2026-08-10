@@ -217,7 +217,7 @@ test('compact Tech QA summary cards use four meaningful KPI values', () => {
   assert.deepEqual(view.summaryCards.map((card) => card.status), ['ok', 'ok', 'warn', 'info'])
   assert.equal(view.summaryCards.find((card) => card.label === '검토 필요').value, '1개')
   assert.equal(view.summaryCards.find((card) => card.label === '검토 필요').detail, '1개 검사에서 발견')
-  assert.equal(view.summaryCards.find((card) => card.label === '정상').value, '링크 2개 · 이미지 1개')
+  assert.equal(view.summaryCards.find((card) => card.label === '정상').value, '고유 URL 2개 · 이미지 1개')
   assert.equal(view.summaryCards.some((card) => `${card.value} ${card.detail || ''}`.includes('고유 요소')), false)
   assert.equal(view.summaryCards.some((card) => `${card.value} ${card.detail || ''}`.includes('근거')), false)
   assert.equal(labels.includes('콘솔'), false)
@@ -243,7 +243,7 @@ test('Tech QA panel display replaces top KPI cards with completion meta from exi
   assert.equal(display.completion.steps.includes('Tech QA 처리시간 18.2초'), false)
   assert.equal(meta['검사 엔진'], 'Playwright')
   assert.equal(meta['검사 환경'], undefined)
-  assert.equal(meta['링크 검사'], '98개')
+  assert.equal(meta['고유 URL 검사'], '98개')
   assert.equal(meta['이미지 검사'], '25개')
   assert.equal(meta['처리시간'], '18.2초')
   assert.equal(meta['총 검사 시간'], '24.3초')
@@ -329,7 +329,7 @@ test('compact Tech QA source keeps table UI and closed detail policy', () => {
   assert.equal(source.includes('PriorityTableRow'), false)
   assert.equal(source.includes('getCollapsedResultsLabel(groups.hiddenCount)'), true)
   assert.equal(source.includes('전체 검사 항목'), false)
-  assert.equal(source.includes('주요 검사 결과'), true)
+  assert.equal(source.includes('핵심 기본 검사 결과'), true)
   assert.equal(source.includes('정상 검사 {view.normalCheckItems.length}개 펼치기'), false)
   assert.equal(source.includes('tech-click-summary'), false)
   assert.equal(source.includes('tech-click-issue-table'), true)
@@ -808,7 +808,7 @@ test('basic diagnostic table keeps normal rows visible without accordion', () =>
   assert.equal(view.basicCheckItems.find((item) => item.id === 'access').value, '정상 · HTTP 200')
   assert.equal(view.basicCheckItems.find((item) => item.id === 'images').value, '총 25개 · 실패 0개')
   assert.equal(view.basicCheckItems.find((item) => item.id === 'resource-size').value, '큰 리소스 없음')
-  assert.equal(view.basicCheckItems.find((item) => item.id === 'links').value, '총 10개 · 요청 문제 0개')
+  assert.equal(view.basicCheckItems.find((item) => item.id === 'links').value, '고유 URL 10개 · HTTP 요청 문제 0개')
 })
 
 test('resource size check remains in basic results and preserves raw evidence for detail rendering', () => {
@@ -893,7 +893,7 @@ test('generic Tech QA display A keeps all basic checks normal with objective cou
   assert.equal(view.issueCounts.errorElementCount, 0)
   assert.equal(view.issueCounts.warningElementCount, 0)
   assert.equal(view.basicCheckItems.find((item) => item.id === 'images').value, '총 25개 · 실패 0개')
-  assert.equal(view.basicCheckItems.find((item) => item.id === 'links').value, '총 102개 · 요청 문제 0개')
+  assert.equal(view.basicCheckItems.find((item) => item.id === 'links').value, '고유 URL 102개 · HTTP 요청 문제 0개')
 })
 
 test('generic Tech QA display B reports failed image count and preserves image URLs', () => {

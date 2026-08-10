@@ -2099,6 +2099,7 @@ async function scanUrl(targetUrl, options = {}) {
     linkAudit: linkAuditResult.meta,
     clickActions: clickActionAuditResult.items,
     clickActionAudit: clickActionSummary.meta,
+    landingPages: safeLandingAuditResult.items,
     landingAudit: safeLandingAuditResult.meta,
     formInteractions: safeFormAuditResult.items,
     formAudit: safeFormAuditResult.meta,
@@ -2518,6 +2519,7 @@ function attachCollectors(page, consoleMessages, failedImageRequests, failedReso
         contentType: headers['content-type'] || headers['Content-Type'] || '',
         contentLength: Number(headers['content-length'] || headers['Content-Length'] || 0) || null,
         contentEncoding: headers['content-encoding'] || headers['Content-Encoding'] || '',
+        contentRange: headers['content-range'] || headers['Content-Range'] || '',
         cacheControl: headers['cache-control'] || headers['Cache-Control'] || '',
         expires: headers.expires || headers.Expires || '',
         etag: headers.etag || headers.ETag || '',
@@ -3843,7 +3845,7 @@ function buildChecks({
         title: '링크 목록 수집',
         status: links.length > 0 ? 'ok' : 'warn',
         value: `${links.length}개`,
-        detail: 'a 태그 기준 href 목록을 수집했습니다.',
+        detail: 'DOM에서 발견한 a 태그 href와 버튼/링크 후보를 URL 검사 대상으로 수집했습니다.',
       },
       {
         id: 'missing-href',
@@ -3858,12 +3860,12 @@ function buildChecks({
         title: '404/500 계열 링크 여부',
         status: badLinks.length > 0 ? 'error' : warningLinks.length > 0 ? 'warn' : 'ok',
         value: `${badLinks.length}개 오류 / ${warningLinks.length}개 확인 필요`,
-        detail: `발견 ${Number(linkAuditMeta.discoveredLinkCount || linkStatuses.length)}개 중 unique URL ${Number(linkAuditMeta.uniqueRequestUrlCount || 0)}개를 실제 요청했고 중복 ${Number(linkAuditMeta.dedupedLinkCount || 0)}개를 병합했습니다.`,
+        detail: `DOM 링크/버튼 요소 ${Number(linkAuditMeta.discoveredLinkCount || linkStatuses.length)}개 중 고유 URL ${Number(linkAuditMeta.uniqueRequestUrlCount || 0)}개를 실제 HTTP 요청했고 중복 URL ${Number(linkAuditMeta.dedupedLinkCount || 0)}개를 병합했습니다.`,
         items: badLinks.concat(warningLinks),
       },
       {
         id: 'interaction-count',
-        title: '버튼 또는 a 태그 개수',
+        title: '링크/버튼 DOM 요소 수',
         status: counts.buttons + counts.anchors > 0 ? 'ok' : 'warn',
         value: `button ${counts.buttons} / a ${counts.anchors}`,
         detail: '클릭하지 않고 DOM 요소 개수만 수집했습니다.',
@@ -4110,9 +4112,6 @@ function getMissingMetaFields(metaInfo = {}) {
     ['title', metaInfo.title],
     ['meta description', metaInfo.description],
     ['canonical URL', metaInfo.canonical],
-    ['og:title', metaInfo.ogTitle],
-    ['og:description', metaInfo.ogDescription],
-    ['og:image', metaInfo.ogImage],
   ].filter(([, value]) => !value).map(([label]) => label)
 }
 

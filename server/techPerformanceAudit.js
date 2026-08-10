@@ -54,9 +54,9 @@ export function collectPerformanceEvidence(targetUrl, snapshot = {}, resourceRes
     const encodedBytes = Number(resource.encodedBytes || 0)
     accumulator.totalTransferBytes += transferBytes > 0 ? transferBytes : 0
     accumulator.totalEncodedBytes += encodedBytes > 0 ? encodedBytes : 0
-    accumulator.byType[resource.resourceType] = (accumulator.byType[resource.resourceType] || 0) + transferBytes
+    accumulator.transferByType[resource.resourceType] = (accumulator.transferByType[resource.resourceType] || 0) + transferBytes
     return accumulator
-  }, { totalTransferBytes: 0, totalEncodedBytes: 0, byType: {} })
+  }, { totalTransferBytes: 0, totalEncodedBytes: 0, transferByType: {} })
 
   return {
     origin,
@@ -88,11 +88,11 @@ export function createPerformanceAuditMeta(items = [], context = {}) {
 function createOverallResourceItem(evidence = {}) {
   const resourceCount = evidence.resources.length
   const transferBytes = Number(evidence.totals?.totalTransferBytes || 0)
-  const lines = Object.entries(evidence.totals?.byType || {})
+  const lines = Object.entries(evidence.totals?.transferByType || {})
     .filter(([, bytes]) => Number(bytes || 0) > 0)
     .sort((first, second) => Number(second[1]) - Number(first[1]))
     .slice(0, MAX_RESOURCE_EVIDENCE)
-    .map(([type, bytes]) => `${type} ${formatBytes(bytes)}`)
+    .map(([type, bytes]) => `${type} 전송 ${formatBytes(bytes)}`)
   return {
     auditId: 'performance-overview',
     label: '전체 리소스',
@@ -100,7 +100,7 @@ function createOverallResourceItem(evidence = {}) {
     category: 'overview',
     type: 'performance',
     status: transferBytes > LARGE_TOTAL_TRANSFER_BYTES ? 'warn' : 'ok',
-    note: resourceCount > 0 ? `리소스 ${resourceCount}개 · 총 전송 ${formatBytes(transferBytes)}` : '리소스 전송량을 계산할 수 없었습니다.',
+    note: resourceCount > 0 ? `리소스 ${resourceCount}개 · 이번 navigation 총 전송 ${formatBytes(transferBytes)}` : '리소스 전송량을 계산할 수 없었습니다.',
     issues: lines.concat(PERFORMANCE_MEASUREMENT_NOTE),
     owner: 'UID팀',
     sourceCount: resourceCount,
@@ -121,7 +121,7 @@ function createLargeResourceItem(evidence = {}) {
     type: 'performance',
     status: largeResources.length > 0 ? 'warn' : 'ok',
     note: largeResources.length > 0 ? `기준을 넘는 리소스 ${largeResources.length}개가 있습니다.` : '명확히 큰 리소스는 감지되지 않았습니다.',
-    issues: largeResources.slice(0, MAX_RESOURCE_EVIDENCE).map((resource) => `${resource.resourceType} · ${formatBytes(resource.encodedBytes || resource.transferBytes)} · ${resource.url}`),
+    issues: largeResources.slice(0, MAX_RESOURCE_EVIDENCE).map((resource) => `${resource.resourceType} · ${formatResourceSizeEvidence(resource)} · ${resource.url}`),
     owner: 'UID팀',
     sourceCount: largeResources.length,
     technicalTerm: 'large-resource',
@@ -304,6 +304,8 @@ function normalizePerformanceResourceEntry(entry = {}, responseIndex = new Map()
     expires: String(response.expires || '').trim(),
     etag: String(response.etag || '').trim(),
     lastModified: String(response.lastModified || '').trim(),
+    contentLength: getPositiveNumber(response.contentLength),
+    contentRange: String(response.contentRange || '').trim(),
   }
 }
 
@@ -358,8 +360,22 @@ function inferResourceTypeFromUrl(value = '') {
     if (['woff', 'woff2', 'ttf', 'otf', 'eot'].includes(extension)) return 'font'
     if (['mp4', 'webm', 'mov', 'm4v', 'mp3', 'wav', 'ogg'].includes(extension)) return 'media'
     if (['html', 'htm'].includes(extension)) return 'document'
-  } catch {}
+  } catch {
+    // URL parsing can fail for non-standard resource names; fall back to content-type inference.
+  }
   return ''
+}
+
+function formatResourceSizeEvidence(resource = {}) {
+  const encodedBytes = Number(resource.encodedBytes || 0)
+  const transferBytes = Number(resource.transferBytes || 0)
+  const contentLength = Number(resource.contentLength || 0)
+  const contentBytes = encodedBytes || contentLength
+  const parts = []
+  if (contentBytes > 0) parts.push(`content ${formatBytes(contentBytes)}`)
+  if (transferBytes > 0) parts.push(`전송 ${formatBytes(transferBytes)}`)
+  if (resource.statusCode === 206 || resource.contentRange) parts.push('range/partial response')
+  return parts.length > 0 ? parts.join(' · ') : '크기 metadata 없음'
 }
 
 function normalizeResourceTypeFromContentType(value = '') {
@@ -454,4 +470,5 @@ export const PERFORMANCE_AUDIT_TEST_ONLY = {
   looksFingerprintedAsset,
   normalizePerformanceResourceEntry,
   normalizeResourceType,
+  formatResourceSizeEvidence,
 }

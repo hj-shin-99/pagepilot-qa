@@ -190,6 +190,34 @@ test('performance audit phase 3-b fixtures cover status boundaries and missing h
   assert.equal(previousFalsePositive.items.find((item) => item.category === 'overview').issues.some((issue) => issue.includes('검사 환경')), true)
 })
 
+test('performance audit separates transfer totals from content size for cached and range media', () => {
+  const result = auditPerformanceResources('https://example.com', snapshot({
+    performanceInfo: {
+      resources: [
+        resource({ url: 'https://example.com/app.js', resourceType: 'script', transferSize: 0, encodedBodySize: 320000, duration: 20 }),
+        resource({ url: 'https://example.com/image.webp', resourceType: 'image', transferSize: 120000, encodedBodySize: 120000 }),
+        resource({ url: 'https://example.com/font.woff2', resourceType: 'font', transferSize: 30000, encodedBodySize: 180000 }),
+        resource({ url: 'https://example.com/video.mp4', resourceType: 'media', transferSize: 31800, encodedBodySize: 8750000 }),
+      ],
+      renderBlockingCandidates: [],
+    },
+  }), responses([
+    { url: 'https://example.com/app.js', resourceType: 'script', contentType: 'application/javascript', statusCode: 304, contentEncoding: 'br' },
+    { url: 'https://example.com/video.mp4', resourceType: 'media', contentType: 'video/mp4', statusCode: 206, contentLength: 31800, contentRange: 'bytes 0-31799/8750000' },
+  ]))
+
+  const overview = result.items.find((item) => item.category === 'overview')
+  const large = result.items.find((item) => item.category === 'large-resource')
+
+  assert.equal(overview.note.includes('이번 navigation 총 전송'), true)
+  assert.equal(overview.issues.some((issue) => issue.includes('media 전송 31.1 KB')), true)
+  assert.equal(large.issues.some((issue) => issue.includes('content 8.34 MB') && issue.includes('전송 31.1 KB') && issue.includes('range/partial response')), true)
+})
+
+test('performance size evidence handles missing size metadata without forcing zero-byte totals', () => {
+  assert.equal(PERFORMANCE_AUDIT_TEST_ONLY.formatResourceSizeEvidence({ resourceType: 'script', url: 'https://example.com/app.js' }), '크기 metadata 없음')
+})
+
 function snapshot(overrides = {}) {
   return {
     performanceInfo: { resources: [], renderBlockingCandidates: [] },
@@ -218,6 +246,7 @@ function responses(items = []) {
     contentType: '',
     contentLength: null,
     contentEncoding: '',
+    contentRange: '',
     cacheControl: '',
     expires: '',
     etag: '',

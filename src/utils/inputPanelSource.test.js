@@ -987,6 +987,8 @@ test('history panel supports new scan and item deletion without navigation reloa
   assert.equal(appSource.includes('handleRestoreHistory(activeHistoryItem)'), true)
   assert.equal(appSource.includes('await saveHistoryAndActivate(createCombinedHistoryItem(session))'), true)
   assert.equal(appSource.includes('await saveHistoryAndActivate(createTechHistoryItem(session.tech.result))'), true)
+  assert.equal(appSource.includes("import { createCompactTechResult, createHistoryItemId, getHistoryTechResult, getHistoryVisualResult } from './utils/history'"), true)
+  assert.equal(appSource.includes('function createCompactTechResult(result)'), false)
   assert.equal(appSource.includes('deleteHistoryItem(id)'), true)
   assert.equal(appSource.includes('await deleteHistoryItem(id)'), true)
   assert.equal(appSource.includes('window.location'), false)
@@ -1054,7 +1056,7 @@ test('combined history restore keeps Visual and Tech results local without repla
   const restoreEnd = appSource.indexOf('const clearResultState', restoreStart)
   const restoreSource = appSource.slice(restoreStart, restoreEnd)
 
-  assert.equal(appSource.includes("import { createHistoryItemId, getHistoryTechResult, getHistoryVisualResult } from './utils/history'"), true)
+  assert.equal(appSource.includes("import { createCompactTechResult, createHistoryItemId, getHistoryTechResult, getHistoryVisualResult } from './utils/history'"), true)
   assert.equal(restoreSource.includes('getHistoryVisualResult(item)'), true)
   assert.equal(restoreSource.includes('getHistoryTechResult(item)'), true)
   assert.equal(restoreSource.includes("setActiveTab('visual')"), true)
@@ -1120,7 +1122,7 @@ test('tech qa screen removes the priority summary card and keeps lower detail se
   const source = readSource('src/components/TechQaPanel.jsx')
   const css = readSource('src/App.css')
   const completionIndex = source.indexOf('<TechCompletionCard completion={display.completion} />')
-  const basicIndex = source.indexOf('title="주요 검사 결과"')
+  const basicIndex = source.indexOf('title="핵심 기본 검사 결과"')
 
   assert.equal(source.includes("const MARKUP_ACCESSIBILITY_PRIMARY_IDS = ['meta', 'image-alt', 'external-links']"), true)
   assert.equal(source.includes("const MARKUP_ACCESSIBILITY_DETAIL_IDS = ['meta', 'image-alt', 'external-links', 'headings', 'duplicate-ids', 'forms', 'unlabeled-clickables']"), true)

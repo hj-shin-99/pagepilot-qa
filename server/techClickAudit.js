@@ -106,7 +106,7 @@ export function classifyClickableCandidate(candidate = {}) {
 }
 
 export function summarizeClickActionAudit(items = [], meta = {}) {
-  const sourceItems = Array.isArray(items) ? items : []
+  const sourceItems = mergeClickActionObservations(Array.isArray(items) ? items : [])
   const actualErrors = sourceItems.filter((item) => getActionClassification(item) === 'actual-error')
   const actionableWarnings = sourceItems.filter((item) => getActionClassification(item) === 'actionable-warning')
   const actionable = actualErrors.concat(actionableWarnings)
@@ -154,9 +154,89 @@ export async function auditClickableActions(browser, targetUrl, candidates = [],
   }
 
   return {
-    items: classified.map((item) => applySafeClickResult(item, safeResults.get(item.auditId))),
+    items: mergeClickActionObservations(classified.map((item) => applySafeClickResult(item, safeResults.get(item.auditId)))),
     meta: { candidateCount: classified.length, safeClickAttemptCount, safeClickLimit: MAX_SAFE_CLICK_CANDIDATES },
   }
+}
+
+export function mergeClickActionObservations(items = []) {
+  const sourceItems = Array.isArray(items) ? items : []
+  const groups = new Map()
+  const merged = []
+  sourceItems.forEach((item) => {
+    if (!item || typeof item !== 'object') return
+    const key = getClickTargetIdentityKey(item)
+    if (!key) {
+      merged.push(item)
+      return
+    }
+    const previousIndex = groups.get(key)
+    if (previousIndex === undefined) {
+      groups.set(key, merged.length)
+      merged.push(item)
+      return
+    }
+    merged[previousIndex] = mergeClickActionItems(merged[previousIndex], item)
+  })
+  return merged
+}
+
+function getClickTargetIdentityKey(item = {}) {
+  const selector = normalizeIdentityPart(item.selector)
+  if (selector) return `selector:${[selector, normalizeIdentityPart(item.domPath), normalizeUrlIdentity(item.url || item.href || item.landingUrl), normalizeIdentityPart(item.role || item.tagName || item.kind), normalizeIdentityPart(item.section || item.sectionPath || item.userLocation), normalizeIdentityPart(item.target), normalizeIdentityPart(item.label || item.text || item.ariaLabel)].filter(Boolean).join('|')}`
+
+  const domPath = normalizeIdentityPart(item.domPath)
+  if (domPath) return `dom:${[domPath, normalizeUrlIdentity(item.url || item.href || item.landingUrl), normalizeIdentityPart(item.role || item.tagName || item.kind), normalizeIdentityPart(item.section || item.sectionPath || item.userLocation), normalizeIdentityPart(item.label || item.text || item.ariaLabel)].filter(Boolean).join('|')}`
+
+  const stableId = normalizeIdentityPart(item.sourceId || item.stableId || item.elementId)
+  if (stableId) return `stable:${stableId}`
+
+  const href = normalizeUrlIdentity(item.url || item.href || item.landingUrl)
+  const role = normalizeIdentityPart(item.role || item.tagName || item.kind)
+  const section = normalizeIdentityPart(item.section || item.sectionPath || item.userLocation)
+  const target = normalizeIdentityPart(item.target)
+  if (href && (role || section || target)) return `link:${href}|${role}|${section}|${target}`
+
+  return ''
+}
+
+function mergeClickActionItems(first = {}, second = {}) {
+  const preferred = compareClickActionSeverity(second, first) < 0 ? second : first
+  const fallback = preferred === first ? second : first
+  const evidence = uniqueStrings(first.interactionEvidence).concat(uniqueStrings(second.interactionEvidence)).filter((value, index, values) => values.indexOf(value) === index)
+  const statuses = uniqueStrings([first.status, second.status])
+  const categories = uniqueStrings([first.category, second.category])
+  const outcomes = uniqueStrings([first.interactionOutcome, second.interactionOutcome])
+  return {
+    ...fallback,
+    ...preferred,
+    interactionEvidence: evidence,
+    mergedStatuses: statuses,
+    mergedCategories: categories,
+    mergedInteractionOutcomes: outcomes,
+    observationCount: Number(first.observationCount || 1) + Number(second.observationCount || 1),
+    clickExecuted: first.clickExecuted === true || second.clickExecuted === true,
+    observableChange: first.observableChange === true || second.observableChange === true,
+    reason: preferred.reason || fallback.reason || '',
+  }
+}
+
+function compareClickActionSeverity(first = {}, second = {}) {
+  return getClickActionSeverityRank(first) - getClickActionSeverityRank(second)
+}
+
+function getClickActionSeverityRank(item = {}) {
+  const classification = getActionClassification(item)
+  if (classification === 'actual-error') return 0
+  if (classification === 'actionable-warning') return 1
+  if (classification === 'safe-click-skipped') return 2
+  if (classification === 'ui-control-no-url-required') return 3
+  if (classification === 'verified-working') return 4
+  return 5
+}
+
+function uniqueStrings(values = []) {
+  return (Array.isArray(values) ? values : [values]).map(textOf).filter(Boolean).filter((value, index, list) => list.indexOf(value) === index)
 }
 
 async function verifySafeClick(page, targetUrl, candidate) {
@@ -553,4 +633,20 @@ function sanitizeMessage(value) {
 
 function textOf(value) {
   return typeof value === 'string' ? value.trim() : value === undefined || value === null ? '' : String(value).trim()
+}
+
+function normalizeIdentityPart(value) {
+  return textOf(value).replace(/\s+/g, ' ').toLowerCase()
+}
+
+function normalizeUrlIdentity(value) {
+  const text = textOf(value)
+  if (!text) return ''
+  try {
+    const url = new URL(text, 'https://pagepilot.local')
+    const path = url.pathname.replace(/\/$/, '') || '/'
+    return `${url.origin.toLowerCase()}${path}${url.search}`.replace(/^https:\/\/pagepilot\.local/i, '')
+  } catch {
+    return normalizeIdentityPart(text)
+  }
 }

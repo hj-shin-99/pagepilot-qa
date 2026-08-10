@@ -1936,7 +1936,7 @@ async function scanUrl(targetUrl, options = {}) {
   let seoAuditResult
 
   try {
-    const context = await browser.newContext(createBrowserContextOptions(scanOptions.deviceId))
+    const context = await browser.newContext(createScanBrowserContextOptions(scanOptions))
     await blockPostRequests(context)
 
     const page = await context.newPage()
@@ -2148,6 +2148,18 @@ function normalizeScanUrlOptions(options = {}) {
     optionalAuditConcurrencyLimit: Math.max(1, Math.min(2, Number(options.optionalAuditConcurrencyLimit) || 1)),
     deviceId,
     deviceProfile: getDeviceProfile(deviceId),
+  }
+}
+
+function createScanBrowserContextOptions(scanOptions = {}) {
+  const contextOptions = createBrowserContextOptions(scanOptions.deviceId)
+  if (scanOptions.includeVisualPayloadData !== true) return contextOptions
+  return {
+    ...contextOptions,
+    viewport: { ...DESKTOP_DESIGN_VIEWPORT },
+    deviceScaleFactor: DESKTOP_SCREENSHOT_SCALE,
+    isMobile: false,
+    hasTouch: false,
   }
 }
 

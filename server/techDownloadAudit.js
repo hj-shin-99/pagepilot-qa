@@ -92,6 +92,9 @@ export function classifyDownloadInspection(candidate = {}, inspection = {}) {
     status = 'error'
     owner = statusCode >= 500 ? '개발팀' : 'UID팀'
     issues.push(statusCode >= 500 ? '다운로드 서버가 오류를 반환했습니다.' : '다운로드 리소스를 찾을 수 없습니다.')
+  } else if (statusCode === 429) {
+    status = 'warn'
+    issues.push('요청 제한 응답이라 자동 검사에서 다운로드 가능 여부를 확정하지 못했습니다.')
   } else if (statusCode === 401 || statusCode === 403) {
     status = 'warn'
     issues.push('인증 또는 권한이 필요해 다운로드를 완전히 확인하지 못했습니다.')

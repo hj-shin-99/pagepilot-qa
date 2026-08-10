@@ -40,6 +40,21 @@ test('modal audit warns for missing accessible name or escape handling', () => {
   assert.equal(item.warnings.length > 0, true)
 })
 
+test('modal audit verifies ESC independently after close button and treats reopen failure as unchecked', () => {
+  const closeAndEscOk = classifyModalObservation(candidate(), MODAL_AUDIT_TEST_ONLY.createModalCloseObservation(openState(), { closeButtonClosed: true, escChecked: true, escClosed: true }, postCloseState()))
+  const closeOkEscFail = classifyModalObservation(candidate(), MODAL_AUDIT_TEST_ONLY.createModalCloseObservation(openState(), { closeButtonClosed: true, escChecked: true, escClosed: false }, postCloseState({ visibleDialogCount: 1 })))
+  const reopenUnavailable = classifyModalObservation(candidate(), MODAL_AUDIT_TEST_ONLY.createModalCloseObservation(openState(), { closeButtonClosed: true, escChecked: false, escClosed: false }, postCloseState()))
+  const noCloseButtonEscOk = classifyModalObservation(candidate(), MODAL_AUDIT_TEST_ONLY.createModalCloseObservation(openState({ closeButtonSelector: '' }), { closeButtonClosed: false, escChecked: true, escClosed: true }, postCloseState()))
+
+  assert.equal(closeAndEscOk.status, 'ok')
+  assert.equal(closeOkEscFail.status, 'warn')
+  assert.equal(closeOkEscFail.warnings.includes('ESC 닫기 동작을 확인하지 못했습니다.'), true)
+  assert.equal(reopenUnavailable.status, 'ok')
+  assert.equal(reopenUnavailable.warnings.includes('ESC 닫기 동작을 확인하지 못했습니다.'), false)
+  assert.equal(noCloseButtonEscOk.warnings.includes('ESC 닫기 동작을 확인하지 못했습니다.'), false)
+  assert.equal(noCloseButtonEscOk.warnings.includes('닫기 버튼이 없습니다.'), true)
+})
+
 test('modal audit errors when dialog does not open or close safely', () => {
   const openFailed = classifyModalObservation(candidate(), { opened: false, error: 'dialog-not-visible' })
   const closeFailed = classifyModalObservation(candidate(), { opened: true, visibleDialogCount: 1, closable: false })
@@ -98,6 +113,26 @@ function candidate(overrides = {}) {
     auditId: 'modal-1',
     selector: '#open-modal',
     label: 'Open modal',
+    ...overrides,
+  }
+}
+
+function openState(overrides = {}) {
+  return {
+    visibleDialogCount: 1,
+    accessibleName: 'Details',
+    closeButtonSelector: '#close-modal',
+    focusMovedInside: true,
+    scrollLocked: true,
+    pageCanScroll: false,
+    ...overrides,
+  }
+}
+
+function postCloseState(overrides = {}) {
+  return {
+    visibleDialogCount: 0,
+    focusReturned: true,
     ...overrides,
   }
 }

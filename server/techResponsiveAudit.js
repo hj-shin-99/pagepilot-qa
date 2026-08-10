@@ -101,6 +101,8 @@ export function shouldIgnoreResponsiveCandidate(candidate = {}) {
   const pointerEvents = String(candidate.pointerEvents || '').toLowerCase()
   if (candidate.hidden === true || candidate.ariaHidden === true || candidate.ariaHidden === 'true' || candidate.ancestorAriaHidden === true) return true
   if (candidate.inert === true || candidate.ancestorInert === true) return true
+  if (candidate.ancestorDisplay === 'none' || candidate.ancestorVisibility === 'hidden') return true
+  if (Number(candidate.ancestorOpacity) === 0 && (pointerEvents === 'none' || candidate.interactive !== true)) return true
   if (styleDisplay === 'none' || styleVisibility === 'hidden') return true
   if (Number.isFinite(opacity) && opacity === 0 && (pointerEvents === 'none' || candidate.interactive !== true)) return true
   if (candidate.activeDescendant === false || candidate.current === false || candidate.selected === false && candidate.insideCompositeWidget === true) return true
@@ -114,8 +116,9 @@ export function shouldFlagResponsiveTextClip(candidate = {}) {
   if (shouldIgnoreResponsiveCandidate(candidate)) return false
   if (candidate.hasEllipsis === true) return false
   if (Number(candidate.lineClamp || 0) > 0) return false
-  return Number(candidate.scrollWidth || 0) > Number(candidate.clientWidth || 0) + RESPONSIVE_OVERFLOW_TOLERANCE_PX
-    || Number(candidate.scrollHeight || 0) > Number(candidate.clientHeight || 0) + RESPONSIVE_OVERFLOW_TOLERANCE_PX
+  const horizontalClip = Number(candidate.scrollWidth || 0) > Number(candidate.clientWidth || 0) + RESPONSIVE_OVERFLOW_TOLERANCE_PX
+  const verticalClip = Number(candidate.scrollHeight || 0) > Number(candidate.clientHeight || 0) + RESPONSIVE_OVERFLOW_TOLERANCE_PX
+  return (horizontalClip && candidate.selfScrollableX !== true) || verticalClip
 }
 
 function createResponsiveAuditMeta(items = [], context = {}) {
@@ -150,7 +153,7 @@ async function readResponsiveObservation(page, viewport) {
       .slice(0, maxEvidence)
     const textClipCandidates = Array.from(document.querySelectorAll('h1, h2, h3, p, button, a[href], span, strong, em'))
       .map((element, index) => buildTextClipCandidate(element, index))
-      .filter((candidate) => !ignoreCandidate(candidate) && !candidate.hasEllipsis && Number(candidate.lineClamp || 0) === 0 && candidate.textOverflowAmount > tolerancePx)
+      .filter((candidate) => shouldFlagTextClipLocally(candidate))
       .slice(0, maxEvidence)
 
     return {
@@ -179,6 +182,7 @@ async function readResponsiveObservation(page, viewport) {
         ancestorAriaHidden: Boolean(element.closest('[aria-hidden="true"]')),
         inert: element.hasAttribute('inert'),
         ancestorInert: Boolean(element.closest('[inert]')),
+        ...getAncestorHiddenStyle(element),
         activeDescendant: isActiveDescendant(element),
         selected: getSelectedState(element),
         current: getCurrentState(element),
@@ -207,6 +211,7 @@ async function readResponsiveObservation(page, viewport) {
         ancestorAriaHidden: Boolean(element.closest('[aria-hidden="true"]')),
         inert: element.hasAttribute('inert'),
         ancestorInert: Boolean(element.closest('[inert]')),
+        ...getAncestorHiddenStyle(element),
         activeDescendant: isActiveDescendant(element),
         selected: getSelectedState(element),
         current: getCurrentState(element),
@@ -218,9 +223,14 @@ async function readResponsiveObservation(page, viewport) {
         pointerEvents: style.pointerEvents,
         interactive: element.matches('button, a[href], input, select, textarea, [role="button"], [tabindex]'),
         insideScrollableContainer: isInsideScrollableContainer(element),
+        ...getSelfScrollableState(element),
         dialogClosed: isInsideClosedDialog(element),
         hasEllipsis: style.textOverflow === 'ellipsis',
         lineClamp: Number(style.webkitLineClamp || 0),
+        scrollWidth: element.scrollWidth,
+        clientWidth: element.clientWidth,
+        scrollHeight: element.scrollHeight,
+        clientHeight: element.clientHeight,
         textOverflowAmount: Math.max(0, element.scrollWidth - element.clientWidth, element.scrollHeight - element.clientHeight),
       }
     }
@@ -229,11 +239,21 @@ async function readResponsiveObservation(page, viewport) {
       return shouldIgnoreCandidateLocally(candidate)
     }
 
+    function shouldFlagTextClipLocally(candidate) {
+      if (ignoreCandidate(candidate)) return false
+      if (candidate.hasEllipsis || Number(candidate.lineClamp || 0) > 0) return false
+      const horizontalClip = Number(candidate.scrollWidth || 0) > Number(candidate.clientWidth || 0) + tolerancePx
+      const verticalClip = Number(candidate.scrollHeight || 0) > Number(candidate.clientHeight || 0) + tolerancePx
+      return (horizontalClip && candidate.selfScrollableX !== true) || verticalClip
+    }
+
     function shouldIgnoreCandidateLocally(candidate) {
       const opacity = Number(candidate.opacity)
       const pointerEvents = String(candidate.pointerEvents || '').toLowerCase()
       if (candidate.hidden || candidate.ariaHidden === 'true' || candidate.ancestorAriaHidden) return true
       if (candidate.inert || candidate.ancestorInert) return true
+      if (candidate.ancestorDisplay === 'none' || candidate.ancestorVisibility === 'hidden') return true
+      if (Number(candidate.ancestorOpacity) === 0 && (pointerEvents === 'none' || candidate.interactive !== true)) return true
       if (candidate.display === 'none' || candidate.visibility === 'hidden') return true
       if (Number.isFinite(opacity) && opacity === 0 && (pointerEvents === 'none' || candidate.interactive !== true)) return true
       if (candidate.activeDescendant === false || candidate.current === false || candidate.selected === false && candidate.insideCompositeWidget === true) return true
@@ -271,6 +291,28 @@ async function readResponsiveObservation(page, viewport) {
       const style = window.getComputedStyle(container)
       const scrollableX = ['auto', 'scroll', 'overlay'].includes(String(style.overflowX || '').toLowerCase())
       return scrollableX && Number(container.scrollWidth || 0) > Number(container.clientWidth || 0) + tolerancePx
+    }
+
+    function getSelfScrollableState(element) {
+      const style = window.getComputedStyle(element)
+      const scrollableX = ['auto', 'scroll', 'overlay'].includes(String(style.overflowX || '').toLowerCase())
+      const scrollableY = ['auto', 'scroll', 'overlay'].includes(String(style.overflowY || '').toLowerCase())
+      return {
+        selfScrollableX: scrollableX && Number(element.scrollWidth || 0) > Number(element.clientWidth || 0) + tolerancePx,
+        selfScrollableY: scrollableY && Number(element.scrollHeight || 0) > Number(element.clientHeight || 0) + tolerancePx,
+      }
+    }
+
+    function getAncestorHiddenStyle(element) {
+      let current = element.parentElement
+      while (current && current !== document.body) {
+        const style = window.getComputedStyle(current)
+        if (style.display === 'none') return { ancestorDisplay: 'none', ancestorVisibility: '', ancestorOpacity: null }
+        if (style.visibility === 'hidden') return { ancestorDisplay: '', ancestorVisibility: 'hidden', ancestorOpacity: null }
+        if (Number(style.opacity) === 0) return { ancestorDisplay: '', ancestorVisibility: '', ancestorOpacity: 0 }
+        current = current.parentElement
+      }
+      return { ancestorDisplay: '', ancestorVisibility: '', ancestorOpacity: null }
     }
 
     function findScrollableAncestor(element) {

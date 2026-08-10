@@ -241,6 +241,32 @@ test('seo audit parses valid json-ld and errors on invalid json-ld', async () =>
   assert.equal(invalid.items.find((item) => item.category === 'structured-data').status, 'error')
 })
 
+test('seo audit accepts typed JSON-LD graph nodes without top-level type', async () => {
+  const result = await auditSeoReadiness('https://example.com', snapshot({
+    seoInfo: {
+      titleText: 'Example', titleCount: 1, metaDescriptions: ['Description'], canonicalLinks: ['https://example.com/'], robotsMetas: [], htmlLang: 'en', og: {}, twitter: {}, hreflangs: [], jsonLdScripts: ['{"@context":"https://schema.org","@graph":[{"@type":"WebSite"},{"@type":"WebPage"}]}'], h1Texts: ['Example'],
+    },
+  }), documentResponses(), null, apiFactory([
+    textResponse('https://example.com/robots.txt', 404, '', 'text/plain'),
+    textResponse('https://example.com/sitemap.xml', 404, '', 'application/xml'),
+  ]))
+
+  assert.equal(result.items.find((item) => item.category === 'structured-data').status, 'ok')
+})
+
+test('seo audit detects robots conflicts split across multiple meta entries', async () => {
+  const result = await auditSeoReadiness('https://example.com', snapshot({
+    seoInfo: {
+      titleText: 'Example', titleCount: 1, metaDescriptions: ['Description'], canonicalLinks: ['https://example.com/'], robotsMetas: [{ name: 'robots', content: 'index,follow' }, { name: 'robots', content: 'noindex,follow' }], htmlLang: 'en', og: {}, twitter: {}, hreflangs: [], jsonLdScripts: [], h1Texts: ['Example'],
+    },
+  }), documentResponses(), null, apiFactory([
+    textResponse('https://example.com/robots.txt', 404, '', 'text/plain'),
+    textResponse('https://example.com/sitemap.xml', 404, '', 'application/xml'),
+  ]))
+
+  assert.equal(result.items.find((item) => item.category === 'indexing').status, 'error')
+})
+
 test('seo audit warns on robots disallow all and keeps robots or sitemap 404 non-blocking', async () => {
   const result = await auditSeoReadiness('https://example.com', snapshot({
     seoInfo: {

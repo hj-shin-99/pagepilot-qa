@@ -39,7 +39,7 @@ test('Tech link audit classifies missing navigation CTA as error evidence', () =
   assert.equal(result.links[0].category, 'missing-navigation-url')
 })
 
-test('Tech link audit flags # and javascript navigation CTAs without treating UI controls as URL errors', () => {
+test('Tech link audit keeps non-http anchors out of broken HTTP link errors while preserving javascript CTA review', () => {
   const audit = createTechLinkAudit([
     anchor({ label: 'More details', href: '#' }),
     anchor({ label: 'Apply now', href: 'javascript:void(0)' }),
@@ -48,7 +48,8 @@ test('Tech link audit flags # and javascript navigation CTAs without treating UI
   ], 'https://example.com/page')
   const result = mergeTechLinkAuditResults(audit, [])
 
-  assert.equal(result.links.filter((item) => item.status === 'warn').length, 2)
+  assert.equal(result.links.filter((item) => item.status === 'warn').length, 1)
+  assert.equal(result.links.find((item) => item.href === '#').status, 'ok')
   assert.equal(result.links.filter((item) => item.category === 'url-not-required-ui-control').length, 2)
   assert.equal(audit.missingHrefLinks.length, 0)
   assert.equal(audit.uiControlsWithoutUrl.length, 2)
@@ -111,6 +112,17 @@ test('phase 3A URL fixtures separate problem review normal excluded and sparse-s
   assert.equal(result.links.find((item) => item.label === 'Sparse success').category, 'sparse-success-page')
   assert.equal(result.links.find((item) => item.label === 'Mail').status, 'ok')
   assert.equal(result.links.find((item) => item.label === 'Open menu').category, 'url-not-required-ui-control')
+})
+
+test('Tech link audit separates rate limit from broken HTTP errors', () => {
+  const audit = createTechLinkAudit([anchor({ label: 'Rate limited', href: '/limited' })], 'https://example.com/page')
+  const checked = [normalizeCheckedLinkResult(audit.requestableLinks[0], { statusCode: 429, finalUrl: 'https://example.com/limited' })]
+  const result = mergeTechLinkAuditResults(audit, checked)
+  const item = result.links[0]
+
+  assert.equal(item.status, 'warn')
+  assert.equal(item.category, 'rate-limited')
+  assert.equal(item.note.includes('rate limit'), true)
 })
 
 function anchor(overrides = {}) {

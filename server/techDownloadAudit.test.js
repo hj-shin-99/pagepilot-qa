@@ -41,10 +41,13 @@ test('download audit classifies 404 5xx timeout and zero-byte responses as error
 
 test('download audit warns on auth restrictions and mime mismatch but allows octet-stream and missing length', () => {
   const restricted = classifyDownloadInspection(candidate({ expectedExtension: 'pdf' }), { statusCode: 403, contentType: 'application/pdf', contentLength: null })
+  const rateLimited = classifyDownloadInspection(candidate({ expectedExtension: 'pdf' }), { statusCode: 429, contentType: 'application/pdf', contentLength: null })
   const mismatch = classifyDownloadInspection(candidate({ expectedExtension: 'pdf' }), { statusCode: 200, contentType: 'text/html', contentLength: 1200 })
   const octet = classifyDownloadInspection(candidate({ expectedExtension: 'xlsx' }), { statusCode: 200, contentType: 'application/octet-stream', contentLength: null })
 
   assert.equal(restricted.status, 'warn')
+  assert.equal(rateLimited.status, 'warn')
+  assert.equal(rateLimited.note.includes('요청 제한'), true)
   assert.equal(mismatch.status, 'error')
   assert.equal(octet.status, 'ok')
 })

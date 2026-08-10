@@ -191,11 +191,15 @@ function createIndexingDirectiveItem(evidence = {}) {
     status = 'error'
     issues.push('meta robots 지시가 서로 충돌합니다.')
   }
+  if (hasConflictingDirectives(metaDirectiveEntries.flatMap((entry) => entry.directives))) {
+    status = 'error'
+    issues.push('여러 meta robots 지시가 서로 충돌합니다.')
+  }
   if (xRobotsDirectives.length > 0 && hasConflictingDirectives(xRobotsDirectives)) {
     status = 'error'
     issues.push('X-Robots-Tag 지시가 서로 충돌합니다.')
   }
-  if (metaDirectiveEntries.length > 0 && xRobotsDirectives.length > 0 && hasCrossDirectiveConflict(metaDirectiveEntries[0].directives, xRobotsDirectives)) {
+  if (metaDirectiveEntries.length > 0 && xRobotsDirectives.length > 0 && hasCrossDirectiveConflict(metaDirectiveEntries.flatMap((entry) => entry.directives), xRobotsDirectives)) {
     status = 'error'
     issues.push('meta robots와 X-Robots-Tag 지시가 서로 충돌합니다.')
   }
@@ -305,7 +309,7 @@ function createStructuredDataItem(evidence = {}) {
   scripts.forEach((text, index) => {
     try {
       const parsed = JSON.parse(text)
-      const nodes = Array.isArray(parsed) ? parsed : [parsed]
+      const nodes = getJsonLdNodes(parsed)
       nodes.forEach((node) => {
         if (!node || typeof node !== 'object') return
         if (!node['@context']) issues.push(`JSON-LD ${index + 1}에 @context가 없습니다.`)
@@ -327,6 +331,19 @@ function createStructuredDataItem(evidence = {}) {
     owner: 'UID팀',
     sourceCount: scripts.length,
     technicalTerm: 'json-ld',
+  })
+}
+
+function getJsonLdNodes(parsed) {
+  const sourceNodes = Array.isArray(parsed) ? parsed : [parsed]
+  return sourceNodes.flatMap((node) => {
+    if (!node || typeof node !== 'object') return []
+    if (Array.isArray(node['@graph']) && node['@graph'].length > 0) {
+      return node['@graph']
+        .filter((entry) => entry && typeof entry === 'object')
+        .map((entry) => ({ ...entry, '@context': entry['@context'] || node['@context'] }))
+    }
+    return [node]
   })
 }
 

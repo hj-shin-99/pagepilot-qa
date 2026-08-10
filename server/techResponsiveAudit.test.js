@@ -68,6 +68,8 @@ test('responsive candidate filters exclude hidden dialog inert and non-interacti
   assert.equal(shouldIgnoreResponsiveCandidate({ className: 'modal', display: 'block', visibility: 'visible', dialogClosed: true }), true)
   assert.equal(shouldIgnoreResponsiveCandidate({ className: 'cta', display: 'block', visibility: 'visible', inert: true }), true)
   assert.equal(shouldIgnoreResponsiveCandidate({ className: 'cta', display: 'block', visibility: 'visible', opacity: 0, pointerEvents: 'none', interactive: false }), true)
+  assert.equal(shouldIgnoreResponsiveCandidate({ className: 'child', display: 'block', visibility: 'visible', ancestorVisibility: 'hidden' }), true)
+  assert.equal(shouldIgnoreResponsiveCandidate({ className: 'child', display: 'block', visibility: 'visible', ancestorOpacity: 0, pointerEvents: 'none', interactive: false }), true)
 })
 
 test('responsive candidate filters exclude intended horizontal scroller children but keep root overflow and visible clipped cta warnings', () => {
@@ -92,9 +94,11 @@ test('phase 3A responsive fixtures separate problem review normal excluded and n
   assert.equal(shouldFlagResponsiveTextClip({ scrollWidth: 180, clientWidth: 120, hasEllipsis: true }), false)
 })
 
-test('responsive text clipping ignores intentional ellipsis and line clamp', () => {
+test('responsive text clipping ignores intentional ellipsis line clamp and horizontal self scrollers only', () => {
   assert.equal(shouldFlagResponsiveTextClip({ scrollWidth: 180, clientWidth: 120, hasEllipsis: true }), false)
   assert.equal(shouldFlagResponsiveTextClip({ scrollHeight: 80, clientHeight: 20, lineClamp: 2 }), false)
+  assert.equal(shouldFlagResponsiveTextClip({ scrollWidth: 220, clientWidth: 120, selfScrollableX: true }), false)
+  assert.equal(shouldFlagResponsiveTextClip({ scrollWidth: 220, clientWidth: 120, scrollHeight: 220, clientHeight: 120, selfScrollableY: true }), true)
   assert.equal(shouldFlagResponsiveTextClip({ scrollWidth: 220, clientWidth: 120, hasEllipsis: false, lineClamp: 0 }), true)
 })
 

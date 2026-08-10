@@ -12,6 +12,15 @@ test('A normal anchor is valid-url and ok', () => {
   assert.equal(item.clickExecuted, false)
 })
 
+test('valid navigation href wins over generic menu or search wording', () => {
+  const searchLink = classifyClickableCandidate(candidate({ tagName: 'a', kind: 'a', href: '/search', url: 'https://example.com/search', label: 'Search', className: 'menu-link search-link' }))
+  const explicitTabLink = classifyClickableCandidate(candidate({ tagName: 'a', kind: 'a', href: '/tab-one', url: 'https://example.com/tab-one', label: 'Tab one', ariaControls: 'tabpanel-one' }))
+
+  assert.equal(searchLink.actionClassification, 'verified-working')
+  assert.equal(searchLink.category, 'valid-url')
+  assert.equal(explicitTabLink.actionClassification, 'ui-control-no-url-required')
+})
+
 test('B role button CTA without href is ambiguous action for UID follow-up', () => {
   const item = classifyClickableCandidate(candidate({ tagName: 'div', role: 'button', className: 'primary-cta', label: 'Product' }))
   assert.equal(item.hrefState, 'missing-href')

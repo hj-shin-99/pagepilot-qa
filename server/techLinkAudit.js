@@ -127,6 +127,7 @@ export function getLinkNote(statusCode, options = {}) {
   if (!statusCode) return '응답 상태 확인 실패'
   if (statusCode === 404) return '404 Not Found'
   if (statusCode === 410) return '410 Gone'
+  if (statusCode === 429) return '요청 제한 응답입니다. 자동 검사 환경의 rate limit 가능성이 있어 실제 사용자 링크 오류로 단정하지 않습니다.'
   if (statusCode === 401 || statusCode === 403) return '인증 또는 접근 제한 응답입니다.'
   if (statusCode >= 500) return '5xx 서버 오류'
   if (statusCode >= 400) return '4xx 응답 확인 필요'
@@ -138,6 +139,7 @@ export function getLinkNote(statusCode, options = {}) {
 function getCheckedLinkCategory({ statusCode, redirected = false, sparseSuccess = false } = {}) {
   if (statusCode >= 500) return 'http-5xx'
   if (statusCode === 404 || statusCode === 410) return 'http-4xx'
+  if (statusCode === 429) return 'rate-limited'
   if (statusCode === 401 || statusCode === 403) return 'restricted'
   if (statusCode >= 400) return 'http-4xx-review'
   if (sparseSuccess) return 'sparse-success-page'
@@ -186,7 +188,7 @@ function normalizeCandidate(target, order, baseUrl) {
 
   if (isUiControl && !resolvedUrl) return { ...base, hrefState: 'UI-control-no-url-required', technicalTerm: 'URL이 필요 없는 UI 제어', easyExplanation: getHrefEasyExplanation('UI-control-no-url-required'), classification: 'ui-control-without-url' }
   if (!href && !resolvedUrl) return { ...base, classification: isNavigation ? 'missing-navigation-url' : 'unknown-clickable-without-url' }
-  if (linkType === 'anchor') return { ...base, classification: isNavigation ? 'same-page-anchor-navigation' : 'same-page-anchor' }
+  if (linkType === 'anchor') return { ...base, classification: 'same-page-anchor' }
   if (linkType === 'javascript') return { ...base, classification: isNavigation ? 'pseudo-navigation-url' : 'pseudo-ui-url' }
   if (linkType === 'mailto' || linkType === 'tel') return { ...base, classification: 'special-scheme' }
   if (linkType === 'invalid') return { ...base, classification: isNavigation ? 'invalid-navigation-url' : 'invalid-url' }

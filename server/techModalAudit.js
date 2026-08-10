@@ -82,7 +82,7 @@ export function classifyModalObservation(candidate = {}, observation = {}) {
 
   if (!textOf(observation.accessibleName)) warnings.push('accessible name이 없습니다.')
   if (observation.hasCloseButton !== true) warnings.push('닫기 버튼이 없습니다.')
-  if (observation.escClosed !== true) warnings.push('ESC 닫기 동작을 확인하지 못했습니다.')
+  if (observation.escChecked !== false && observation.escClosed !== true) warnings.push('ESC 닫기 동작을 확인하지 못했습니다.')
   if (observation.focusMovedInside !== true) warnings.push('포커스가 모달 내부로 이동하지 않았습니다.')
   if (observation.focusReturned !== true) warnings.push('모달 종료 후 트리거 포커스 복귀를 확인하지 못했습니다.')
   if (observation.scrollLockApplicable !== false && observation.scrollLocked !== true) warnings.push('body scroll lock을 확인하지 못했습니다.')
@@ -216,43 +216,57 @@ async function inspectModalCandidate(page, targetUrl, candidate) {
   const openState = await readModalState(page, candidate)
   const closeButtonClosed = openState.closeButtonSelector ? await closeModalByButton(page, openState.closeButtonSelector) : false
   let escClosed = false
+  let escChecked = false
   let backdropClosed = false
   let backdropChecked = false
-  if (closeButtonClosed !== true) {
+  if (closeButtonClosed === true) {
+    const reopened = await openModal(page, candidate)
+    if (reopened.opened === true) {
+      escChecked = true
+      escClosed = await closeModalByEscape(page)
+    }
+  } else {
+    escChecked = true
     escClosed = await closeModalByEscape(page)
   }
-  if (closeButtonClosed !== true && escClosed !== true) {
+  if (escChecked === true && escClosed !== true) {
     backdropChecked = true
     backdropClosed = await closeModalByBackdrop(page, openState.dialogRect)
   }
 
   const postCloseState = await readModalState(page, candidate)
-  const closable = closeButtonClosed || escClosed || backdropClosed || postCloseState.visibleDialogCount === 0
-  return classifyModalObservation(candidate, {
+  return classifyModalObservation(candidate, createModalCloseObservation(openState, { closeButtonClosed, escClosed, escChecked, backdropChecked, backdropClosed }, postCloseState, { consoleErrorCount: consoleErrors.length, pageErrorCount: pageErrors.length }))
+}
+
+function createModalCloseObservation(openState = {}, closeAttempts = {}, postCloseState = {}, runtime = {}) {
+  return {
     opened: true,
     visibleDialogCount: openState.visibleDialogCount,
     accessibleName: openState.accessibleName,
     hasCloseButton: Boolean(openState.closeButtonSelector),
-    closeButtonClosed,
-    escClosed,
-    backdropChecked,
-    backdropClosed,
+    closeButtonClosed: closeAttempts.closeButtonClosed === true,
+    escClosed: closeAttempts.escClosed === true,
+    escChecked: closeAttempts.escChecked !== false,
+    backdropChecked: closeAttempts.backdropChecked === true,
+    backdropClosed: closeAttempts.backdropClosed === true,
     focusMovedInside: openState.focusMovedInside,
     focusReturned: postCloseState.focusReturned,
     scrollLocked: openState.scrollLocked,
     scrollLockApplicable: openState.pageCanScroll === true,
-    closable,
-    consoleErrorCount: consoleErrors.length,
-    pageErrorCount: pageErrors.length,
-  })
+    closable: closeAttempts.closeButtonClosed === true || closeAttempts.escClosed === true || closeAttempts.backdropClosed === true || postCloseState.visibleDialogCount === 0,
+    consoleErrorCount: Number(runtime.consoleErrorCount || 0),
+    pageErrorCount: Number(runtime.pageErrorCount || 0),
+  }
 }
 
 async function openModal(page, candidate) {
   try {
+    const beforeState = await readModalState(page, candidate)
     await page.locator(candidate.selector).first().click({ timeout: MODAL_AUDIT_TIMEOUT_MS, noWaitAfter: true })
     await page.waitForTimeout(220)
     const state = await readModalState(page, candidate)
-    return state.visibleDialogCount > 0 ? { opened: true } : { opened: false, error: 'dialog-not-visible' }
+    const opened = state.visibleDialogCount > Math.max(0, Number(beforeState.visibleDialogCount || 0)) || (state.targetDialogVisible === true && beforeState.targetDialogVisible !== true)
+    return opened ? { opened: true } : { opened: false, error: 'dialog-not-visible' }
   } catch (error) {
     return { opened: false, error: error instanceof Error ? error.message : 'modal-open-failed' }
   }
@@ -297,6 +311,7 @@ async function closeModalByBackdrop(page, dialogRect) {
 async function readModalState(page, candidate) {
   return page.evaluate((sourceCandidate) => {
     const trigger = document.querySelector(sourceCandidate.selector)
+    const targetDialog = getTargetDialog(sourceCandidate)
     const dialogs = Array.from(document.querySelectorAll('dialog[open], [role="dialog"]:not([hidden]), [aria-modal="true"]:not([hidden])')).filter((dialog) => {
       const rect = dialog.getBoundingClientRect()
       const style = window.getComputedStyle(dialog)
@@ -311,6 +326,7 @@ async function readModalState(page, candidate) {
     const dialogRect = dialog ? dialog.getBoundingClientRect() : null
     return {
       visibleDialogCount: dialogs.length,
+      targetDialogVisible: isVisibleDialog(targetDialog),
       accessibleName: dialog ? getDialogName(dialog) : '',
       closeButtonSelector: closeButton ? getCssSelector(closeButton) : '',
       focusMovedInside: Boolean(dialog && activeElement instanceof HTMLElement && dialog.contains(activeElement)),
@@ -332,6 +348,27 @@ async function readModalState(page, candidate) {
       const labelledBy = dialog.getAttribute('aria-labelledby') || ''
       if (labelledBy) return document.getElementById(labelledBy)?.textContent?.trim() || ''
       return dialog.querySelector('h1,h2,h3,h4,h5,strong,[data-title]')?.textContent?.trim() || ''
+    }
+
+    function getTargetDialog(source) {
+      const explicitSelector = source.dialogSelector || source.dataTarget || ''
+      if (explicitSelector) {
+        try {
+          return document.querySelector(explicitSelector)
+        } catch {
+          return null
+        }
+      }
+      const ariaControls = source.ariaControls || ''
+      return ariaControls ? document.getElementById(ariaControls) : null
+    }
+
+    function isVisibleDialog(dialog) {
+      if (!dialog) return false
+      const rect = dialog.getBoundingClientRect()
+      const style = window.getComputedStyle(dialog)
+      if (dialog.tagName.toLowerCase() === 'dialog' && dialog.open !== true) return false
+      return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'
     }
 
     function getCssSelector(element) {
@@ -377,5 +414,6 @@ function isModalCloseCandidate(item = {}) {
 
 export const MODAL_AUDIT_TEST_ONLY = {
   createModalAuditMeta,
+  createModalCloseObservation,
   isModalCloseCandidate,
 }

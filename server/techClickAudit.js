@@ -52,7 +52,7 @@ export function classifyClickableCandidate(candidate = {}) {
     return { ...base, status: 'error', category: 'covered-or-not-interactable', actionClassification: 'actual-error', interactionOutcome: 'blocked', reason: overlay ? 'hit-test 결과 unrelated overlay가 실제 클릭 지점을 막고 있습니다.' : 'hit-test 결과 실제 클릭 지점을 막는 unrelated overlay가 감지되었습니다.' }
   }
 
-  if (isUiControl && (isStrongUiControlCandidate(candidate) || hrefState !== 'valid-url')) {
+  if (isUiControl && (hasExplicitUiControlEvidence(candidate) || hrefState !== 'valid-url')) {
     return {
       ...base,
       status: 'ok',
@@ -487,12 +487,12 @@ function isUiControlCandidate(candidate = {}) {
   return UI_CONTROL_PATTERN.test(text) || UI_CONTROL_KO_PATTERN.test(text)
 }
 
-function isStrongUiControlCandidate(candidate = {}) {
-  const text = searchableText(candidate)
-  if (candidate.uiControlSemantic || candidate.dataDismiss || candidate.dataSlide) return true
+function hasExplicitUiControlEvidence(candidate = {}) {
+  if (candidate.uiControlSemantic || candidate.dataDismiss || candidate.dataBsDismiss || candidate.dataSlide) return true
   if (candidate.ariaControls || candidate.ariaExpanded || candidate.dataTarget || candidate.dataToggle) return true
-  return /\b(close|dismiss|cancel|prev|previous|next|carousel|slide|slider|menu|sitemap|site-map|search|accordion|tab|dropdown|modal|dialog|play|pause|cookie)\b/i.test(text)
-    || /(닫기|취소|이전|다음|캐러셀|슬라이드|메뉴|사이트\s*맵|검색|아코디언|탭|드롭다운|모달|팝업|재생|정지|쿠키)/i.test(text)
+  if (textOf(candidate.role).toLowerCase() === 'tab') return true
+  if (/^(submit|reset|checkbox|radio)$/i.test(textOf(candidate.type)) && candidate.formId) return true
+  return false
 }
 
 function looksLikeNavigation(candidate = {}) {

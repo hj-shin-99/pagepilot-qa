@@ -2520,6 +2520,7 @@ function attachCollectors(page, consoleMessages, failedImageRequests, failedReso
         contentLength: Number(headers['content-length'] || headers['Content-Length'] || 0) || null,
         contentEncoding: headers['content-encoding'] || headers['Content-Encoding'] || '',
         contentRange: headers['content-range'] || headers['Content-Range'] || '',
+        xRobotsTag: headers['x-robots-tag'] || headers['X-Robots-Tag'] || '',
         cacheControl: headers['cache-control'] || headers['Cache-Control'] || '',
         expires: headers.expires || headers.Expires || '',
         etag: headers.etag || headers.ETag || '',
@@ -2741,7 +2742,7 @@ async function safeDomSnapshot(page, targetUrl, options = {}) {
 
         return linkItems.filter((link) => {
           const anchor = safeQuerySelector(link.selector)
-          if (!anchor || anchor.getAttribute('target') !== '_blank') return false
+          if (!anchor || String(anchor.getAttribute('target') || '').toLowerCase() !== '_blank') return false
           if (!isExternalUrl(link.url, baseOrigin)) return false
           const rel = (anchor.getAttribute('rel') || '').toLowerCase()
           return !rel.includes('noopener') || !rel.includes('noreferrer')

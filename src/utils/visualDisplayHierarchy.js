@@ -390,10 +390,50 @@ function hasCtaEvidence(item = {}) {
 }
 
 function hasPriceEvidence(item = {}) {
-  const text = issueText(item)
   const category = textOf(item.canonicalCategory || item.category || item.categoryLabel || item.numericType).toLowerCase()
-  if (/price|numeric|amount|monthly|interest|percentage|duration|date/.test(category)) return true
-  return /[₩$€¥]|원|만원|%|개월|년|월|금리|납입|기간|날짜|date|duration|amount|price/i.test(text) && numericTokens(text).length > 0
+  const hasNumericDifference = hasMeaningfulFinancialNumericDifference(item.figmaValue, item.webValue)
+  if (/price|numeric|amount|monthly|interest|percentage|duration|date/.test(category)) return hasNumericDifference
+  return hasNumericDifference
+}
+
+function hasMeaningfulFinancialNumericDifference(first, second) {
+  const firstTokens = financialNumericTokens(first)
+  const secondTokens = financialNumericTokens(second)
+  if (firstTokens.length === 0 && secondTokens.length === 0) return false
+  if (firstTokens.length === 0 || secondTokens.length === 0) return true
+  return firstTokens.join('|') !== secondTokens.join('|')
+}
+
+function financialNumericTokens(value) {
+  const text = textOf(value)
+  const tokens = []
+  const unitPattern = '(만원|천원|억원|원|krw|usd|eur|jpy|%|퍼센트|개월|년|months?|years?)'
+
+  for (const match of text.matchAll(new RegExp(`(\\d+(?:[.,]\\d+)?)\\s*(?:~|-|–)\\s*(\\d+(?:[.,]\\d+)?)\\s*${unitPattern}`, 'gi'))) {
+    tokens.push(`${normalizeNumericToken(match[1])}-${normalizeNumericToken(match[2])}:${normalizeUnitToken(match[3])}`)
+  }
+
+  for (const match of text.matchAll(/([₩$€£¥])\s*(\d+(?:[.,]\d+)?)/g)) {
+    tokens.push(`${normalizeNumericToken(match[2])}:${match[1]}`)
+  }
+
+  for (const match of text.matchAll(new RegExp(`(\\d+(?:[.,]\\d+)?)\\s*${unitPattern}`, 'gi'))) {
+    tokens.push(`${normalizeNumericToken(match[1])}:${normalizeUnitToken(match[2])}`)
+  }
+
+  return uniqueStrings(tokens)
+}
+
+function normalizeNumericToken(value) {
+  return textOf(value).replace(/,/g, '.').replace(/^0+(?=\d)/, '') || '0'
+}
+
+function normalizeUnitToken(value) {
+  const unit = textOf(value).toLowerCase().replace(/\s+/g, '')
+  if (unit === '퍼센트') return '%'
+  if (/^months?$/.test(unit)) return '개월'
+  if (/^years?$/.test(unit)) return '년'
+  return unit
 }
 
 function hasMediaEvidence(item = {}) {
@@ -469,16 +509,16 @@ function numericTokens(value) {
   return textOf(value).match(/\d+(?:[.,]\d+)?/g) || []
 }
 
+function uniqueStrings(values = []) {
+  return [...new Set(values.map(textOf).filter(Boolean))]
+}
+
 function firstNumber(...values) {
   for (const value of values) {
     const number = Number(value)
     if (Number.isFinite(number)) return number
   }
   return null
-}
-
-function uniqueStrings(values = []) {
-  return [...new Set(values.map(textOf).filter(Boolean))]
 }
 
 function escapeRegex(value) {

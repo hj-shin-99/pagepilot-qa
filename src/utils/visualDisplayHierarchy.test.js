@@ -83,6 +83,17 @@ test('display category keeps media cta and price when evidence is explicit', () 
   assert.equal(normalizeDisplayCategory(issue({ category: 'text', figmaValue: '월 47만원', webValue: '월 50만원' })), 'price')
 })
 
+test('display category does not use sectionPath ordinal as price evidence', () => {
+  const item = issue({
+    category: 'text',
+    sectionPath: 'Product guide / 02 / finance terms',
+    figmaValue: '계약기간 동안 낮은 월 납입금을 제공하는 금융 프로그램입니다.',
+    webValue: '계약기간 동안 낮은 월 납입금을 제공하는 금융 상품입니다.',
+  })
+
+  assert.equal(normalizeDisplayCategory(item), 'text')
+})
+
 test('core semantic duplicate keeps one representative while full source remains untouched', () => {
   const source = [
     issue({ id: 'final-media', source: 'final', category: 'media', figmaValue: 'image', webValue: 'video', yRatio: 0.1, sectionKey: 'hero-media' }),

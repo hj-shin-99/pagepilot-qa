@@ -261,6 +261,7 @@ function createPriceSupplementalIssues(prices = []) {
     const figmaValue = textOf(figma.displayText || figma.text)
     const webValue = textOf(web.displayText || web.text)
     if (!figmaValue || !webValue || sameLooseText(figmaValue, webValue)) return
+    if (!hasMeaningfulFinancialNumericDifference(figmaValue, webValue)) return
     items.push(normalizeIssue({
       id: `display-price-${key}`,
       source: 'price',
@@ -421,12 +422,54 @@ function classifyComparisonDifference(item = {}, prices = []) {
 }
 
 function hasPriceSignal(item = {}, prices = []) {
-  const value = normalizeComparableText(`${item.figmaText || item.text || ''} ${item.webText || ''}`)
-  if (numericTokens(value).length > 0 && /[₩$€¥]|원|만원|%|개월|년|월|금리|납입|price|amount/i.test(`${item.figmaText || ''} ${item.webText || ''}`)) return true
+  const figmaValue = item.figmaText || item.text || ''
+  const webValue = item.webText || ''
+  if (hasMeaningfulFinancialNumericDifference(figmaValue, webValue)) return true
+  const value = normalizeComparableText(`${figmaValue} ${webValue}`)
   return prices.some((price) => {
     const priceText = normalizeComparableText(`${price.displayText || ''} ${price.text || ''} ${price.fullContextText || ''}`)
-    return priceText && (priceText.includes(value) || value.includes(priceText))
+    return priceText && (priceText.includes(value) || value.includes(priceText)) && hasMeaningfulFinancialNumericDifference(figmaValue, webValue)
   })
+}
+
+function hasMeaningfulFinancialNumericDifference(first, second) {
+  const firstTokens = financialNumericTokens(first)
+  const secondTokens = financialNumericTokens(second)
+  if (firstTokens.length === 0 && secondTokens.length === 0) return false
+  if (firstTokens.length === 0 || secondTokens.length === 0) return true
+  return firstTokens.join('|') !== secondTokens.join('|')
+}
+
+function financialNumericTokens(value) {
+  const text = textOf(value)
+  const tokens = []
+  const unitPattern = '(만원|천원|억원|원|krw|usd|eur|jpy|%|퍼센트|개월|년|months?|years?)'
+
+  for (const match of text.matchAll(new RegExp(`(\\d+(?:[.,]\\d+)?)\\s*(?:~|-|–)\\s*(\\d+(?:[.,]\\d+)?)\\s*${unitPattern}`, 'gi'))) {
+    tokens.push(`${normalizeNumericToken(match[1])}-${normalizeNumericToken(match[2])}:${normalizeUnitToken(match[3])}`)
+  }
+
+  for (const match of text.matchAll(/([₩$€£¥])\s*(\d+(?:[.,]\d+)?)/g)) {
+    tokens.push(`${normalizeNumericToken(match[2])}:${match[1]}`)
+  }
+
+  for (const match of text.matchAll(new RegExp(`(\\d+(?:[.,]\\d+)?)\\s*${unitPattern}`, 'gi'))) {
+    tokens.push(`${normalizeNumericToken(match[1])}:${normalizeUnitToken(match[2])}`)
+  }
+
+  return uniqueStrings(tokens)
+}
+
+function normalizeNumericToken(value) {
+  return textOf(value).replace(/,/g, '.').replace(/^0+(?=\d)/, '') || '0'
+}
+
+function normalizeUnitToken(value) {
+  const unit = textOf(value).toLowerCase().replace(/\s+/g, '')
+  if (unit === '퍼센트') return '%'
+  if (/^months?$/.test(unit)) return '개월'
+  if (/^years?$/.test(unit)) return '년'
+  return unit
 }
 
 function normalizeCategory(value) {

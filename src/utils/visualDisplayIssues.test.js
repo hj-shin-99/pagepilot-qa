@@ -74,6 +74,41 @@ test('history compact result creates the same integrated display list', () => {
   assert.equal(issues.meta.priceNumericEvidenceCount, 2)
 })
 
+test('price classification requires compared financial numeric value differences', () => {
+  const issues = createVisualDisplayIssues({
+    comparison: { differences: [
+      { figmaText: '02 낮은 월납입금으로 서비스 이용', webText: '낮은 월 납입금으로 서비스 이용', sectionPath: 'Product guide / 02 / benefit', confidence: 'high' },
+      { figmaText: '3~4년 후 소유 선택 가능 안내', webText: '3~4년 후 반납 선택 가능 안내', confidence: 'high' },
+      { figmaText: '월 47만원', webText: '월 57만원', confidence: 'high' },
+      { figmaText: '금리 4.9%', webText: '금리 5.1%', confidence: 'high' },
+      { figmaText: '계약기간 24개월', webText: '계약기간 36개월', confidence: 'high' },
+      { figmaText: '월 47만원 조건', webText: '별도 안내', confidence: 'high' },
+    ] },
+    aiHints: {},
+  })
+
+  const categoryFor = (figmaValue) => issues.find((item) => item.figmaValue === figmaValue)?.categoryLabel
+  assert.equal(categoryFor('02 낮은 월납입금으로 서비스 이용'), 'Text')
+  assert.equal(categoryFor('3~4년 후 소유 선택 가능 안내'), 'Text')
+  assert.equal(categoryFor('월 47만원'), 'Price / Numeric')
+  assert.equal(categoryFor('금리 4.9%'), 'Price / Numeric')
+  assert.equal(categoryFor('계약기간 24개월'), 'Price / Numeric')
+  assert.equal(categoryFor('월 47만원 조건'), 'Price / Numeric')
+})
+
+test('price supplemental ignores equal numeric tokens with text-only differences', () => {
+  const issues = createVisualDisplayIssues({
+    comparison: { differences: [{ figmaText: '3~4년 후 소유 선택 가능 안내', webText: '3~4년 후 반납 선택 가능 안내', confidence: 'high' }] },
+    aiHints: { prices: [
+      { source: 'figma', numericType: 'duration', displayText: '3~4년 후 소유 선택 가능 안내', sectionPath: 'Plan detail', yRatio: 0.4 },
+      { source: 'web', numericType: 'duration', displayText: '3~4년 후 반납 선택 가능 안내', sectionPath: 'Plan detail', yRatio: 0.4 },
+    ] },
+  })
+
+  assert.equal(issues.length, 1)
+  assert.equal(issues[0].categoryLabel, 'Text')
+})
+
 test('readable area fields are preserved for frontend grouping only', () => {
   const issues = createVisualDisplayIssues({
     comparison: { differences: [{ figmaText: 'A', webText: 'B', readableCanonicalArea: 'Product / Price', sectionPath: 'Frame / Group / Node 1' }] },

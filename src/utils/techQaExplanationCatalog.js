@@ -157,10 +157,19 @@ function createUrlExplanation({ raw, displayStatus, category, target }) {
 }
 
 function createClickExplanation({ raw, displayStatus, category, target }) {
+  if (displayStatus === '정상' && (raw.actionClassification === 'verified-working' || category === 'valid-url' || category === 'observable-action' || raw.interactionOutcome === 'navigation' || raw.interactionOutcome === 'new-window')) return {
+    meaning: `'${target}' 요소에서 URL 이동 또는 관찰 가능한 UI 변화가 확인됐습니다.`,
+    commonCauses: ['정상적인 링크 이동이 확인됐을 수 있습니다.', '모달, 탭, 아코디언 등 화면 변화가 확인됐을 수 있습니다.', '보조 hit-test evidence가 있더라도 최종 판정은 성공 신호를 기준으로 표시합니다.'],
+    classificationReason: '최종 클릭 판정에서 유효한 URL, 새 창, 화면 변화 또는 UI 상태 변화가 확인되어 정상으로 분류했습니다.',
+    verifySteps: [`필요 시 '${target}' 요소를 직접 클릭합니다.`, '의도한 이동 또는 화면 변화가 현재도 유지되는지 확인합니다.'],
+    decisionGuide: ['동일 조건에서 의도한 동작이 유지되면 현재 검사 조건에서는 정상으로 볼 수 있습니다.', '배포 후 UI가 바뀐 경우 다시 검사해 결과를 갱신합니다.'],
+  }
   if (raw.unrelatedOverlay === true || raw.hitTestStatus === 'hitTestFailed') return {
     meaning: `자동 검사가 '${target}' 요소를 클릭하려 했지만, 클릭 좌표 위에 다른 화면 요소가 있어 대상에 클릭이 전달되지 않았습니다.`,
     commonCauses: ['팝업이나 쿠키 배너가 버튼 위를 덮고 있을 수 있습니다.', '슬라이드 또는 영상 전환 중 임시 레이어가 남아 있을 수 있습니다.', 'z-index 설정으로 다른 요소가 버튼보다 위에 있을 수 있습니다.', '보이지 않는 요소의 pointer-events가 활성화돼 있을 수 있습니다.'].concat(raw.overlaySelector ? [`기술 정보에 기록된 overlay selector가 클릭 지점 위에 있었을 가능성이 있습니다.`] : []),
-    classificationReason: 'Playwright hit-test에서 클릭 대상 요소가 아니라 관계없는 다른 요소가 실제 클릭 좌표의 최상단 요소로 확인됐습니다. 자동 클릭이 객관적으로 차단됐기 때문에 문제 확인으로 분류했습니다.',
+    classificationReason: displayStatus === '검토 필요'
+      ? 'Playwright hit-test에서 클릭 대상 요소가 아니라 관계없는 다른 요소가 실제 클릭 좌표의 최상단 요소로 확인됐습니다. 활성 overlay 또는 일시적 레이어에 의한 자동화 한계 가능성이 있어 검토 필요 상태로 분류했습니다.'
+      : 'Playwright hit-test에서 클릭 대상 요소가 아니라 관계없는 다른 요소가 실제 클릭 좌표의 최상단 요소로 확인됐습니다. 자동 클릭이 객관적으로 차단됐기 때문에 문제 확인으로 분류했습니다.',
     verifySteps: ['해당 페이지를 새로 엽니다.', `화면 로딩이 완료된 뒤 '${target}' 요소를 클릭합니다.`, '슬라이드 또는 영상 전환 중에도 다시 클릭합니다.', '요소 중앙과 좌우 영역을 각각 클릭합니다.', '의도한 이동 또는 화면 변화가 발생하는지 확인합니다.'],
     decisionGuide: ['모든 시점에서 정상 동작하면 자동 검사 시점의 일시적 차단 가능성이 있습니다.', '특정 전환 시점에만 클릭되지 않으면 animation 또는 overlay 확인이 필요합니다.', '항상 클릭되지 않으면 실제 클릭 차단 문제일 가능성이 있습니다.'],
   }

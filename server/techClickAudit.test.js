@@ -21,10 +21,126 @@ test('valid navigation href wins over generic menu or search wording', () => {
   assert.equal(explicitTabLink.actionClassification, 'ui-control-no-url-required')
 })
 
+test('valid href anchor with inferred UI-control semantic stays valid-url when not clicked', () => {
+  const item = classifyClickableCandidate(candidate({ tagName: 'a', kind: 'a', href: '/normal/path', url: 'https://example.com/normal/path', requestedUrl: 'https://example.com/normal/path', landingUrl: 'https://example.com/normal/path', hrefState: 'valid-url', label: 'Normal path', uiControlSemantic: 'semantic-ui-control', hitTestStatus: 'hitTestNotRun', unrelatedOverlay: false, clickExecuted: false, interactionOutcome: 'ui-change' }))
+
+  assert.equal(item.hrefState, 'valid-url')
+  assert.equal(item.status, 'ok')
+  assert.equal(item.category, 'valid-url')
+  assert.equal(item.actionClassification, 'verified-working')
+  assert.notEqual(item.category, 'UI-control-no-url-required')
+})
+
+test('valid href navigation remains ok even when click was not executed', () => {
+  const item = classifyClickableCandidate(candidate({ tagName: 'a', kind: 'a', href: '/details', url: 'https://example.com/details', label: 'View details', clickExecuted: false, interactionOutcome: 'unknown' }))
+
+  assert.equal(item.hrefState, 'valid-url')
+  assert.equal(item.status, 'ok')
+  assert.equal(item.category, 'valid-url')
+  assert.equal(item.actionClassification, 'verified-working')
+  assert.equal(item.clickExecuted, false)
+})
+
+test('true generic UI control without href remains ok', () => {
+  const item = classifyClickableCandidate(candidate({ tagName: 'button', kind: 'button', label: 'Open menu', className: 'menu-toggle' }))
+
+  assert.equal(item.hrefState, 'missing-href')
+  assert.equal(item.status, 'ok')
+  assert.equal(item.category, 'UI-control-no-url-required')
+  assert.equal(item.actionClassification, 'ui-control-no-url-required')
+})
+
+test('generic expandable sidebar or menu control without href is not ambiguous when semantic evidence is sufficient', () => {
+  const sidebar = classifyClickableCandidate(candidate({ tagName: 'button', kind: 'button', label: 'Open panel', selector: '.layout-sidebar > button.toggle', domPath: 'main > aside.sidebar > button.toggle', hitTestStatus: 'hitTestPassed', descendantMatch: true, ancestorMatch: true }))
+  const drawer = classifyClickableCandidate(candidate({ tagName: 'button', kind: 'button', label: 'Toggle', className: 'drawer-toggle', ariaExpanded: 'false' }))
+
+  assert.equal(sidebar.status, 'ok')
+  assert.equal(sidebar.actionClassification, 'ui-control-no-url-required')
+  assert.notEqual(sidebar.category, 'ambiguous-action')
+  assert.equal(drawer.actionClassification, 'ui-control-no-url-required')
+})
+
+test('button with aria-controls and controlled target is URL-free UI control', () => {
+  const item = classifyClickableCandidate(candidate({ tagName: 'button', kind: 'button', label: 'Open panel', ariaControls: 'panel-1', controlledTargetExists: true, actionEvidence: 'aria-controls' }))
+
+  assert.equal(item.status, 'ok')
+  assert.equal(item.category, 'UI-control-no-url-required')
+  assert.equal(item.actionClassification, 'ui-control-no-url-required')
+})
+
+test('button with expandable state and controlled target is URL-free UI control', () => {
+  const item = classifyClickableCandidate(candidate({ tagName: 'button', kind: 'button', label: 'Expand section', ariaExpanded: 'false', controlledTargetExists: true, actionEvidence: 'aria-expanded' }))
+
+  assert.equal(item.status, 'ok')
+  assert.equal(item.category, 'UI-control-no-url-required')
+  assert.equal(item.actionClassification, 'ui-control-no-url-required')
+})
+
+test('button with aria-haspopup state is URL-free UI control', () => {
+  const item = classifyClickableCandidate(candidate({ tagName: 'button', kind: 'button', label: 'Open options', ariaHaspopup: 'menu', actionEvidence: 'aria-haspopup' }))
+
+  assert.equal(item.status, 'ok')
+  assert.equal(item.category, 'UI-control-no-url-required')
+  assert.equal(item.actionClassification, 'ui-control-no-url-required')
+})
+
+test('button with pressed toggle state is URL-free UI control', () => {
+  const item = classifyClickableCandidate(candidate({ tagName: 'button', kind: 'button', label: 'Toggle option', ariaPressed: 'false', actionEvidence: 'aria-pressed' }))
+
+  assert.equal(item.status, 'ok')
+  assert.equal(item.category, 'UI-control-no-url-required')
+  assert.equal(item.actionClassification, 'ui-control-no-url-required')
+})
+
+test('javascript pseudo-link with sufficient generic UI-control evidence becomes UI-control-no-url-required', () => {
+  const item = classifyClickableCandidate(candidate({ tagName: 'a', kind: 'a', href: 'javascript:void(0);', url: '', label: 'Current option', selector: '.custom-select-area > a.current', domPath: 'footer > div.select-wrap > div.custom-select-area > a.current', uiControlSemantic: 'semantic-ui-control' }))
+
+  assert.equal(item.hrefState, 'javascript-pseudo-url')
+  assert.equal(item.status, 'ok')
+  assert.equal(item.category, 'UI-control-no-url-required')
+  assert.equal(item.actionClassification, 'ui-control-no-url-required')
+})
+
+test('javascript pseudo-link with aria-controls becomes URL-free UI control', () => {
+  const item = classifyClickableCandidate(candidate({ tagName: 'a', kind: 'a', href: 'javascript:void(0)', url: '', label: 'Current option', ariaControls: 'listbox-1', controlledTargetExists: true, actionEvidence: 'aria-controls' }))
+
+  assert.equal(item.hrefState, 'javascript-pseudo-url')
+  assert.equal(item.status, 'ok')
+  assert.equal(item.category, 'UI-control-no-url-required')
+  assert.equal(item.actionClassification, 'ui-control-no-url-required')
+})
+
+test('javascript pseudo-link with listbox semantic evidence becomes URL-free UI control', () => {
+  const item = classifyClickableCandidate(candidate({ tagName: 'a', kind: 'a', href: 'javascript:void(0)', url: '', label: 'Current option', role: 'combobox', ariaHaspopup: 'listbox', actionEvidence: 'aria-haspopup' }))
+
+  assert.equal(item.hrefState, 'javascript-pseudo-url')
+  assert.equal(item.status, 'ok')
+  assert.equal(item.category, 'UI-control-no-url-required')
+  assert.equal(item.actionClassification, 'ui-control-no-url-required')
+})
+
+test('javascript pseudo-link without UI-control evidence remains warning', () => {
+  const item = classifyClickableCandidate(candidate({ tagName: 'a', kind: 'a', href: 'javascript:void(0)', url: '', label: 'Apply now', hasOnClick: true, selector: '.primary-cta' }))
+
+  assert.equal(item.hrefState, 'javascript-pseudo-url')
+  assert.equal(item.status, 'warn')
+  assert.equal(item.category, 'javascript-pseudo-url')
+  assert.equal(item.actionClassification, 'actionable-warning')
+})
+
+test('button without href action or UI-control evidence remains ambiguous-action', () => {
+  const item = classifyClickableCandidate(candidate({ tagName: 'button', kind: 'button', label: 'Continue', className: 'primary-cta', hasOnClick: false, actionEvidence: '' }))
+
+  assert.equal(item.hrefState, 'missing-href')
+  assert.equal(item.status, 'warn')
+  assert.equal(item.category, 'ambiguous-action')
+  assert.equal(item.actionClassification, 'actionable-warning')
+})
+
 test('B role button CTA without href is ambiguous action for UID follow-up', () => {
   const item = classifyClickableCandidate(candidate({ tagName: 'div', role: 'button', className: 'primary-cta', label: 'Product' }))
   assert.equal(item.hrefState, 'missing-href')
-  assert.equal(item.category, 'missing-navigation-action')
+  assert.equal(item.category, 'ambiguous-action')
   assert.equal(item.status, 'warn')
   assert.equal(item.actionClassification, 'actionable-warning')
 })
@@ -62,6 +178,55 @@ test('G safe click with observable dialog or DOM change becomes ok', () => {
   assert.equal(checked.category, 'observable-action')
   assert.equal(checked.status, 'ok')
   assert.equal(checked.actionClassification, 'verified-working')
+})
+
+test('pre-existing runtime errors are preserved but not attributed to a successful click', () => {
+  const item = classifyClickableCandidate(candidate({ tagName: 'button', label: 'Open details', hasOnClick: true }))
+  const checked = applySafeClickResult(item, {
+    clicked: true,
+    changed: true,
+    interactionOutcome: 'ui-change',
+    interactionEvidence: ['DOM mutation 감지'],
+    consoleErrors: ['ReferenceError: existed before click'],
+    runtimeErrors: [{ eventType: 'console', message: 'ReferenceError: existed before click' }],
+    preClickRuntimeErrors: [{ eventType: 'console', message: 'ReferenceError: existed before click' }],
+    firstPartyRuntimeErrors: [],
+  })
+
+  assert.equal(checked.actionClassification, 'verified-working')
+  assert.equal(checked.status, 'ok')
+  assert.equal(checked.safeClickResult.preClickRuntimeErrors.length, 1)
+})
+
+test('new first-party runtime error after click remains an actual error even with observable change', () => {
+  const item = classifyClickableCandidate(candidate({ tagName: 'button', label: 'Open details', hasOnClick: true }))
+  const checked = applySafeClickResult(item, {
+    clicked: true,
+    changed: true,
+    interactionOutcome: 'ui-change',
+    interactionEvidence: ['DOM mutation 감지'],
+    attributedRuntimeErrors: [{ eventType: 'pageerror', message: 'ReferenceError: click handler failed', source: 'pageerror' }],
+    firstPartyRuntimeErrors: [{ eventType: 'pageerror', message: 'ReferenceError: click handler failed', party: 'first-party' }],
+  })
+
+  assert.equal(checked.category, 'click-runtime-error')
+  assert.equal(checked.actionClassification, 'actual-error')
+  assert.equal(checked.observableChange, true)
+})
+
+test('third-party-only click runtime noise does not become click-runtime-error', () => {
+  const item = classifyClickableCandidate(candidate({ tagName: 'button', label: 'Open details', hasOnClick: true }))
+  const checked = applySafeClickResult(item, {
+    clicked: true,
+    changed: true,
+    interactionOutcome: 'ui-change',
+    interactionEvidence: ['DOM mutation 감지'],
+    attributedRuntimeErrors: [{ eventType: 'console', message: 'Third party script failed', sourceUrl: 'https://cdn.example.test/widget.js' }],
+    firstPartyRuntimeErrors: [],
+  })
+
+  assert.equal(checked.actionClassification, 'verified-working')
+  assert.notEqual(checked.category, 'click-runtime-error')
 })
 
 test('H safe click with no observable change becomes no-observable-action', () => {
@@ -297,6 +462,22 @@ test('unrelated overlay remains actual error with overlay evidence', () => {
   assert.equal(item.reason.includes('unrelated overlay'), true)
 })
 
+test('active semantic overlay blocks automation as review instead of target defect', () => {
+  const item = classifyClickableCandidate(candidate({ tagName: 'button', label: 'Custom action', hasOnClick: true, hitTestStatus: 'hitTestFailed', unrelatedOverlay: true, overlaySelector: '[role="dialog"]', hitTargetSelector: '[role="dialog"]', overlayVisible: true, overlayCoversClickPoint: true, overlayPointerEvents: 'auto', overlayOpacity: 1, overlayRole: 'dialog', overlaySemantic: true }))
+
+  assert.equal(item.status, 'warn')
+  assert.equal(item.category, 'blocked-by-active-overlay')
+  assert.equal(item.actionClassification, 'actionable-warning')
+  assert.equal(item.interactionOutcome, 'blocked')
+})
+
+test('hidden or non-intercepting overlay evidence is not treated as a blocker', () => {
+  const item = classifyClickableCandidate(candidate({ tagName: 'a', href: '/product', url: 'https://example.com/product', hitTestStatus: 'hitTestFailed', unrelatedOverlay: true, overlayVisible: false, overlayCoversClickPoint: false, overlayPointerEvents: 'none', overlayOpacity: 0 }))
+
+  assert.equal(item.category, 'valid-url')
+  assert.equal(item.actionClassification, 'verified-working')
+})
+
 test('collapsed or hit-test unavailable UI control is not actual error', () => {
   const item = classifyClickableCandidate(candidate({ tagName: 'button', label: 'Next slide', dataSlide: 'next', hitTestStatus: 'hitTestUnavailable', viewportState: 'outsideViewport' }))
 
@@ -375,6 +556,110 @@ test('click action summary counts merged target observations once and keeps dist
   assert.equal(summary.meta.candidateCount, 2)
   assert.equal(summary.meta.actualErrorCount, 1)
   assert.equal(summary.meta.verifiedWorkingCount, 1)
+})
+
+test('valid href anchor stays verified when merged with weaker UI-control observation', () => {
+  const validHref = classifyClickableCandidate(candidate({ auditId: 'href', tagName: 'a', kind: 'a', selector: '#normal-link', domPath: 'main>a:nth-child(1)', href: '/normal/path', url: 'https://example.com/normal/path', requestedUrl: 'https://example.com/normal/path', landingUrl: 'https://example.com/normal/path', label: 'Normal link' }))
+  const uiControlObservation = classifyClickableCandidate(candidate({ auditId: 'ui', tagName: 'a', kind: 'a', selector: '#normal-link', domPath: 'main>a:nth-child(1)', href: '', url: '', landingUrl: 'https://example.com/normal/path', label: 'Normal link', uiControlSemantic: 'semantic-ui-control', ariaExpanded: 'false' }))
+
+  const [merged] = mergeClickActionObservations([validHref, uiControlObservation])
+
+  assert.equal(merged.actionClassification, 'verified-working')
+  assert.equal(merged.category, 'valid-url')
+  assert.equal(merged.hrefState, 'valid-url')
+  assert.equal(merged.landingUrl, 'https://example.com/normal/path')
+})
+
+test('URL-free UI controls and runtime errors keep existing Click policies', () => {
+  const buttonControl = classifyClickableCandidate(candidate({ tagName: 'button', kind: 'button', href: '', url: '', ariaControls: 'panel', ariaExpanded: 'false', uiControlSemantic: 'controlled-ui', label: 'Open panel' }))
+  const pseudoControl = classifyClickableCandidate(candidate({ tagName: 'a', kind: 'a', href: 'javascript:void(0)', url: '', ariaControls: 'panel', ariaExpanded: 'false', label: 'Toggle panel' }))
+  const clickedNavigation = applySafeClickResult(classifyClickableCandidate(candidate({ tagName: 'a', kind: 'a', href: '/normal/path', url: 'https://example.com/normal/path', label: 'Normal link' })), { clicked: true, changed: true, interactionOutcome: 'navigation', interactionEvidence: ['현재 창 URL 변경'] })
+  const runtimeError = applySafeClickResult(classifyClickableCandidate(candidate({ tagName: 'a', kind: 'a', href: '/normal/path', url: 'https://example.com/normal/path', label: 'Normal link' })), { clicked: true, changed: true, interactionOutcome: 'navigation', interactionEvidence: ['현재 창 URL 변경'], firstPartyRuntimeErrors: [{ eventType: 'pageerror', message: 'ReferenceError: click failed', party: 'first-party' }] })
+
+  assert.equal(buttonControl.category, 'UI-control-no-url-required')
+  assert.equal(buttonControl.actionClassification, 'ui-control-no-url-required')
+  assert.equal(pseudoControl.actionClassification, 'ui-control-no-url-required')
+  assert.equal(clickedNavigation.actionClassification, 'verified-working')
+  assert.equal(clickedNavigation.category, 'observable-action')
+  assert.equal(runtimeError.category, 'click-runtime-error')
+  assert.equal(runtimeError.actionClassification, 'actual-error')
+})
+
+test('URL-free semantic button keeps source URL out of href and formAction fields', () => {
+  const sourceUrl = 'https://example.com/current-page'
+  const item = classifyClickableCandidate(candidate({ tagName: 'button', kind: 'button', label: 'Open menu', className: 'menu-toggle', href: '', url: '', formAction: '', sourceUrl }))
+
+  assert.equal(item.hrefState, 'missing-href')
+  assert.equal(item.status, 'ok')
+  assert.equal(item.category, 'UI-control-no-url-required')
+  assert.equal(item.actionClassification, 'ui-control-no-url-required')
+  assert.equal(item.href, '')
+  assert.equal(item.formAction, '')
+  assert.equal(item.url, '')
+  assert.equal(item.sourceUrl, sourceUrl)
+})
+
+test('URL-free close modal button keeps source URL out of href and formAction fields', () => {
+  const sourceUrl = 'https://example.com/current-page'
+  const item = classifyClickableCandidate(candidate({ tagName: 'button', kind: 'button', label: 'Close', ariaLabel: 'Close', dataDismiss: 'modal', actionEvidence: 'data-dismiss', href: '', url: '', formAction: '', sourceUrl }))
+
+  assert.equal(item.hrefState, 'missing-href')
+  assert.equal(item.status, 'ok')
+  assert.equal(item.category, 'UI-control-no-url-required')
+  assert.equal(item.interactionOutcome, 'modal')
+  assert.equal(item.href, '')
+  assert.equal(item.formAction, '')
+  assert.equal(item.url, '')
+  assert.equal(item.sourceUrl, sourceUrl)
+})
+
+test('valid href anchor keeps actual href and resolved request URL separate from source URL', () => {
+  const sourceUrl = 'https://example.com/current-page'
+  const item = classifyClickableCandidate(candidate({ tagName: 'a', kind: 'a', label: 'Details', href: '/details', url: 'https://example.com/details', requestedUrl: 'https://example.com/details', sourceUrl }))
+
+  assert.equal(item.hrefState, 'valid-url')
+  assert.equal(item.status, 'ok')
+  assert.equal(item.category, 'valid-url')
+  assert.equal(item.interactionOutcome, 'navigation')
+  assert.equal(item.href, '/details')
+  assert.equal(item.url, 'https://example.com/details')
+  assert.equal(item.requestedUrl, 'https://example.com/details')
+  assert.equal(item.sourceUrl, sourceUrl)
+})
+
+test('actual form action is preserved without treating source URL as href fallback', () => {
+  const sourceUrl = 'https://example.com/current-page'
+  const item = classifyClickableCandidate(candidate({ tagName: 'button', kind: 'button', label: 'Submit search', type: 'submit', formId: 'search-form', href: '', url: '', formAction: 'https://example.com/search', sourceUrl }))
+
+  assert.equal(item.hrefState, 'missing-href')
+  assert.equal(item.href, '')
+  assert.equal(item.url, '')
+  assert.equal(item.formAction, 'https://example.com/search')
+  assert.equal(item.sourceUrl, sourceUrl)
+})
+
+test('javascript pseudo-link keeps actual href and never resolves to source URL', () => {
+  const sourceUrl = 'https://example.com/current-page'
+  const item = classifyClickableCandidate(candidate({ tagName: 'a', kind: 'a', label: 'Apply now', href: 'javascript:void(0)', url: '', hasOnClick: true, sourceUrl }))
+
+  assert.equal(item.hrefState, 'javascript-pseudo-url')
+  assert.equal(item.status, 'warn')
+  assert.equal(item.category, 'javascript-pseudo-url')
+  assert.equal(item.href, 'javascript:void(0)')
+  assert.equal(item.url, '')
+  assert.equal(item.sourceUrl, sourceUrl)
+})
+
+test('clickable DOM collection does not read implicit browser formAction current-page fallback', () => {
+  const source = fs.readFileSync('server/index.js', 'utf8')
+
+  assert.equal(source.includes('formAction: getActualFormAction(button)'), true)
+  assert.equal(source.includes('formAction: getActualFormAction(element)'), true)
+  assert.equal(source.includes('function getActualFormAction'), true)
+  assert.equal(source.includes("element.form?.getAttribute('action')"), true)
+  assert.equal(source.includes('sourceUrl: location.href || baseUrl'), true)
+  assert.equal(source.includes('formAction: button.formAction ||'), false)
+  assert.equal(source.includes('formAction: element.formAction ||'), false)
 })
 
 function candidate(overrides = {}) {

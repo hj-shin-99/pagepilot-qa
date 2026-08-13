@@ -217,7 +217,7 @@ test('compact Tech QA summary cards use four meaningful KPI values', () => {
   assert.deepEqual(view.summaryCards.map((card) => card.status), ['ok', 'ok', 'warn', 'info'])
   assert.equal(view.summaryCards.find((card) => card.label === '검토 필요').value, '1개')
   assert.equal(view.summaryCards.find((card) => card.label === '검토 필요').detail, '1개 검사에서 발견')
-  assert.equal(view.summaryCards.find((card) => card.label === '정상').value, '고유 URL 2개 · 이미지 1개')
+  assert.equal(view.summaryCards.find((card) => card.label === '정상').value, 'URL 검사 후보 2개 · 이미지 1개')
   assert.equal(view.summaryCards.some((card) => `${card.value} ${card.detail || ''}`.includes('고유 요소')), false)
   assert.equal(view.summaryCards.some((card) => `${card.value} ${card.detail || ''}`.includes('근거')), false)
   assert.equal(labels.includes('콘솔'), false)
@@ -243,7 +243,7 @@ test('Tech QA panel display replaces top KPI cards with completion meta from exi
   assert.equal(display.completion.steps.includes('Tech QA 처리시간 18.2초'), false)
   assert.equal(meta['검사 엔진'], 'Playwright')
   assert.equal(meta['검사 환경'], undefined)
-  assert.equal(meta['고유 URL 검사'], '98개')
+  assert.equal(meta['HTTP 검사 URL'], '98개')
   assert.equal(meta['이미지 검사'], '25개')
   assert.equal(meta['처리시간'], '18.2초')
   assert.equal(meta['총 검사 시간'], '24.3초')
@@ -463,6 +463,26 @@ test('Tech QA priority count excludes safe click skips and normal UI controls', 
   assert.equal(view.clickActionGroups.safeSkipped.length, 1)
   assert.equal(view.clickActionGroups.uiControls.length, 1)
   assert.equal(view.clickActionGroups.verified.length, 1)
+})
+
+test('Tech QA keeps URL and Click UI-control classifications aligned for url-free controls', () => {
+  const view = createTechQaViewModel(result({
+    scanOptions: { url: true, click: true },
+    links: [
+      link({ label: 'Current option', href: 'javascript:void(0)', url: '', status: 'ok', statusCode: null, category: 'url-not-required-ui-control' }),
+      link({ label: 'Apply now', href: 'javascript:void(0)', url: '', status: 'warn', statusCode: null, category: 'javascript-pseudo-url' }),
+    ],
+    clickActions: [
+      clickAction({ label: 'Current option', status: 'ok', actionClassification: 'ui-control-no-url-required', category: 'UI-control-no-url-required', href: 'javascript:void(0)', hrefState: 'javascript-pseudo-url' }),
+      clickAction({ label: 'Apply now', status: 'warn', actionClassification: 'actionable-warning', category: 'javascript-pseudo-url', href: 'javascript:void(0)', hrefState: 'javascript-pseudo-url' }),
+    ],
+  }))
+
+  assert.equal(view.links.filter((item) => item.status === 'ok').length, 1)
+  assert.equal(view.links.filter((item) => item.status === 'warn').length, 1)
+  assert.equal(view.clickActionGroups.uiControls.length, 1)
+  assert.equal(view.clickActionGroups.warnings.length, 1)
+  assert.equal(view.issueCounts.warningElementCount, 1)
 })
 
 test('Tech QA click action priority keeps only actionable click failures', () => {
@@ -808,7 +828,7 @@ test('basic diagnostic table keeps normal rows visible without accordion', () =>
   assert.equal(view.basicCheckItems.find((item) => item.id === 'access').value, '정상 · HTTP 200')
   assert.equal(view.basicCheckItems.find((item) => item.id === 'images').value, '총 25개 · 실패 0개')
   assert.equal(view.basicCheckItems.find((item) => item.id === 'resource-size').value, '큰 리소스 없음')
-  assert.equal(view.basicCheckItems.find((item) => item.id === 'links').value, '고유 URL 10개 · HTTP 요청 문제 0개')
+  assert.equal(view.basicCheckItems.find((item) => item.id === 'links').value, 'URL 검사 후보 10개 · HTTP 요청 문제 0개')
 })
 
 test('resource size check remains in basic results and preserves raw evidence for detail rendering', () => {
@@ -893,7 +913,7 @@ test('generic Tech QA display A keeps all basic checks normal with objective cou
   assert.equal(view.issueCounts.errorElementCount, 0)
   assert.equal(view.issueCounts.warningElementCount, 0)
   assert.equal(view.basicCheckItems.find((item) => item.id === 'images').value, '총 25개 · 실패 0개')
-  assert.equal(view.basicCheckItems.find((item) => item.id === 'links').value, '고유 URL 102개 · HTTP 요청 문제 0개')
+  assert.equal(view.basicCheckItems.find((item) => item.id === 'links').value, 'URL 검사 후보 102개 · HTTP 요청 문제 0개')
 })
 
 test('generic Tech QA display B reports failed image count and preserves image URLs', () => {
@@ -1241,13 +1261,27 @@ test('Tech QA modal and hreflang display paths fix remaining Korean grammar mist
   assert.equal(seoRow.value.includes(['문제 확인', '로'].join('')), false)
 })
 
-test('Tech QA unavailable landing explanation follows display status instead of landing-ok category', () => {
-  const detail = createTechQaDetailViewModel({ rowId: 'tech-landing-bmwfs', status: 'error', statusLabel: '검사 불가', category: 'landing-ok', statusCode: 200, label: 'BMW Financial Services', value: '검사 불가 · HTTP 200' })
+test('Tech QA landing display uses canonical ok status over stale unavailable label', () => {
+  const detail = createTechQaDetailViewModel({ rowId: 'tech-landing-ok-stale-label', status: 'ok', statusLabel: '검사 불가', category: 'landing-ok', statusCode: 200, label: '랜딩 페이지', value: '검사 불가 · HTTP 200 · 최종 랜딩 페이지가 정상적으로 열렸습니다.', note: '최종 랜딩 페이지가 정상적으로 열렸습니다.', loadWarning: 'networkidle timeout' })
 
-  assert.equal(detail.displayStatus, '검사 불가')
-  assert.equal(detail.meaning.includes('끝까지 확인하지 못했습니다'), true)
-  assert.equal(detail.meaning.includes('기본 콘텐츠와 성공 응답'), false)
-  assert.equal(detail.classificationReason.includes('정상으로 분류했습니다'), false)
+  assert.equal(detail.displayStatus, '정상')
+  assert.equal(detail.summary, '정상 · HTTP 200 · 최종 랜딩 페이지가 정상적으로 열렸습니다.')
+  assert.equal(detail.summary.includes('검사 불가'), false)
+  assert.equal(detail.meaning.includes('기본 콘텐츠와 성공 응답'), true)
+  assert.equal(detail.meaning.includes('끝까지 확인하지 못했습니다'), false)
+  assert.equal(detail.technicalEvidence.some((entry) => entry.label === 'raw value' && entry.value.includes('검사 불가')), true)
+})
+
+test('Tech QA landing display keeps unavailable fallback only when canonical evidence does not override it', () => {
+  const restricted = createTechQaDetailViewModel({ rowId: 'tech-landing-restricted', status: 'warn', statusLabel: '검사 불가', category: 'restricted', statusCode: 403, label: '랜딩 페이지', value: '검사 불가 · HTTP 403' })
+  const needsReview = createTechQaDetailViewModel({ rowId: 'tech-landing-review', status: 'warn', category: 'needs-review', statusCode: 200, label: '랜딩 페이지' })
+  const browserError = createTechQaDetailViewModel({ rowId: 'tech-landing-browser-error', status: 'error', category: 'browser-error-page', statusCode: 200, label: '랜딩 페이지' })
+  const legacy = createTechQaDetailViewModel({ rowId: 'tech-landing-legacy', statusLabel: '검사 불가', label: 'Legacy landing', value: '검사 불가' })
+
+  assert.equal(restricted.displayStatus, '검사 불가')
+  assert.equal(needsReview.displayStatus, '검토 필요')
+  assert.equal(browserError.displayStatus, '문제 확인')
+  assert.equal(legacy.displayStatus, '검사 불가')
 })
 
 test('Tech QA technical owner guidance is hidden only for normal and not applicable detail entries', () => {
@@ -1275,6 +1309,32 @@ test('Tech QA evidence labels are selected from display status without changing 
   assert.equal(source.includes("return { label: '검토 필요 사유', items }"), true)
   assert.equal(source.includes('isRepeatedEvidenceSummary(item, items)'), true)
   assert.equal(source.includes('item.issues.filter'), true)
+})
+
+test('Tech QA panel normal details and click decision labels prefer canonical success display text', () => {
+  const source = fs.readFileSync('src/components/TechQaPanel.jsx', 'utf8')
+
+  assert.equal(source.includes('function getConfirmedNormalDetailText'), true)
+  assert.equal(source.includes('formatCanonicalSuccessDisplay(item)'), true)
+  assert.equal(source.includes('function getNormalInteractionOutcomeLabel'), true)
+  assert.equal(source.includes("if (outcome) return `${status} · ${outcome}`"), true)
+})
+
+test('ProblemElementCard keeps href action display separate from source URL evidence', () => {
+  const source = fs.readFileSync('src/components/TechQaPanel.jsx', 'utf8')
+  const cardStart = source.indexOf('function ProblemElementCard')
+  const cardEnd = source.indexOf('function formatDecisionResult', cardStart)
+  const cardSource = source.slice(cardStart, cardEnd)
+  const helperStart = source.indexOf('function getHrefActionDisplayValue')
+  const helperEnd = source.indexOf('function getNormalInteractionOutcomeLabel', helperStart)
+  const helperSource = source.slice(helperStart, helperEnd)
+
+  assert.equal(cardSource.includes('value={getHrefActionDisplayValue(entry)}'), true)
+  assert.equal(cardSource.includes('value={entry.href || entry.formAction || entry.actionType || entry.actionEvidence}'), false)
+  assert.equal(cardSource.includes('label="source URL" value={entry.sourceUrl || entry.source}'), true)
+  assert.equal(helperSource.includes('if (entry.href || entry.formAction) return entry.href || entry.formAction'), true)
+  assert.equal(helperSource.includes('if (entry.actionEvidence) return entry.actionEvidence'), true)
+  assert.equal(helperSource.includes('if (entry.hasOnClick === true && entry.actionType) return entry.actionType'), true)
 })
 
 test('Tech QA detail display copy fixes remaining Korean postposition mistakes', () => {
@@ -1432,6 +1492,41 @@ test('Click explanation templates cover overlay timeout no-change UI control nav
     assert.equal(`${detail.meaning} ${detail.classificationReason}`.includes(item.expect), true)
     assert.equal(detail.verifySteps.some((step) => step.includes(item.step)), true)
   })
+})
+
+test('Click normal explanation follows final ok status even when hit-test evidence is preserved', () => {
+  const detail = createTechQaDetailViewModel({ rowId: 'tech-click-valid-url-stale-hit-test', status: 'ok', category: 'valid-url', label: '프로모션 바로가기', actionClassification: 'verified-working', hitTestStatus: 'hitTestFailed', unrelatedOverlay: true, overlaySelector: '#overlay', interactionOutcome: 'navigation' })
+
+  assert.equal(detail.displayStatus, '정상')
+  assert.equal(detail.meaning.includes('URL 이동'), true)
+  assert.equal(detail.classificationReason.includes('정상으로 분류했습니다'), true)
+  assert.equal(detail.classificationReason.includes('문제 확인'), false)
+  assert.equal(detail.meaning.includes('클릭 좌표 위에 다른 화면 요소'), false)
+  assert.equal(detail.technicalEvidence.some((entry) => entry.label === 'overlay selector' && entry.value === '#overlay'), true)
+})
+
+test('Click ok scroll result uses final interaction label instead of stale href technical term', () => {
+  const detail = createTechQaDetailViewModel({ rowId: 'tech-click-scroll', status: 'ok', category: 'observable-action', label: 'Scroll target', technicalTerm: 'href 누락', hrefState: 'missing-href', interactionOutcome: 'scroll', actionClassification: 'verified-working', value: '동일 페이지 내 스크롤 또는 anchor 이동이 감지되었습니다.' })
+
+  assert.equal(detail.displayStatus, '정상')
+  assert.equal(detail.summary, '정상')
+  assert.equal(detail.technicalEvidence.some((entry) => entry.label === 'href state' && entry.value === 'missing-href'), true)
+})
+
+test('Click non-ok explanations keep warning and error semantics', () => {
+  const review = createTechQaDetailViewModel({ rowId: 'tech-click-active-overlay', status: 'warn', category: 'blocked-by-active-overlay', label: '열기', actionClassification: 'actionable-warning', hitTestStatus: 'hitTestFailed', unrelatedOverlay: true })
+  const problem = createTechQaDetailViewModel({ rowId: 'tech-click-covered', status: 'error', category: 'covered-or-not-interactable', label: '신청', actionClassification: 'actual-error', hitTestStatus: 'hitTestFailed', unrelatedOverlay: true })
+  const navigation = createTechQaDetailViewModel({ rowId: 'tech-click-navigation', status: 'ok', category: 'observable-action', label: '자세히 보기', actionClassification: 'verified-working', interactionOutcome: 'navigation' })
+  const missing = createTechQaDetailViewModel({ rowId: 'tech-click-missing-action', status: 'warn', category: 'missing-navigation-action', label: 'CTA', actionClassification: 'actionable-warning', hrefState: 'missing-href', technicalTerm: 'href 누락' })
+
+  assert.equal(review.displayStatus, '검토 필요')
+  assert.equal(review.classificationReason.includes('문제 확인'), false)
+  assert.equal(problem.displayStatus, '문제 확인')
+  assert.equal(problem.classificationReason.includes('문제 확인'), true)
+  assert.equal(navigation.displayStatus, '정상')
+  assert.equal(navigation.meaning.includes('URL 이동'), true)
+  assert.equal(missing.displayStatus, '검토 필요')
+  assert.equal(missing.meaning.includes('충분히 명확하지 않았습니다'), true)
 })
 
 test('Landing explanation templates cover http errors weak content restrictions and normal page', () => {

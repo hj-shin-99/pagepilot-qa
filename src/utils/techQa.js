@@ -422,7 +422,7 @@ function createSummaryCards(result, counts, linkSummary) {
     { label: '페이지 접속', value: `${accessStatus} · HTTP ${result.httpStatus || '응답 없음'}`, status: result.accessible ? 'ok' : 'error' },
     { label: TECH_QA_STATUS_LABELS.problem, value: `${counts.errorUniqueElementCount}개`, detail: errorDetail, status: counts.errorUniqueElementCount > 0 ? 'error' : 'ok' },
     { label: TECH_QA_STATUS_LABELS.review, value: `${counts.warningUniqueElementCount}개`, detail: warningDetail, status: counts.warningUniqueElementCount > 0 ? 'warn' : 'ok' },
-    { label: TECH_QA_STATUS_LABELS.normal, value: `고유 URL ${linkSummary.total}개 · 이미지 ${imageTotal}개`, detail: `정상 검사 ${counts.normalCheckCount}개 항목`, status: 'info' },
+    { label: TECH_QA_STATUS_LABELS.normal, value: `URL 검사 후보 ${linkSummary.total}개 · 이미지 ${imageTotal}개`, detail: `정상 검사 ${counts.normalCheckCount}개 항목`, status: 'info' },
   ]
 }
 
@@ -533,7 +533,7 @@ function getObjectiveCheckValue(check = {}, context = {}, problemItems = []) {
     if (normalizeStatus(check.status) === 'warn') return check.value || '검토 필요'
     return '큰 리소스 없음'
   }
-  if (check.id === 'links') return `고유 URL ${getLinkTotal(check, linkSummary)}개 · HTTP 요청 문제 ${Number(linkSummary.error || 0)}개`
+  if (check.id === 'links') return `URL 검사 후보 ${getLinkTotal(check, linkSummary)}개 · HTTP 요청 문제 ${Number(linkSummary.error || 0)}개`
   if (check.id === 'missing-href') return `총 ${getButtonTotal(result, check)}개 · URL 검토 필요 ${problemCount}개`
   if (check.id === 'mobile') return formatMobileCheckValue(check, result)
   if (check.id === 'headings') return check.value ? `${check.value} · 검토 필요 ${problemCount}개` : `검토 필요 ${problemCount}개`

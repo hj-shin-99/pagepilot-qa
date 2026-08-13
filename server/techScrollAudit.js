@@ -226,7 +226,13 @@ function shouldContinueScrollGrowthPass(observations = []) {
   if (observations.length < 2) return false
   const last = observations[observations.length - 1] || {}
   const previous = observations[observations.length - 2] || {}
-  return Number(last.scrollHeight || 0) > Number(previous.scrollHeight || 0) + 40 && last.nearBottom === true
+  const heightGrew = Number(last.scrollHeight || 0) > Number(previous.scrollHeight || 0) + 40
+  const bottomReached = isObservationNearBottom(last)
+  return heightGrew || (last.canScroll === true && bottomReached !== true)
+}
+
+function isObservationNearBottom(item = {}) {
+  return item.nearBottom === true || Number(item.scrollY || 0) + Number(item.viewportHeight || 0) >= Number(item.scrollHeight || 0) - SCROLL_BOTTOM_TOLERANCE_PX
 }
 
 async function readScrollState(page) {

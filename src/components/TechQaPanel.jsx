@@ -826,7 +826,15 @@ function formatMarkupCheckResult(item = {}, problemItems = []) {
 }
 
 function getDisplayStatusLabel(item = {}) {
+  if (item.displayStatus) return item.displayStatus
+  if (isCanonicalSuccessItem(item)) return '정상'
+  if (item.status !== undefined || item.category !== undefined || item.statusCode !== undefined) return getTechQaStatusLabel(item)
   return item.statusLabel || getTechQaStatusLabel(item)
+}
+
+function isCanonicalSuccessItem(item = {}) {
+  if (item.status !== 'ok') return false
+  return ['landing-ok', 'landing-redirect-ok', 'new-window-ok', 'new-window-redirect-ok', 'valid-url', 'observable-action'].includes(String(item.category || ''))
 }
 
 function formatSectionStatusMeta(items = []) {
@@ -1130,6 +1138,7 @@ function TechExplanationDetails({ item = {} }) {
 }
 
 function NormalExplanationDetails({ item = {} }) {
+  const confirmedText = getConfirmedNormalDetailText(item)
   return (
     <div className="tech-explanation-detail">
       <section className="tech-explanation-section">
@@ -1138,7 +1147,7 @@ function NormalExplanationDetails({ item = {} }) {
       </section>
       <section className="tech-explanation-section">
         <h4>확인된 내용</h4>
-        <p>{formatDetailDisplayText(item.summary || item.classificationReason || item.reason || '해당 검사에서 확인한 핵심 관찰값 기준으로 정상 신호가 표시되었습니다.')}</p>
+        <p>{formatDetailDisplayText(confirmedText)}</p>
       </section>
       <section className="tech-explanation-section">
         <h4>참고</h4>
@@ -1147,6 +1156,18 @@ function NormalExplanationDetails({ item = {} }) {
       <TechnicalEvidenceDetails items={item.technicalEvidence} />
     </div>
   )
+}
+
+function getConfirmedNormalDetailText(item = {}) {
+  if (isCanonicalSuccessItem(item)) return formatCanonicalSuccessDisplay(item)
+  return item.summary || item.classificationReason || item.reason || '해당 검사에서 확인한 핵심 관찰값 기준으로 정상 신호가 표시되었습니다.'
+}
+
+function formatCanonicalSuccessDisplay(item = {}) {
+  const parts = [getDisplayStatusLabel(item)]
+  if (item.statusCode) parts.push(`HTTP ${item.statusCode}`)
+  if (item.note) parts.push(item.note)
+  return parts.join(' · ')
 }
 
 function NotApplicableExplanationDetails({ item = {}, decisionGuide = [] }) {
@@ -1227,7 +1248,7 @@ function ProblemElementCard({ entry, owner, index = null }) {
           <Meta label="alt" value={entry.alt} />
           <Meta label="rel" value={entry.rel} />
           <Meta label="meta property/name" value={entry.property || entry.name || (entry.label && /^og:|meta|canonical/i.test(entry.label) ? entry.label : '')} />
-          <Meta label="href/action" value={entry.href || entry.formAction || entry.actionType || entry.actionEvidence} />
+          <Meta label="href/action" value={getHrefActionDisplayValue(entry)} />
           <Meta label="link type" value={entry.linkType} />
           <Meta label="requested URL" value={entry.requestUrl || entry.url || entry.href} />
           <Meta label="final URL" value={entry.finalUrl} />
@@ -1264,7 +1285,30 @@ function ProblemElementCard({ entry, owner, index = null }) {
 
 function formatDecisionResult(entry = {}) {
   const status = getDisplayStatusLabel({ ...entry, status: getEntryStatus(entry) })
+  const outcome = getNormalInteractionOutcomeLabel(entry)
+  if (outcome) return `${status} · ${outcome}`
   return entry.technicalTerm || entry.category || entry.actionClassification ? `${status} · ${entry.technicalTerm || entry.category || entry.actionClassification}` : status
+}
+
+function getHrefActionDisplayValue(entry = {}) {
+  if (entry.href || entry.formAction) return entry.href || entry.formAction
+  if (entry.actionEvidence) return entry.actionEvidence
+  if (entry.hasOnClick === true && entry.actionType) return entry.actionType
+  return ''
+}
+
+function getNormalInteractionOutcomeLabel(entry = {}) {
+  if (getEntryStatus(entry) !== 'ok') return ''
+  const outcome = String(entry.interactionOutcome || '').trim()
+  if (outcome === 'navigation') return '현재 창 URL 이동'
+  if (outcome === 'new-window') return '새 창 또는 새 탭 열림'
+  if (outcome === 'scroll') return '동일 페이지 스크롤 또는 anchor 이동'
+  if (outcome === 'ui-change') return 'UI 상태 변화'
+  if (outcome === 'modal') return '모달 또는 dialog 노출'
+  if (outcome === 'accordion') return '아코디언 상태 변경'
+  if (outcome === 'dropdown') return '메뉴 또는 목록 노출'
+  if (outcome === 'tab') return '탭 또는 패널 전환'
+  return ''
 }
 
 function formatTeamCheck(entry = {}) {
@@ -1291,7 +1335,7 @@ function DeveloperInfo({ view, result, scanOptions }) {
   if (scanOptions.url) {
     metaItems.splice(3, 0,
       { label: '발견 링크 수', value: view.linkSummary.discovered },
-      { label: 'unique URL 수', value: view.linkSummary.uniqueRequestUrlCount },
+      { label: 'HTTP 검사 URL 수', value: view.linkSummary.uniqueRequestUrlCount },
       { label: '실제 HTTP 요청 수', value: view.linkSummary.actualHttpRequestCount },
       { label: 'dedupe 수', value: view.linkSummary.dedupedLinkCount },
       { label: 'redirect 수', value: view.linkSummary.redirectCount },

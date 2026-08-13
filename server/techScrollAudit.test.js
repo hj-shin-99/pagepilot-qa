@@ -29,6 +29,22 @@ test('scroll audit treats normal bottom reach as ok', () => {
   assert.equal(items[3].status, 'ok')
 })
 
+test('scroll audit treats one lazy height increase as ok after bottom retry', () => {
+  const items = createScrollAuditItems({
+    initial: { canScroll: true, scrollHeight: 2000, viewportHeight: 720, scrollY: 0 },
+    observations: [
+      { canScroll: true, scrollHeight: 2000, viewportHeight: 720, scrollY: 1280, nearBottom: true },
+      { canScroll: true, scrollHeight: 2600, viewportHeight: 720, scrollY: 1280, nearBottom: false },
+      { canScroll: true, scrollHeight: 2600, viewportHeight: 720, scrollY: 1880, nearBottom: true, lazyImageCount: 1, unresolvedLazyImageCount: 0, brokenLazyImageCount: 0, fixedElementCount: 0, blockingFixedElementCount: 0, fixedCoverageRatio: 0 },
+    ],
+    restored: { scrollY: 0 },
+    growthPasses: 1,
+  })
+
+  assert.equal(items[0].status, 'ok')
+  assert.equal(items[0].nearBottom, true)
+})
+
 test('scroll audit warns on overflow hidden and lazy-load failures', () => {
   const items = createScrollAuditItems({
     initial: { canScroll: true, overflowHidden: true, scrollHeight: 2000, viewportHeight: 720, scrollY: 0 },
@@ -89,7 +105,8 @@ test('scroll audit meta reports no target safely', () => {
 
 test('scroll audit growth pass guard only continues on meaningful bottom growth', () => {
   assert.equal(SCROLL_AUDIT_TEST_ONLY.shouldContinueScrollGrowthPass([{ scrollHeight: 1000, nearBottom: true }, { scrollHeight: 1080, nearBottom: true }]), true)
-  assert.equal(SCROLL_AUDIT_TEST_ONLY.shouldContinueScrollGrowthPass([{ scrollHeight: 1000, nearBottom: false }, { scrollHeight: 1080, nearBottom: false }]), false)
+  assert.equal(SCROLL_AUDIT_TEST_ONLY.shouldContinueScrollGrowthPass([{ scrollHeight: 1000, nearBottom: false }, { scrollHeight: 1020, nearBottom: false }]), false)
+  assert.equal(SCROLL_AUDIT_TEST_ONLY.shouldContinueScrollGrowthPass([{ scrollHeight: 2000, viewportHeight: 720, scrollY: 1280, nearBottom: true }, { canScroll: true, scrollHeight: 2600, viewportHeight: 720, scrollY: 1280, nearBottom: false }]), true)
 })
 
 test('scroll audit phase 3-b fixtures cover status boundaries and non-blocking fixed false positive', () => {

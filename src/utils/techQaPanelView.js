@@ -142,8 +142,8 @@ function attachTechQaDetailViewModel(item = {}) {
 }
 
 export function createTechQaDetailViewModel(item = {}) {
-  const displayStatus = item.statusLabel || getTechQaStatusLabel(item)
-  const summary = normalizeTechQaDisplayText(item.value || displayStatus)
+  const displayStatus = resolveDetailDisplayStatus(item)
+  const summary = normalizeTechQaDisplayText(getCanonicalDetailSummary(item, displayStatus))
   const explanation = createTechQaExplanation(item, { displayStatus, summary })
   return {
     displayStatus,
@@ -155,6 +155,33 @@ export function createTechQaDetailViewModel(item = {}) {
     recommendation: explanation.decisionGuide[explanation.decisionGuide.length - 1] || '',
     technicalEvidence: createTechnicalEvidence(item),
   }
+}
+
+function getCanonicalDetailSummary(item = {}, displayStatus = '') {
+  if (isCanonicalSuccessItem(item)) return formatCanonicalSuccessSummary(item, displayStatus)
+  return item.value || displayStatus
+}
+
+function formatCanonicalSuccessSummary(item = {}, displayStatus = '') {
+  const parts = [displayStatus || '정상']
+  if (item.statusCode) parts.push(`HTTP ${item.statusCode}`)
+  if (item.note) parts.push(item.note)
+  return parts.join(' · ')
+}
+
+function resolveDetailDisplayStatus(item = {}) {
+  if (isCanonicalSuccessItem(item)) return '정상'
+  if (hasCanonicalStatusEvidence(item)) return getTechQaStatusLabel(item)
+  return item.statusLabel || getTechQaStatusLabel(item)
+}
+
+function isCanonicalSuccessItem(item = {}) {
+  if (item.status !== 'ok') return false
+  return ['landing-ok', 'landing-redirect-ok', 'new-window-ok', 'new-window-redirect-ok', 'valid-url', 'observable-action'].includes(String(item.category || ''))
+}
+
+function hasCanonicalStatusEvidence(item = {}) {
+  return item.status !== undefined || item.category !== undefined || item.statusCode !== undefined
 }
 
 export function getDisplayPriorityOwner(item = {}, fallbackOwner = '') {
@@ -181,6 +208,7 @@ function createTechnicalEvidence(item = {}) {
     createEvidence('role', raw.role || item.role),
     createEvidence('tag', raw.tagName || raw.kind || item.tagName || item.kind),
     createEvidence('href', raw.href || item.href),
+    createEvidence('href state', raw.hrefState || item.hrefState),
     createEvidence('overlay selector', raw.overlaySelector || item.overlaySelector),
     createEvidence('hit target', raw.hitTargetSelector || item.hitTargetSelector),
     createEvidence('pointer-events', raw.pointerEvents || item.pointerEvents),
@@ -263,7 +291,7 @@ function createCompletionMeta(result = {}, view = {}) {
   const totalDurationText = formatTechQaDuration(result.totalDurationMs)
 
   if (engine) meta.push({ label: '검사 엔진', value: engine })
-  if (linkCount !== null) meta.push({ label: '고유 URL 검사', value: `${linkCount}개` })
+  if (linkCount !== null) meta.push({ label: 'HTTP 검사 URL', value: `${linkCount}개` })
   if (imageCount !== null) meta.push({ label: '이미지 검사', value: `${imageCount}개` })
   if (durationText) meta.push({ label: '처리시간', value: durationText })
   if (totalDurationText) meta.push({ label: '총 검사 시간', value: totalDurationText })
@@ -403,11 +431,27 @@ function getClickDetailTitle(item = {}) {
 }
 
 function getClickDetailValue(item = {}) {
+  if (item.status === 'ok' && isObservableClickOutcome(item.interactionOutcome)) return formatObservableClickOutcome(item.interactionOutcome)
   if (item.actionClassification === 'actual-error') return item.reason || item.category || '실제 클릭 문제가 확인되었습니다.'
   if (item.actionClassification === 'actionable-warning') return item.reason || item.category || '자동 검사에서 동작 여부를 확정하지 못했습니다.'
   if (item.status === 'error') return item.reason || item.message || item.category || '문제가 확인되었습니다.'
   if (item.status === 'warn') return item.reason || item.message || item.category || '검토가 필요한 항목입니다.'
   return item.reason || item.note || '정상으로 확인되었습니다.'
+}
+
+function isObservableClickOutcome(outcome = '') {
+  return ['navigation', 'new-window', 'scroll', 'ui-change', 'modal', 'accordion', 'dropdown', 'tab'].includes(String(outcome || ''))
+}
+
+function formatObservableClickOutcome(outcome = '') {
+  if (outcome === 'navigation') return '현재 창 URL 이동'
+  if (outcome === 'new-window') return '새 창 또는 새 탭 열림'
+  if (outcome === 'scroll') return '동일 페이지 스크롤 또는 anchor 이동'
+  if (outcome === 'modal') return '모달 또는 dialog 노출'
+  if (outcome === 'accordion') return '아코디언 상태 변경'
+  if (outcome === 'dropdown') return '메뉴 또는 목록 노출'
+  if (outcome === 'tab') return '탭 또는 패널 전환'
+  return 'UI 상태 변화'
 }
 
 function formatLandingResult(item = {}) {

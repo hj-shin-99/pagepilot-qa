@@ -4,6 +4,9 @@ const LANDING_AUDIT_TIMEOUT_MS = 12000
 const ACCESS_LIMIT_PATTERN = /(access denied|forbidden|not authorized|unauthorized|login|sign in|captcha|bot|blocked|denied|인증|로그인|접근 제한|차단)/i
 const REDIRECT_FAILURE_PATTERN = /(redirect|too many redirects|ERR_TOO_MANY_REDIRECTS|maximum redirects)/i
 const CRITICAL_CONSOLE_PATTERN = /(ReferenceError|TypeError|SyntaxError|RangeError|ChunkLoadError|Hydration|hydration|cannot read properties|failed to fetch dynamically imported module|route|router|render|mount|unhandled)/i
+const BROWSER_ERROR_TITLE_PATTERN = /^(this site can[’']?t be reached|this page isn[’']?t working|page isn[’']?t working|privacy error|no internet|site not found)$/i
+const BROWSER_ERROR_TEXT_PATTERN = /(this site can[’']?t be reached|this page isn[’']?t working|page isn[’']?t working|err_[a-z0-9_]+|dns_probe_|ERR_[A-Z0-9_]+)/i
+const ERROR_PAGE_HEADING_PATTERN = /^(404|500|not found|page not found|access denied|forbidden|페이지를 찾을 수 없습니다|접근이 거부되었습니다)$/i
 
 export async function auditLandingPages(browser, targetUrl, clickItems = [], instrumentation = null, contextOptions = {}) {
   const candidates = createLandingAuditCandidates(clickItems, targetUrl)
@@ -293,14 +296,15 @@ async function inspectLandingPage(page, requestedUrl) {
       return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0'
     }).length
     const title = String(document.title || '').trim()
-    const combinedText = `${title} ${bodyText}`.slice(0, 1200)
+    const firstHeading = String(document.querySelector('h1, [role="heading"]')?.textContent || '').replace(/\s+/g, ' ').trim()
+    const browserErrorDom = Boolean(document.querySelector('#main-frame-error, #error-information-popup-container, .interstitial-wrapper, .error-code'))
     return {
       bodyChildCount: Number(body?.children?.length || 0),
       bodyTextLength: bodyText.length,
       visibleElementCount,
       hasMainContent: Boolean(document.querySelector('main, [role="main"], article, section, #app, #root')),
       hasMedia: Boolean(document.querySelector('img, video, canvas, svg')),
-      browserErrorPage: /this site can[’']?t be reached|page isn[’']?t working|err_|404|500|access denied|forbidden|not found|페이지를 찾을 수 없습니다|접근이 거부되었습니다/i.test(combinedText),
+      browserErrorPage: isBrowserErrorPageSignature({ title, firstHeading, bodyText, browserErrorDom, visibleElementCount }),
     }
   }).catch(() => ({ bodyChildCount: 0, bodyTextLength: 0, visibleElementCount: 0, hasMainContent: false, hasMedia: false, browserErrorPage: false }))
   const redirectInfo = analyzeRedirect(requestedUrl, finalUrl)
@@ -380,6 +384,17 @@ function isBlankScreenLikely(observation = {}) {
     && Number(observation.visibleElementCount || 0) === 0
     && Number(observation.bodyTextLength || 0) < 10
     && observation.hasMedia !== true
+}
+
+function isBrowserErrorPageSignature({ title = '', firstHeading = '', bodyText = '', browserErrorDom = false, visibleElementCount = 0 } = {}) {
+  const titleText = textOf(title)
+  const headingText = textOf(firstHeading)
+  const normalizedBody = textOf(bodyText)
+  const shortBody = normalizedBody.length < 240
+  if (browserErrorDom && (BROWSER_ERROR_TEXT_PATTERN.test(`${titleText} ${headingText} ${normalizedBody}`) || shortBody)) return true
+  if (BROWSER_ERROR_TITLE_PATTERN.test(titleText) && (BROWSER_ERROR_TEXT_PATTERN.test(normalizedBody) || shortBody)) return true
+  if (ERROR_PAGE_HEADING_PATTERN.test(headingText) && shortBody && Number(visibleElementCount || 0) <= 3) return true
+  return false
 }
 
 function isHttpUrl(value) {
@@ -465,4 +480,8 @@ function safeUrl(value) {
   } catch {
     return null
   }
+}
+
+export const LANDING_AUDIT_TEST_ONLY = {
+  isBrowserErrorPageSignature,
 }

@@ -2619,7 +2619,7 @@ async function safeDomSnapshot(page, targetUrl, options = {}) {
           dataToggle: button.getAttribute('data-toggle') || button.getAttribute('data-bs-toggle') || '',
           hasOnClick: button.hasAttribute('onclick'),
           formId: button.form?.id || '',
-          formAction: button.formAction || '',
+          formAction: getActualFormAction(button),
           selector: getCssSelector(button),
           domPath: getElementPath(button),
           section: estimateSection(button, documentHeight),
@@ -2947,7 +2947,7 @@ async function safeDomSnapshot(page, targetUrl, options = {}) {
       function collectClickableCandidates() {
         const candidates = []
         const seen = new Set()
-        const selector = 'a, button, input[type="button"], input[type="submit"], [role="button"], [role="link"], [role="tab"], [tabindex], [onclick], [data-href], [data-url], [data-action], [aria-controls], [aria-expanded]'
+        const selector = 'a, button, input[type="button"], input[type="submit"], [role="button"], [role="link"], [role="tab"], [role="combobox"], [role="listbox"], [role="menu"], [role="menuitem"], [role="switch"], [tabindex], [onclick], [data-href], [data-url], [data-action], [aria-controls], [aria-expanded], [aria-haspopup], [aria-pressed]'
         Array.from(document.querySelectorAll(selector)).forEach((element) => pushClickableCandidate(element, 'dom-evidence'))
         Array.from(document.querySelectorAll('body *')).forEach((element) => {
           if (candidates.length >= 80) return
@@ -2979,6 +2979,8 @@ async function safeDomSnapshot(page, targetUrl, options = {}) {
           const actionIdentityMatch = Boolean(hitInteractiveAncestor && candidateInteractiveAncestor && hitInteractiveAncestor === candidateInteractiveAncestor)
           const hitTargetSame = Boolean(sameElement || descendantMatch || ancestorMatch || actionIdentityMatch)
           const unrelatedOverlay = Boolean(hitTarget && !hitTargetSame)
+          const overlayInfo = unrelatedOverlay ? getOverlayInfo(hitTarget, centerX, centerY) : {}
+          const relatedUsableTargetInfo = styles.pointerEvents === 'none' && hitTarget ? getRelatedUsableTargetInfo(element, hitTarget) : {}
           const href = element.getAttribute('href')?.trim() || ''
           const url = resolveInspectableUrl(href, baseUrl)
           const tagName = element.tagName.toLowerCase()
@@ -3003,7 +3005,10 @@ async function safeDomSnapshot(page, targetUrl, options = {}) {
             ariaLabel: element.getAttribute('aria-label') || '',
             ariaControls: element.getAttribute('aria-controls') || '',
             ariaExpanded: element.getAttribute('aria-expanded') || '',
+            ariaHaspopup: element.getAttribute('aria-haspopup') || '',
+            ariaPressed: element.getAttribute('aria-pressed') || '',
             ariaDisabled: element.getAttribute('aria-disabled') || '',
+            controlledTargetExists: hasControlledTarget(element),
             dataTarget: element.getAttribute('data-target') || element.getAttribute('data-bs-target') || '',
             dataToggle: element.getAttribute('data-toggle') || element.getAttribute('data-bs-toggle') || '',
             dataDismiss: element.getAttribute('data-dismiss') || element.getAttribute('data-bs-dismiss') || '',
@@ -3014,7 +3019,8 @@ async function safeDomSnapshot(page, targetUrl, options = {}) {
             hasHrefAttribute: element.hasAttribute('href'),
             url: isInspectableUrl(url) ? url : '',
             formId: element.form?.id || '',
-            formAction: element.formAction || '',
+            formAction: getActualFormAction(element),
+            sourceUrl: location.href || baseUrl,
             hasOnClick: element.hasAttribute('onclick'),
             disabled: element.disabled === true,
             selector: getCssSelector(element),
@@ -3038,10 +3044,58 @@ async function safeDomSnapshot(page, targetUrl, options = {}) {
             viewportState: getViewportState(rect),
             hitTargetSame,
             hitTestStatus: canRunHitTest ? hitTarget ? unrelatedOverlay ? 'hitTestFailed' : 'hitTestPassed' : 'hitTestUnavailable' : 'hitTestNotRun',
+            ...overlayInfo,
+            ...relatedUsableTargetInfo,
             actionEvidence,
             uiControlSemantic,
           })
         }
+      }
+
+      function getRelatedUsableTargetInfo(element, hitTarget) {
+        const target = hitTarget?.closest?.(getInteractiveSelector()) || null
+        if (!target || target === element || element.contains(target)) return {}
+        if (!isUsableInteractiveTarget(target)) return {}
+        if (!shareSemanticActionContainer(element, target)) return {}
+        if (!labelsRepresentSameAction(getAccessibleLabel(element), getAccessibleLabel(target))) return {}
+        return {
+          relatedUsableTarget: true,
+          relatedUsableTargetTag: target.tagName?.toLowerCase() || '',
+          relatedUsableTargetHref: target.getAttribute('href') || target.getAttribute('data-href') || target.getAttribute('data-url') || '',
+          relatedUsableTargetLabel: getAccessibleLabel(target),
+          relatedUsableTargetRelationship: 'same-action-container-label-match',
+        }
+      }
+
+      function isUsableInteractiveTarget(element) {
+        if (!element || !isVisibleElement(element)) return false
+        const styles = window.getComputedStyle(element)
+        if (styles.pointerEvents === 'none') return false
+        if (element.disabled === true || element.getAttribute('aria-disabled') === 'true') return false
+        return true
+      }
+
+      function shareSemanticActionContainer(first, second) {
+        if (!first || !second) return false
+        if (first.parentElement && first.parentElement === second.parentElement) return true
+        const containerSelector = 'li, [role="listitem"], [role="menuitem"], [role="none"], [role="presentation"]'
+        const firstContainer = first.closest?.(containerSelector)
+        const secondContainer = second.closest?.(containerSelector)
+        return Boolean(firstContainer && firstContainer === secondContainer)
+      }
+
+      function labelsRepresentSameAction(first, second) {
+        const firstLabel = normalizeComparableActionLabel(first)
+        const secondLabel = normalizeComparableActionLabel(second)
+        if (!firstLabel || !secondLabel) return false
+        if (firstLabel === secondLabel) return true
+        const shorter = firstLabel.length <= secondLabel.length ? firstLabel : secondLabel
+        const longer = firstLabel.length > secondLabel.length ? firstLabel : secondLabel
+        return shorter.length >= 2 && longer.includes(shorter)
+      }
+
+      function normalizeComparableActionLabel(value) {
+        return normalizeText(value).toLowerCase().replace(/[\s\u00a0.,:;!?"'“”‘’()[\]{}<>_/\\-]/g, '')
       }
 
       function shouldKeepVisualEvidenceCandidate(element, styles) {
@@ -3051,6 +3105,43 @@ async function safeDomSnapshot(page, targetUrl, options = {}) {
         if (isPlainTextContainer(element) && !hasExplicitActionEvidence(element) && !hasInteractiveRole(element)) return false
         if (hasPrimaryInteractiveDescendant(element) && !hasExplicitActionEvidence(element)) return false
         return hasExplicitActionEvidence(element) || hasInteractiveRole(element) || Boolean(getUiControlSemantic(element))
+      }
+
+      function getOverlayInfo(hitTarget, pointX, pointY) {
+        const layer = getOverlayLayer(hitTarget, pointX, pointY)
+        const targetStyle = window.getComputedStyle(hitTarget)
+        const layerStyle = window.getComputedStyle(layer)
+        const rect = layer.getBoundingClientRect()
+        const viewportArea = Math.max(1, window.innerWidth * window.innerHeight)
+        const visible = isVisibleElement(layer)
+        const coversClickPoint = rect.left <= pointX && rect.right >= pointX && rect.top <= pointY && rect.bottom >= pointY
+        const role = layer.getAttribute('role') || ''
+        return {
+          overlayVisible: visible,
+          overlayCoversClickPoint: coversClickPoint,
+          overlayPointerEvents: targetStyle.pointerEvents,
+          overlayOpacity: Number(targetStyle.opacity || '1'),
+          overlayPosition: layerStyle.position,
+          overlayRole: role,
+          overlayAriaModal: layer.getAttribute('aria-modal') === 'true',
+          overlaySemantic: layer.tagName.toLowerCase() === 'dialog' || role === 'dialog' || role === 'alertdialog' || layer.getAttribute('aria-modal') === 'true',
+          overlayDismissible: Boolean(layer.querySelector('button, [role="button"], [data-dismiss], [data-bs-dismiss]')),
+          overlayViewportCoverageRatio: Math.max(0, rect.width * rect.height / viewportArea),
+        }
+      }
+
+      function getOverlayLayer(hitTarget, pointX, pointY) {
+        const semanticLayer = hitTarget.closest?.('dialog, [role="dialog"], [role="alertdialog"], [aria-modal="true"]')
+        if (semanticLayer) return semanticLayer
+        let current = hitTarget
+        while (current && current !== document.documentElement) {
+          const style = window.getComputedStyle(current)
+          const rect = current.getBoundingClientRect()
+          const containsPoint = rect.left <= pointX && rect.right >= pointX && rect.top <= pointY && rect.bottom >= pointY
+          if (containsPoint && (style.position === 'fixed' || style.position === 'sticky')) return current
+          current = current.parentElement
+        }
+        return hitTarget
       }
 
       function shouldSkipDescendantClickableCandidate(element) {
@@ -3084,15 +3175,17 @@ async function safeDomSnapshot(page, targetUrl, options = {}) {
           || element.hasAttribute('data-action')
           || element.hasAttribute('aria-controls')
           || element.hasAttribute('aria-expanded')
+          || element.hasAttribute('aria-haspopup')
+          || element.hasAttribute('aria-pressed')
           || element.hasAttribute('formaction')
       }
 
       function hasPrimaryInteractiveDescendant(element) {
-        return Boolean(element.querySelector?.('a, button, input[type="button"], input[type="submit"], [role="button"], [role="link"], [role="tab"]'))
+        return Boolean(element.querySelector?.('a, button, input[type="button"], input[type="submit"], [role="button"], [role="link"], [role="tab"], [role="combobox"], [role="listbox"], [role="menu"], [role="menuitem"], [role="switch"]'))
       }
 
       function getInteractiveSelector() {
-        return 'a, button, input[type="button"], input[type="submit"], [role="button"], [role="link"], [role="tab"], [onclick], [data-href], [data-url], [data-action], [aria-controls], [aria-expanded]'
+        return 'a, button, input[type="button"], input[type="submit"], [role="button"], [role="link"], [role="tab"], [role="combobox"], [role="listbox"], [role="menu"], [role="menuitem"], [role="switch"], [onclick], [data-href], [data-url], [data-action], [aria-controls], [aria-expanded], [aria-haspopup], [aria-pressed]'
       }
 
       function getViewportState(rect) {
@@ -3120,10 +3213,24 @@ async function safeDomSnapshot(page, targetUrl, options = {}) {
         if (element.hasAttribute('data-action')) evidence.push('data-action')
         if (element.hasAttribute('aria-controls')) evidence.push('aria-controls')
         if (element.hasAttribute('aria-expanded')) evidence.push('aria-expanded')
+        if (element.hasAttribute('aria-haspopup')) evidence.push('aria-haspopup')
+        if (element.hasAttribute('aria-pressed')) evidence.push('aria-pressed')
         if (element.hasAttribute('data-dismiss') || element.hasAttribute('data-bs-dismiss')) evidence.push('data-dismiss')
         if (element.hasAttribute('data-slide') || element.hasAttribute('data-bs-slide')) evidence.push('data-slide')
         if (element.form) evidence.push('form-associated')
         return evidence.join(', ')
+      }
+
+      function hasControlledTarget(element) {
+        const controlsId = element.getAttribute('aria-controls') || ''
+        if (controlsId && document.getElementById(controlsId)) return true
+        const targetSelector = element.getAttribute('data-target') || element.getAttribute('data-bs-target') || ''
+        if (!targetSelector) return false
+        try {
+          return Boolean(document.querySelector(targetSelector))
+        } catch {
+          return false
+        }
       }
 
       function getUiControlSemantic(element) {
@@ -3133,6 +3240,9 @@ async function safeDomSnapshot(page, targetUrl, options = {}) {
           element.getAttribute('title') || '',
           element.getAttribute('role') || '',
           typeof element.className === 'string' ? element.className : '',
+          element.id || '',
+          element.getAttribute('aria-haspopup') || '',
+          element.getAttribute('aria-pressed') || '',
           element.getAttribute('data-dismiss') || '',
           element.getAttribute('data-bs-dismiss') || '',
           element.getAttribute('data-toggle') || '',
@@ -3140,9 +3250,9 @@ async function safeDomSnapshot(page, targetUrl, options = {}) {
           element.getAttribute('data-slide') || '',
           element.getAttribute('data-bs-slide') || '',
         ].join(' ').toLowerCase()
-        if (element.hasAttribute('aria-controls') || element.hasAttribute('aria-expanded')) return 'controlled-ui'
-        if (/\b(close|dismiss|cancel|prev|previous|next|carousel|slide|slider|menu|search|sitemap|site-map|accordion|tab|dropdown|modal|dialog|play|pause|cookie)\b/i.test(text)) return 'semantic-ui-control'
-        if (/(닫기|취소|이전|다음|캐러셀|슬라이드|메뉴|검색|사이트\s*맵|아코디언|탭|드롭다운|모달|팝업|재생|정지|쿠키)/i.test(text)) return 'semantic-ui-control'
+        if (element.hasAttribute('aria-controls') || element.hasAttribute('aria-expanded') || element.hasAttribute('aria-haspopup') || element.hasAttribute('aria-pressed')) return 'controlled-ui'
+        if (/\b(close|dismiss|cancel|prev|previous|next|carousel|slide|slider|menu|search|sitemap|site-map|accordion|tab|dropdown|modal|dialog|play|pause|cookie|toggle|sidebar|side-bar|drawer|offcanvas|flyout|hamburger|select|combobox|listbox|option)\b/i.test(text)) return 'semantic-ui-control'
+        if (/(닫기|취소|이전|다음|캐러셀|슬라이드|메뉴|검색|사이트\s*맵|아코디언|탭|드롭다운|모달|팝업|재생|정지|쿠키|토글|사이드\s*바|선택)/i.test(text)) return 'semantic-ui-control'
         if (element.closest?.('dialog, [role="dialog"], [aria-modal="true"]') && /\b(close|dismiss|cancel|btn-close)\b/i.test(text)) return 'dialog-close-control'
         return ''
       }
@@ -3464,6 +3574,12 @@ async function safeDomSnapshot(page, targetUrl, options = {}) {
           || element.getAttribute('data-url')?.trim()
           || element.getAttribute('formaction')?.trim()
           || ''
+      }
+
+      function getActualFormAction(element) {
+        const action = element.getAttribute('formaction')?.trim() || element.form?.getAttribute('action')?.trim() || ''
+        if (!action) return ''
+        return resolveInspectableUrl(action, document.baseURI || location.href || baseUrl) || action
       }
 
       function getPageRect(element) {
@@ -3873,7 +3989,7 @@ function buildChecks({
         title: '404/500 계열 링크 여부',
         status: badLinks.length > 0 ? 'error' : warningLinks.length > 0 ? 'warn' : 'ok',
         value: `${badLinks.length}개 오류 / ${warningLinks.length}개 확인 필요`,
-        detail: `DOM 링크/버튼 요소 ${Number(linkAuditMeta.discoveredLinkCount || linkStatuses.length)}개 중 고유 URL ${Number(linkAuditMeta.uniqueRequestUrlCount || 0)}개를 실제 HTTP 요청했고 중복 URL ${Number(linkAuditMeta.dedupedLinkCount || 0)}개를 병합했습니다.`,
+        detail: `DOM 링크/버튼 요소 ${Number(linkAuditMeta.discoveredLinkCount || linkStatuses.length)}개 중 HTTP 검사 URL ${Number(linkAuditMeta.uniqueRequestUrlCount || 0)}개를 실제 HTTP 요청했고 중복 URL ${Number(linkAuditMeta.dedupedLinkCount || 0)}개를 병합했습니다.`,
         items: badLinks.concat(warningLinks),
       },
       {

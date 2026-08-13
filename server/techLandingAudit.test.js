@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { classifyLandingObservation, createLandingAuditCandidates, mergeLandingAuditResults, normalizeLandingAuditItem } from './techLandingAudit.js'
+import { classifyLandingObservation, createLandingAuditCandidates, LANDING_AUDIT_TEST_ONLY, mergeLandingAuditResults, normalizeLandingAuditItem } from './techLandingAudit.js'
 
 test('landing audit dedupes navigation and new-window targets by requested URL', () => {
   const candidates = createLandingAuditCandidates([
@@ -168,7 +168,7 @@ test('landing audit keeps healthy 200 page ok when only load timeout is observed
     requestedUrl: 'https://example.com/ok',
     finalUrl: 'https://example.com/ok',
     statusCode: 200,
-    pageTitle: 'BMW Financial Services',
+    pageTitle: 'Landing page',
     navigationError: 'page.waitForLoadState Timeout 4000ms exceeded',
     bodyChildCount: 4,
     visibleElementCount: 8,
@@ -207,6 +207,68 @@ test('landing audit treats browser error page and critical page error as error',
   assert.equal(browserError.category, 'browser-error-page')
   assert.equal(critical.status, 'error')
   assert.equal(critical.category, 'critical-script-error')
+})
+
+test('landing browser-error detector keeps real browser error signatures', () => {
+  assert.equal(LANDING_AUDIT_TEST_ONLY.isBrowserErrorPageSignature({
+    title: 'This site can’t be reached',
+    firstHeading: 'This site can’t be reached',
+    bodyText: 'ERR_NAME_NOT_RESOLVED',
+    browserErrorDom: true,
+    visibleElementCount: 2,
+  }), true)
+  assert.equal(classifyLandingObservation({
+    statusCode: 200,
+    pageTitle: 'This site can’t be reached',
+    bodyChildCount: 1,
+    visibleElementCount: 2,
+    bodyTextLength: 80,
+    hasMainContent: false,
+    browserErrorPage: true,
+  }, candidate('https://example.com/browser-error')).category, 'browser-error-page')
+})
+
+test('landing browser-error detector does not flag healthy 200 content for generic error keywords', () => {
+  const bodyText = 'Documentation includes examples for 404 responses, 500 responses, not found messages, and forbidden access states while the article content is otherwise healthy.'
+  assert.equal(LANDING_AUDIT_TEST_ONLY.isBrowserErrorPageSignature({
+    title: 'HTTP status guide',
+    firstHeading: 'Handling responses',
+    bodyText,
+    browserErrorDom: false,
+    visibleElementCount: 12,
+  }), false)
+  const result = classifyLandingObservation({
+    requestedUrl: 'https://example.com/status-guide',
+    finalUrl: 'https://example.com/status-guide',
+    statusCode: 200,
+    pageTitle: 'HTTP status guide',
+    bodyChildCount: 8,
+    visibleElementCount: 12,
+    bodyTextLength: bodyText.length,
+    hasMainContent: true,
+    hasMedia: false,
+    browserErrorPage: false,
+    criticalConsoleErrorCount: 0,
+  }, candidate('https://example.com/status-guide'))
+
+  assert.equal(result.status, 'ok')
+  assert.notEqual(result.category, 'browser-error-page')
+})
+
+test('landing blank or critical rendering failure policy is preserved for HTTP 200', () => {
+  const blank = classifyLandingObservation({
+    statusCode: 200,
+    pageTitle: 'Blank',
+    bodyChildCount: 0,
+    visibleElementCount: 0,
+    bodyTextLength: 0,
+    hasMainContent: false,
+    hasMedia: false,
+    browserErrorPage: false,
+  }, candidate('https://example.com/blank'))
+
+  assert.equal(blank.status, 'error')
+  assert.equal(blank.category, 'blank-screen')
 })
 
 test('landing audit treats unexpected final domain redirect as warn', () => {

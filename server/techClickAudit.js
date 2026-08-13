@@ -21,6 +21,7 @@ export function classifyClickableCandidate(candidate = {}) {
   const hasAction = hasActionEvidence(candidate, hrefState, isUiControl)
   const isNavigation = looksLikeNavigation(candidate)
   const hitTestStatus = getHitTestStatus(candidate)
+  const canAttemptViewportPreparedSafeClick = canAttemptViewportPreparedSafeClickForCandidate(candidate, hrefState, isDangerous)
 
   const base = {
     ...candidate,
@@ -98,7 +99,7 @@ export function classifyClickableCandidate(candidate = {}) {
 
   if (hrefState === 'missing-href' && isNavigation) {
     if (!hasAction) {
-      return { ...base, status: 'warn', category: 'ambiguous-action', actionClassification: 'actionable-warning', clickExecuted: false, interactionOutcome: 'no-change', reason: '이동 목적 요소처럼 보이지만 href, action, form action 근거가 모두 없어 확인이 필요합니다.' }
+      return { ...base, status: 'warn', category: 'ambiguous-action', actionClassification: 'actionable-warning', clickExecuted: false, interactionOutcome: 'no-change', reason: '이동 목적 요소처럼 보이지만 href, action, form action 근거가 모두 없어 확인이 필요합니다.', safeClickEligible: canAttemptViewportPreparedSafeClick }
     }
     return { ...base, status: 'warn', category: 'ambiguous-action', actionClassification: 'actionable-warning', clickExecuted: false, interactionOutcome: 'unknown', reason: '이동 버튼처럼 보이지만 action evidence가 불완전합니다.', safeClickEligible: !isDangerous }
   }
@@ -108,7 +109,7 @@ export function classifyClickableCandidate(candidate = {}) {
   }
 
   if (!hasAction) {
-    return { ...base, status: 'warn', category: 'ambiguous-action', actionClassification: 'actionable-warning', clickExecuted: false, interactionOutcome: 'unknown', reason: '유효한 href, role, 이벤트, UI 제어 근거가 없어 UID팀 확인이 필요합니다.' }
+    return { ...base, status: 'warn', category: 'ambiguous-action', actionClassification: 'actionable-warning', clickExecuted: false, interactionOutcome: 'unknown', reason: '유효한 href, role, 이벤트, UI 제어 근거가 없어 UID팀 확인이 필요합니다.', safeClickEligible: canAttemptViewportPreparedSafeClick }
   }
 
   return { ...base, status: 'warn', category: 'ambiguous-action', actionClassification: 'actionable-warning', clickExecuted: false, interactionOutcome: 'unknown', reason: '클릭 이벤트는 있으나 목적을 자동으로 확정할 수 없습니다.', safeClickEligible: true }
@@ -265,17 +266,29 @@ async function verifySafeClick(page, targetUrl, candidate, attributedRuntimeErro
   const consoleErrors = []
   const pageErrors = []
   const runtimeErrors = []
+  let onConsole = null
+  let onPageError = null
+  let onRequest = null
+
+  const removeListeners = () => {
+    if (onRequest) page.off('request', onRequest)
+    if (onConsole) page.off('console', onConsole)
+    if (onPageError) page.off('pageerror', onPageError)
+    onRequest = null
+    onConsole = null
+    onPageError = null
+  }
 
   try {
     await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: SAFE_CLICK_TIMEOUT_MS })
-    const onConsole = (message) => {
+    onConsole = (message) => {
       if (message.type() === 'error') {
         const record = createRuntimeErrorRecord({ eventType: 'console', level: message.type(), message: message.text(), location: message.location() })
         consoleErrors.push(record.message)
         runtimeErrors.push(record)
       }
     }
-    const onPageError = (error) => {
+    onPageError = (error) => {
       const record = createRuntimeErrorRecord({ eventType: 'pageerror', level: 'error', message: error.message || 'page error', stack: error.stack || '', source: 'pageerror' })
       pageErrors.push(record.message)
       runtimeErrors.push(record)
@@ -296,7 +309,7 @@ async function verifySafeClick(page, targetUrl, candidate, attributedRuntimeErro
     let popupObserved = false
     let popupUrl = ''
     let navigationRequestObserved = false
-    const onRequest = (request) => {
+    onRequest = (request) => {
       if (request.isNavigationRequest() && request.resourceType() === 'document') navigationRequestObserved = true
     }
     page.once('popup', (popup) => {
@@ -309,13 +322,23 @@ async function verifySafeClick(page, targetUrl, candidate, attributedRuntimeErro
       popup.close().catch(() => {})
     })
     page.on('request', onRequest)
+    const viewportPreparation = shouldPrepareSafeClickViewport(candidate) ? await prepareSafeClickTarget(page, candidate) : { succeeded: true, skipped: true }
+    if (!viewportPreparation.succeeded) {
+      removeListeners()
+      return {
+        clicked: false,
+        changed: false,
+        error: viewportPreparation.reason,
+        interactionOutcome: viewportPreparation.outcome || 'unknown',
+        interactionEvidence: [viewportPreparation.reason],
+        viewportPreparation,
+      }
+    }
     const before = await getClickState(page, candidate.selector)
     const preClickRuntimeErrorIdentities = new Set(runtimeErrors.map(getRuntimeErrorIdentity).filter(Boolean))
     await page.locator(candidate.selector).first().click({ timeout: SAFE_CLICK_TIMEOUT_MS, noWaitAfter: true, trial: false })
     await page.waitForTimeout(350)
-    page.off('request', onRequest)
-    page.off('console', onConsole)
-    page.off('pageerror', onPageError)
+    removeListeners()
     const after = await getClickState(page, candidate.selector)
     const attributedRuntimeErrors = getNewRuntimeErrors(runtimeErrors, preClickRuntimeErrorIdentities, attributedRuntimeErrorIdentities)
     const firstPartyRuntimeErrors = classifyConsoleMessages(attributedRuntimeErrors, targetUrl).items.filter((item) => item.party === 'first-party')
@@ -341,8 +364,10 @@ async function verifySafeClick(page, targetUrl, candidate, attributedRuntimeErro
       interactionOutcome: interaction.outcome,
       interactionEvidence: interaction.evidence,
       landingUrl: interaction.landingUrl,
+      ...(viewportPreparation.skipped ? {} : { viewportPreparation }),
     }
   } catch (error) {
+    removeListeners()
     return {
       clicked: false,
       changed: false,
@@ -375,6 +400,77 @@ async function getClickState(page, selector) {
       mutationCount: Number(window.__pagepilotMutationCount || 0),
     }
   }, selector).catch(() => ({ url: '', ariaExpanded: '', dialogVisible: false, targetVisible: false, mutationCount: 0 }))
+}
+
+async function prepareSafeClickTarget(page, candidate = {}) {
+  const selector = textOf(candidate.selector)
+  if (!selector) return createViewportPreparationFailure('viewport preparation failed: selector is missing')
+
+  const locator = page.locator(selector).first()
+  try {
+    await locator.waitFor({ state: 'attached', timeout: SAFE_CLICK_TIMEOUT_MS })
+    await locator.scrollIntoViewIfNeeded({ timeout: SAFE_CLICK_TIMEOUT_MS })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error || '')
+    return createViewportPreparationFailure(`viewport preparation failed: ${sanitizeMessage(message)}`)
+  }
+
+  const state = await locator.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+    const styles = window.getComputedStyle(element)
+    const left = rect.left
+    const top = rect.top
+    const right = rect.right
+    const bottom = rect.bottom
+    const visibleLeft = Math.max(0, left)
+    const visibleTop = Math.max(0, top)
+    const visibleRight = Math.min(window.innerWidth, right)
+    const visibleBottom = Math.min(window.innerHeight, bottom)
+    const hasVisibleRect = rect.width > 0 && rect.height > 0 && visibleRight > visibleLeft && visibleBottom > visibleTop
+    const viewportState = right <= 0 || bottom <= 0 || left >= window.innerWidth || top >= window.innerHeight
+      ? 'outsideViewport'
+      : left < 0 || top < 0 || right > window.innerWidth || bottom > window.innerHeight
+        ? 'partiallyVisible'
+        : 'inViewport'
+    const pointX = hasVisibleRect ? Math.max(0, Math.min(window.innerWidth - 1, (visibleLeft + visibleRight) / 2)) : -1
+    const pointY = hasVisibleRect ? Math.max(0, Math.min(window.innerHeight - 1, (visibleTop + visibleBottom) / 2)) : -1
+    const hitTarget = hasVisibleRect ? document.elementFromPoint(pointX, pointY) : null
+    const interactiveSelector = 'a, button, input[type="button"], input[type="submit"], [role="button"], [role="link"], [role="tab"], [role="combobox"], [role="listbox"], [role="menu"], [role="menuitem"], [role="switch"], [onclick], [data-href], [data-url], [data-action], [aria-controls], [aria-expanded], [aria-haspopup], [aria-pressed]'
+    const hitInteractiveAncestor = hitTarget?.closest?.(interactiveSelector) || null
+    const candidateInteractiveAncestor = element.closest?.(interactiveSelector) || null
+    const hitTargetSame = Boolean(hitTarget && (hitTarget === element || element.contains(hitTarget) || hitInteractiveAncestor === element || (hitInteractiveAncestor && hitInteractiveAncestor === candidateInteractiveAncestor)))
+
+    return {
+      visible: hasVisibleRect && styles.display !== 'none' && styles.visibility !== 'hidden' && Number.parseFloat(styles.opacity || '1') > 0,
+      enabled: element.disabled !== true && element.getAttribute('aria-disabled') !== 'true',
+      pointerEvents: styles.pointerEvents,
+      viewportState,
+      pointX,
+      pointY,
+      hitTargetSame,
+      hitTestStatus: hasVisibleRect ? hitTarget ? hitTargetSame ? 'hitTestPassed' : 'hitTestFailed' : 'hitTestUnavailable' : 'hitTestNotRun',
+      hitTargetTag: hitTarget?.tagName?.toLowerCase() || '',
+      hitTargetSelector: hitTarget?.id ? `#${CSS.escape(hitTarget.id)}` : hitTarget?.tagName?.toLowerCase() || '',
+    }
+  }).catch((error) => ({ error: error instanceof Error ? error.message : String(error || '') }))
+
+  if (state.error) return createViewportPreparationFailure(`viewport preparation failed: ${sanitizeMessage(state.error)}`)
+  if (!state.visible) return createViewportPreparationFailure('viewport preparation failed: target is not visible after scroll')
+  if (!state.enabled) return createViewportPreparationFailure('viewport preparation failed: target is not enabled', 'blocked')
+  if (state.pointerEvents === 'none') return createViewportPreparationFailure('viewport preparation failed: pointer-events none blocks the target', 'blocked')
+  if (state.viewportState === 'outsideViewport') return createViewportPreparationFailure('viewport preparation failed: target remains outside viewport')
+  if (state.hitTestStatus === 'hitTestFailed') return createViewportPreparationFailure(`another element would receive the click after viewport preparation: ${state.hitTargetSelector || state.hitTargetTag || 'unknown target'}`, 'blocked')
+  if (state.hitTestStatus !== 'hitTestPassed') return createViewportPreparationFailure('viewport preparation failed: hit-test could not verify the target')
+
+  return { succeeded: true, ...state }
+}
+
+function createViewportPreparationFailure(reason, outcome = 'unknown') {
+  return { succeeded: false, reason, outcome }
+}
+
+function shouldPrepareSafeClickViewport(candidate = {}) {
+  return textOf(candidate.viewportState) === 'outsideViewport'
 }
 
 export function applySafeClickResult(item, result) {
@@ -570,6 +666,13 @@ function isPrimaryUrlFreeControlElement(candidate = {}) {
   return tagName === 'button' || role === 'button' || role === 'tab' || /^(button|reset|checkbox|radio)$/i.test(textOf(candidate.type))
 }
 
+function canAttemptViewportPreparedSafeClickForCandidate(candidate = {}, hrefState = '', isDangerous = false) {
+  return !isDangerous
+    && hrefState === 'missing-href'
+    && textOf(candidate.viewportState) === 'outsideViewport'
+    && isPrimaryUrlFreeControlElement(candidate)
+}
+
 function looksLikeNavigation(candidate = {}) {
   return NAVIGATION_PATTERN.test(navigationSearchableText(candidate)) || NAVIGATION_KO_PATTERN.test(navigationSearchableText(candidate))
 }
@@ -670,6 +773,9 @@ function deriveInteractionOutcome(candidate = {}, before = {}, after = {}, conte
 
 function classifySafeClickFailure(error) {
   const message = sanitizeMessage(error instanceof Error ? error.message : error)
+  if (/viewport preparation failed|target remains outside viewport|hit-test could not verify|selector is missing/i.test(message)) {
+    return { outcome: 'unknown', reason: message || 'viewport 준비 후에도 클릭 가능성을 확인하지 못했습니다.' }
+  }
   if (/intercept|pointer|not visible|element is outside|another element would receive|not enabled/i.test(message)) {
     return { outcome: 'blocked', reason: message || '클릭이 다른 요소에 가로막혔습니다.' }
   }

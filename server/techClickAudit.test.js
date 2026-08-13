@@ -1,7 +1,18 @@
-import test from 'node:test'
+import test, { after, before } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import { applySafeClickResult, classifyClickableCandidate, mergeClickActionObservations, summarizeClickActionAudit } from './techClickAudit.js'
+import { chromium } from 'playwright'
+import { applySafeClickResult, auditClickableActions, classifyClickableCandidate, mergeClickActionObservations, summarizeClickActionAudit } from './techClickAudit.js'
+
+let browser
+
+before(async () => {
+  browser = await chromium.launch({ headless: true })
+})
+
+after(async () => {
+  await browser?.close().catch(() => {})
+})
 
 test('A normal anchor is valid-url and ok', () => {
   const item = classifyClickableCandidate(candidate({ tagName: 'a', href: '/product', url: 'https://example.com/product', label: 'Product' }))
@@ -662,6 +673,108 @@ test('clickable DOM collection does not read implicit browser formAction current
   assert.equal(source.includes('formAction: element.formAction ||'), false)
 })
 
+test('offscreen safe button is viewport-prepared, clicked, and verified by UI change', async () => {
+  const result = await auditClickableActions(browser, pageFixture(`
+    <style>body{margin:0}.spacer{height:1200px}</style>
+    <div class="spacer"></div>
+    <button id="offscreen">Reveal details</button>
+    <p id="state">Before</p>
+    <script>document.querySelector('#offscreen').addEventListener('click', () => { document.querySelector('#state').textContent = 'After' })</script>
+  `), [offscreenCandidate({ label: 'Reveal details' })])
+
+  assert.equal(result.items[0].status, 'ok')
+  assert.equal(result.items[0].actionClassification, 'verified-working')
+  assert.equal(result.items[0].clickExecuted, true)
+  assert.equal(result.items[0].safeClickResult.viewportPreparation.succeeded, true)
+})
+
+test('offscreen safe button is viewport-prepared inside horizontal scroll containers', async () => {
+  const result = await auditClickableActions(browser, pageFixture(`
+    <style>.scroller{width:320px;overflow:auto}.wide{width:1400px;height:120px;position:relative}#offscreen{position:absolute;left:1100px;top:40px}</style>
+    <div class="scroller"><div class="wide"><button id="offscreen">Reveal panel</button></div></div>
+    <p id="state">Before</p>
+    <script>document.querySelector('#offscreen').addEventListener('click', () => { document.querySelector('#state').textContent = 'After' })</script>
+  `), [offscreenCandidate({ label: 'Reveal panel', boundingBox: { x: 1100, y: 40, width: 120, height: 32 } })])
+
+  assert.equal(result.items[0].status, 'ok')
+  assert.equal(result.items[0].clickExecuted, true)
+  assert.equal(result.items[0].safeClickResult.viewportPreparation.hitTestStatus, 'hitTestPassed')
+})
+
+test('offscreen safe button with anchor or scroll change is verified as observable action', async () => {
+  const result = await auditClickableActions(browser, pageFixture(`
+    <style>body{margin:0}.spacer{height:1200px}.target{margin-top:900px;height:80px}</style>
+    <div class="spacer"></div>
+    <button id="offscreen">Jump to details</button>
+    <div id="target" class="target">Target</div>
+    <script>document.querySelector('#offscreen').addEventListener('click', () => { document.querySelector('#target').scrollIntoView() })</script>
+  `), [offscreenCandidate({ label: 'Jump to details' })])
+
+  assert.equal(result.items[0].status, 'ok')
+  assert.equal(result.items[0].interactionOutcome, 'scroll')
+  assert.equal(result.items[0].clickExecuted, true)
+})
+
+test('viewport preparation failure does not force an offscreen button to ok', async () => {
+  const result = await auditClickableActions(browser, pageFixture(`
+    <button id="offscreen" style="position:fixed;left:-10000px;top:20px">Hidden action</button>
+  `), [offscreenCandidate({ label: 'Hidden action', boundingBox: { x: -10000, y: 20, width: 120, height: 32 } })])
+
+  assert.equal(result.items[0].status, 'warn')
+  assert.equal(result.items[0].actionClassification, 'actionable-warning')
+  assert.equal(result.items[0].clickExecuted, false)
+  assert.equal(result.items[0].safeClickResult.viewportPreparation.succeeded, false)
+})
+
+test('viewport preparation success with no observable action remains a warning', async () => {
+  const result = await auditClickableActions(browser, pageFixture(`
+    <style>body{margin:0}.spacer{height:1200px}</style>
+    <div class="spacer"></div>
+    <button id="offscreen">Plain action</button>
+  `), [offscreenCandidate({ label: 'Plain action' })])
+
+  assert.equal(result.items[0].status, 'warn')
+  assert.equal(result.items[0].category, 'no-observable-action')
+  assert.equal(result.items[0].clickExecuted, true)
+})
+
+test('first-party runtime error during safe click remains an actual error', async () => {
+  const result = await auditClickableActions(browser, pageFixture(`
+    <button id="offscreen" onclick="throw new Error('click failed')">Run action</button>
+  `), [candidate({ selector: '#offscreen', label: 'Run action', hasOnClick: true })])
+
+  assert.equal(result.items[0].status, 'error')
+  assert.equal(result.items[0].category, 'click-runtime-error')
+  assert.equal(result.items[0].actionClassification, 'actual-error')
+})
+
+test('real overlay blocker after viewport preparation remains blocked', async () => {
+  const result = await auditClickableActions(browser, pageFixture(`
+    <style>body{margin:0}.spacer{height:1200px}.overlay{position:fixed;inset:0;background:rgba(0,0,0,.1);z-index:10}</style>
+    <div class="spacer"></div>
+    <button id="offscreen">Reveal details</button>
+    <div class="overlay"></div>
+  `), [offscreenCandidate({ label: 'Reveal details' })])
+
+  assert.equal(result.items[0].status, 'error')
+  assert.equal(result.items[0].category, 'covered-or-not-interactable')
+  assert.equal(result.items[0].interactionOutcome, 'blocked')
+  assert.equal(result.items[0].clickExecuted, false)
+})
+
+test('dangerous offscreen action remains skipped and is not safe-clicked', async () => {
+  const result = await auditClickableActions(browser, pageFixture(`
+    <style>body{margin:0}.spacer{height:1200px}</style>
+    <div class="spacer"></div>
+    <button id="offscreen" onclick="document.body.dataset.deleted='true'">Delete item</button>
+  `), [offscreenCandidate({ label: 'Delete item', hasOnClick: true })])
+
+  assert.equal(result.items[0].category, 'skipped-safe-click')
+  assert.equal(result.items[0].actionClassification, 'safe-click-skipped')
+  assert.equal(result.items[0].clickExecuted, false)
+  assert.equal(result.meta.safeClickAttemptCount, 0)
+})
+
 function candidate(overrides = {}) {
   return {
     auditId: 'candidate-1',
@@ -681,4 +794,20 @@ function candidate(overrides = {}) {
     boundingBox: { width: 120, height: 32 },
     ...overrides,
   }
+}
+
+function offscreenCandidate(overrides = {}) {
+  return candidate({
+    selector: '#offscreen',
+    domPath: 'main > button#offscreen',
+    viewportState: 'outsideViewport',
+    hitTestStatus: 'hitTestNotRun',
+    hitTargetSame: false,
+    boundingBox: { x: 0, y: 1200, width: 120, height: 32 },
+    ...overrides,
+  })
+}
+
+function pageFixture(body) {
+  return `data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html><html><body>${body}</body></html>`)}`
 }

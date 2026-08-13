@@ -2980,6 +2980,7 @@ async function safeDomSnapshot(page, targetUrl, options = {}) {
           const hitTargetSame = Boolean(sameElement || descendantMatch || ancestorMatch || actionIdentityMatch)
           const unrelatedOverlay = Boolean(hitTarget && !hitTargetSame)
           const overlayInfo = unrelatedOverlay ? getOverlayInfo(hitTarget, centerX, centerY) : {}
+          const relatedUsableTargetInfo = styles.pointerEvents === 'none' && hitTarget ? getRelatedUsableTargetInfo(element, hitTarget) : {}
           const href = element.getAttribute('href')?.trim() || ''
           const url = resolveInspectableUrl(href, baseUrl)
           const tagName = element.tagName.toLowerCase()
@@ -3044,10 +3045,57 @@ async function safeDomSnapshot(page, targetUrl, options = {}) {
             hitTargetSame,
             hitTestStatus: canRunHitTest ? hitTarget ? unrelatedOverlay ? 'hitTestFailed' : 'hitTestPassed' : 'hitTestUnavailable' : 'hitTestNotRun',
             ...overlayInfo,
+            ...relatedUsableTargetInfo,
             actionEvidence,
             uiControlSemantic,
           })
         }
+      }
+
+      function getRelatedUsableTargetInfo(element, hitTarget) {
+        const target = hitTarget?.closest?.(getInteractiveSelector()) || null
+        if (!target || target === element || element.contains(target)) return {}
+        if (!isUsableInteractiveTarget(target)) return {}
+        if (!shareSemanticActionContainer(element, target)) return {}
+        if (!labelsRepresentSameAction(getAccessibleLabel(element), getAccessibleLabel(target))) return {}
+        return {
+          relatedUsableTarget: true,
+          relatedUsableTargetTag: target.tagName?.toLowerCase() || '',
+          relatedUsableTargetHref: target.getAttribute('href') || target.getAttribute('data-href') || target.getAttribute('data-url') || '',
+          relatedUsableTargetLabel: getAccessibleLabel(target),
+          relatedUsableTargetRelationship: 'same-action-container-label-match',
+        }
+      }
+
+      function isUsableInteractiveTarget(element) {
+        if (!element || !isVisibleElement(element)) return false
+        const styles = window.getComputedStyle(element)
+        if (styles.pointerEvents === 'none') return false
+        if (element.disabled === true || element.getAttribute('aria-disabled') === 'true') return false
+        return true
+      }
+
+      function shareSemanticActionContainer(first, second) {
+        if (!first || !second) return false
+        if (first.parentElement && first.parentElement === second.parentElement) return true
+        const containerSelector = 'li, [role="listitem"], [role="menuitem"], [role="none"], [role="presentation"]'
+        const firstContainer = first.closest?.(containerSelector)
+        const secondContainer = second.closest?.(containerSelector)
+        return Boolean(firstContainer && firstContainer === secondContainer)
+      }
+
+      function labelsRepresentSameAction(first, second) {
+        const firstLabel = normalizeComparableActionLabel(first)
+        const secondLabel = normalizeComparableActionLabel(second)
+        if (!firstLabel || !secondLabel) return false
+        if (firstLabel === secondLabel) return true
+        const shorter = firstLabel.length <= secondLabel.length ? firstLabel : secondLabel
+        const longer = firstLabel.length > secondLabel.length ? firstLabel : secondLabel
+        return shorter.length >= 2 && longer.includes(shorter)
+      }
+
+      function normalizeComparableActionLabel(value) {
+        return normalizeText(value).toLowerCase().replace(/[\s\u00a0.,:;!?"'“”‘’()[\]{}<>_/\\-]/g, '')
       }
 
       function shouldKeepVisualEvidenceCandidate(element, styles) {

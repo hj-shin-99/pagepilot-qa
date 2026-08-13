@@ -177,6 +177,35 @@ test('E pointer-events none CTA is not interactable', () => {
   assert.equal(item.status, 'error')
 })
 
+test('visible unique pointer-events none control remains an actual error', () => {
+  const item = classifyClickableCandidate(candidate({ tagName: 'button', label: 'Open panel', pointerEvents: 'none', ariaControls: 'panel', ariaExpanded: 'false', relatedUsableTarget: false }))
+
+  assert.equal(item.category, 'covered-or-not-interactable')
+  assert.equal(item.status, 'error')
+  assert.equal(item.actionClassification, 'actual-error')
+})
+
+test('inactive alternate pointer-events none control with usable related target is not actual site error', () => {
+  const item = classifyClickableCandidate(candidate({
+    tagName: 'button',
+    label: 'Products',
+    pointerEvents: 'none',
+    ariaControls: 'panel',
+    ariaExpanded: 'false',
+    viewportState: 'inViewport',
+    hitTestStatus: 'hitTestFailed',
+    relatedUsableTarget: true,
+    relatedUsableTargetTag: 'a',
+    relatedUsableTargetHref: '/products',
+    relatedUsableTargetLabel: 'Products',
+  }))
+
+  assert.equal(item.status, 'warn')
+  assert.equal(item.category, 'inactive-alternate-control')
+  assert.equal(item.actionClassification, 'actionable-warning')
+  assert.notEqual(item.category, 'covered-or-not-interactable')
+})
+
 test('F overlay covered CTA is covered-or-not-interactable', () => {
   const item = classifyClickableCandidate(candidate({ tagName: 'a', href: '/product', url: 'https://example.com/product', hitTargetSame: false, hitTestStatus: 'hitTestFailed', label: 'Product' }))
   assert.equal(item.category, 'covered-or-not-interactable')
@@ -671,6 +700,16 @@ test('clickable DOM collection does not read implicit browser formAction current
   assert.equal(source.includes('sourceUrl: location.href || baseUrl'), true)
   assert.equal(source.includes('formAction: button.formAction ||'), false)
   assert.equal(source.includes('formAction: element.formAction ||'), false)
+})
+
+test('clickable DOM collection records generic related usable targets for inactive alternates', () => {
+  const source = fs.readFileSync('server/index.js', 'utf8')
+  const relatedTargetSource = source.slice(source.indexOf('function getRelatedUsableTargetInfo'), source.indexOf('function shouldKeepVisualEvidenceCandidate'))
+
+  assert.equal(relatedTargetSource.includes('getRelatedUsableTargetInfo'), true)
+  assert.equal(relatedTargetSource.includes('relatedUsableTarget'), true)
+  assert.equal(relatedTargetSource.includes('shareSemanticActionContainer'), true)
+  assert.equal(/Apple|apple\.com|MDN|developer\.mozilla|BMW|BMWFS|스토어|Mac|iPad|iPhone|Watch/.test(relatedTargetSource), false)
 })
 
 test('offscreen safe button is viewport-prepared, clicked, and verified by UI change', async () => {

@@ -51,6 +51,9 @@ export function classifyClickableCandidate(candidate = {}) {
   }
 
   if (candidate.pointerEvents === 'none') {
+    if (isInactiveAlternateControlCandidate(candidate)) {
+      return { ...base, status: 'warn', category: 'inactive-alternate-control', actionClassification: 'actionable-warning', interactionOutcome: 'skipped', clickExecuted: false, reason: '동일 semantic action을 수행하는 별도 사용 가능 interactive target이 확인되어 이 pointer-events:none 후보만 실제 사이트 결함으로 단정하지 않습니다.' }
+    }
     return { ...base, status: 'error', category: 'covered-or-not-interactable', actionClassification: 'actual-error', interactionOutcome: 'blocked', reason: 'pointer-events:none 상태라 사용자가 클릭할 수 없습니다.' }
   }
 
@@ -664,6 +667,13 @@ function isPrimaryUrlFreeControlElement(candidate = {}) {
   const tagName = textOf(candidate.tagName || candidate.kind).toLowerCase()
   const role = textOf(candidate.role).toLowerCase()
   return tagName === 'button' || role === 'button' || role === 'tab' || /^(button|reset|checkbox|radio)$/i.test(textOf(candidate.type))
+}
+
+function isInactiveAlternateControlCandidate(candidate = {}) {
+  return candidate.relatedUsableTarget === true
+    && textOf(candidate.pointerEvents).toLowerCase() === 'none'
+    && textOf(candidate.viewportState) !== 'outsideViewport'
+    && Boolean(textOf(candidate.relatedUsableTargetTag || candidate.relatedUsableTargetHref || candidate.relatedUsableTargetLabel))
 }
 
 function canAttemptViewportPreparedSafeClickForCandidate(candidate = {}, hrefState = '', isDangerous = false) {

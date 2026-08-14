@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { classifyLandingObservation, createLandingAuditCandidates, LANDING_AUDIT_TEST_ONLY, mergeLandingAuditResults, normalizeLandingAuditItem } from './techLandingAudit.js'
+import http from 'node:http'
+import { chromium } from 'playwright'
+import { auditLandingPages, classifyLandingObservation, createLandingAuditCandidates, LANDING_AUDIT_TEST_ONLY, mergeLandingAuditResults, normalizeLandingAuditItem } from './techLandingAudit.js'
 
 test('landing audit dedupes navigation and new-window targets by requested URL', () => {
   const candidates = createLandingAuditCandidates([
@@ -34,6 +36,41 @@ test('landing audit classifies normal page as ok', () => {
 
   assert.equal(item.status, 'ok')
   assert.equal(item.category, 'landing-ok')
+})
+
+test('landing audit allows POST API content needed for initial render', async () => {
+  const server = http.createServer((request, response) => {
+    if (request.url === '/landing') {
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      response.end(`<!doctype html><html><head><title>POST Landing</title></head><body><div id="root"></div><script>
+        fetch('/api/content', { method: 'POST' })
+          .then((response) => response.json())
+          .then((data) => { document.getElementById('root').innerHTML = '<main><h1>' + data.title + '</h1><p>' + data.copy + '</p></main>' })
+      </script></body></html>`)
+      return
+    }
+    if (request.url === '/api/content' && request.method === 'POST') {
+      response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      response.end(JSON.stringify({ title: 'Loaded Landing', copy: 'Content rendered from a POST API response.' }))
+      return
+    }
+    response.writeHead(404)
+    response.end('not found')
+  })
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const browser = await chromium.launch({ headless: true })
+  const url = `http://127.0.0.1:${server.address().port}/landing`
+
+  try {
+    const result = await auditLandingPages(browser, url, [clickItem({ landingUrl: url })])
+    assert.equal(result.items.length, 1)
+    assert.notEqual(result.items[0].status, 'error')
+    assert.notEqual(result.items[0].category, 'blank-screen')
+    assert.equal(result.items[0].bodyTextLength > 10, true)
+  } finally {
+    await browser.close()
+    await new Promise((resolve) => server.close(resolve))
+  }
 })
 
 test('landing audit classifies 4xx and 5xx as error', () => {
@@ -177,6 +214,67 @@ test('landing audit keeps healthy 200 page ok when only load timeout is observed
     browserErrorPage: false,
     criticalConsoleErrorCount: 0,
   }, candidate('https://example.com/ok'))
+
+  assert.equal(result.status, 'ok')
+  assert.equal(result.category, 'landing-ok')
+})
+
+test('landing audit treats metrics read failure as review instead of blank screen', () => {
+  const result = classifyLandingObservation({
+    requestedUrl: 'https://example.com/metrics-failed',
+    finalUrl: 'https://example.com/metrics-failed',
+    statusCode: 200,
+    pageTitle: 'Landing shell',
+    loadWarning: 'page.waitForLoadState: Timeout 4000ms exceeded. "load" event fired',
+    bodyChildCount: 0,
+    visibleElementCount: 0,
+    bodyTextLength: 0,
+    hasMainContent: false,
+    hasMedia: false,
+    browserErrorPage: false,
+    metricsReadFailed: true,
+  }, candidate('https://example.com/metrics-failed'))
+
+  assert.equal(result.status, 'warn')
+  assert.equal(result.category, 'timeout')
+})
+
+test('landing audit keeps critical script error stronger than metrics read failure', () => {
+  const result = classifyLandingObservation({
+    requestedUrl: 'https://example.com/metrics-failed-critical',
+    finalUrl: 'https://example.com/metrics-failed-critical',
+    statusCode: 200,
+    pageTitle: 'Landing shell',
+    loadWarning: 'page.waitForLoadState: Timeout 4000ms exceeded. "load" event fired',
+    bodyChildCount: 0,
+    visibleElementCount: 0,
+    bodyTextLength: 0,
+    hasMainContent: false,
+    hasMedia: false,
+    browserErrorPage: false,
+    metricsReadFailed: true,
+    criticalConsoleErrorCount: 1,
+  }, candidate('https://example.com/metrics-failed-critical'))
+
+  assert.equal(result.status, 'error')
+  assert.equal(result.category, 'critical-script-error')
+})
+
+test('landing audit keeps load warning with usable 200 content out of blank screen', () => {
+  const result = classifyLandingObservation({
+    requestedUrl: 'https://example.com/slow-network',
+    finalUrl: 'https://example.com/slow-network',
+    statusCode: 200,
+    pageTitle: 'Slow network landing',
+    loadWarning: 'page.waitForLoadState: Timeout 4000ms exceeded. "load" event fired',
+    bodyChildCount: 4,
+    visibleElementCount: 8,
+    bodyTextLength: 160,
+    hasMainContent: true,
+    hasMedia: false,
+    browserErrorPage: false,
+    criticalConsoleErrorCount: 0,
+  }, candidate('https://example.com/slow-network'))
 
   assert.equal(result.status, 'ok')
   assert.equal(result.category, 'landing-ok')

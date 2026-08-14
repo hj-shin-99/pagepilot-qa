@@ -75,7 +75,7 @@ function QaStartScreen({
       <header className="start-header" aria-label="PagePilot QA">
         <span className="start-brand">
           <strong>PagePilot QA</strong>
-          <span className="start-version">v0.7.0</span>
+          <span className="start-version">v1.0</span>
         </span>
         <button className="start-history-button" type="button" onClick={onOpenHistory}>History</button>
       </header>

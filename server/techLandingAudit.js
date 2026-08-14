@@ -29,14 +29,6 @@ export async function auditLandingPages(browser, targetUrl, clickItems = [], ins
   }
 
   try {
-    await context.route('**/*', async (route) => {
-      if (route.request().method().toUpperCase() === 'POST') {
-        await route.abort('blockedbyclient')
-        return
-      }
-      await route.continue()
-    })
-
     const observed = []
     for (const candidate of candidates) {
       const page = await context.newPage()
@@ -117,6 +109,7 @@ export function normalizeLandingAuditItem(candidate = {}, observation = {}) {
     hasMainContent: observation.hasMainContent === true,
     hasMedia: observation.hasMedia === true,
     browserErrorPage: observation.browserErrorPage === true,
+    metricsReadFailed: observation.metricsReadFailed === true,
     consoleErrorCount: Number(observation.consoleErrorCount || 0),
     pageErrorCount: Number(observation.pageErrorCount || 0),
     criticalConsoleErrorCount: Number(observation.criticalConsoleErrorCount || 0),
@@ -140,6 +133,7 @@ export function classifyLandingObservation(observation = {}, candidate = {}) {
   const navigationError = textOf(observation.navigationError)
   const criticalConsoleErrorCount = Number(observation.criticalConsoleErrorCount || 0)
   const loadWarning = textOf(observation.loadWarning)
+  const metricsReadFailed = observation.metricsReadFailed === true
   const redirected = observation.redirected === true
   const blankScreenLikely = isBlankScreenLikely(observation)
   const weakContent = hasWeakContentSignal(observation)
@@ -156,6 +150,7 @@ export function classifyLandingObservation(observation = {}, candidate = {}) {
     }
     if (/timeout|timed out/i.test(navigationError)) {
       if (healthyLandingEvidence) return createHealthyLandingStatus(candidate, redirected)
+      if (metricsReadFailed) return { status: 'warn', category: 'timeout', note: '랜딩 페이지 로딩 시간이 초과되었고 DOM 콘텐츠 측정도 완료하지 못해 확인이 필요합니다.' }
       return hasContent
         ? { status: 'warn', category: 'timeout', note: '랜딩 페이지 로딩 시간이 초과되었지만 일부 콘텐츠는 확인되었습니다.' }
         : { status: 'error', category: 'navigation-failed', note: '랜딩 페이지 로딩이 완료되지 않아 정상 화면을 확인하지 못했습니다.' }
@@ -169,6 +164,7 @@ export function classifyLandingObservation(observation = {}, candidate = {}) {
   if (observation.browserErrorPage === true) return { status: 'error', category: 'browser-error-page', note: '브라우저 기본 오류 페이지 또는 연결 실패 화면이 감지되었습니다.' }
   if (blankScreenLikely) return { status: 'error', category: 'blank-screen', note: '빈 화면 가능성이 높아 실제 랜딩 페이지 렌더링을 확인해야 합니다.' }
   if (criticalConsoleErrorCount > 0) return { status: 'error', category: 'critical-script-error', note: '페이지 렌더링 또는 라우팅에 영향을 줄 수 있는 치명적 스크립트 오류가 감지되었습니다.' }
+  if (metricsReadFailed) return { status: 'warn', category: loadWarning ? 'timeout' : 'needs-review', note: loadWarning ? '로딩 완료 대기 제한 이후 DOM 콘텐츠 측정에 실패해 실제 랜딩 페이지 렌더링 확인이 필요합니다.' : 'DOM 콘텐츠 측정에 실패해 실제 랜딩 페이지 렌더링 확인이 필요합니다.' }
 
   const warningReasons = []
   if (!pageTitle) warningReasons.push('title 누락')
@@ -304,9 +300,11 @@ async function inspectLandingPage(page, requestedUrl) {
       visibleElementCount,
       hasMainContent: Boolean(document.querySelector('main, [role="main"], article, section, #app, #root')),
       hasMedia: Boolean(document.querySelector('img, video, canvas, svg')),
-      browserErrorPage: isBrowserErrorPageSignature({ title, firstHeading, bodyText, browserErrorDom, visibleElementCount }),
+      browserErrorSignature: { title, firstHeading, bodyText, browserErrorDom, visibleElementCount },
+      metricsReadFailed: false,
     }
-  }).catch(() => ({ bodyChildCount: 0, bodyTextLength: 0, visibleElementCount: 0, hasMainContent: false, hasMedia: false, browserErrorPage: false }))
+  }).catch(() => ({ bodyChildCount: 0, bodyTextLength: 0, visibleElementCount: 0, hasMainContent: false, hasMedia: false, browserErrorPage: false, metricsReadFailed: true }))
+  const browserErrorPage = metrics.metricsReadFailed === true ? false : isBrowserErrorPageSignature(metrics.browserErrorSignature)
   const redirectInfo = analyzeRedirect(requestedUrl, finalUrl)
 
   return {
@@ -323,6 +321,7 @@ async function inspectLandingPage(page, requestedUrl) {
     thirdPartyConsoleErrorCount: consoleAudit.thirdPartyCount,
     unexpectedRedirect: redirectInfo.unexpected,
     ...metrics,
+    browserErrorPage,
   }
 }
 
@@ -380,6 +379,7 @@ function hasHealthyLandingEvidence(observation = {}, context = {}) {
 }
 
 function isBlankScreenLikely(observation = {}) {
+  if (observation.metricsReadFailed === true) return false
   return Number(observation.bodyChildCount || 0) <= 1
     && Number(observation.visibleElementCount || 0) === 0
     && Number(observation.bodyTextLength || 0) < 10

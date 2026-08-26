@@ -44,6 +44,7 @@ function App() {
   const [selectedHistoryId, setSelectedHistoryId] = useState(initialAppState.selectedHistoryId)
   const [techScanOptions, setTechScanOptions] = useState(initialAppState.techScanOptions)
   const [devices, setDevices] = useState(initialAppState.devices)
+  const [, setConfirmedReferenceMap] = useState(null)
   const minimumScanningTimerRef = useRef(null)
 
   const isScanning = visualScanState === 'loading' || techScanState === 'loading' || aiReviewState === 'loading'
@@ -301,6 +302,7 @@ function App() {
     setAiReviewState('idle')
     setScanStage('idle')
     setScanProgressEvent(null)
+    setConfirmedReferenceMap(null)
   }
 
   const resetToNewScan = () => {
@@ -417,6 +419,7 @@ function App() {
         onStartScan={handleStartScan}
         onTechScanOptionsChange={setTechScanOptions}
         onDevicesChange={(nextDevices) => setDevices(normalizeDeviceIds(nextDevices))}
+        onReferenceApply={setConfirmedReferenceMap}
         onUrlBlur={handleUrlBlur}
         onUrlConfirm={handleUrlConfirm}
         onUrlChange={(value) => {

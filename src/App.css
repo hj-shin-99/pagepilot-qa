@@ -8172,6 +8172,377 @@
   transform: translateX(2px) rotate(45deg);
 }
 
+.start-step-reference {
+  display: grid;
+  gap: 14px;
+}
+
+.reference-upload-card,
+.reference-review-panel {
+  display: grid;
+  gap: 14px;
+  border: 1px solid rgba(67, 196, 173, 0.22);
+  border-radius: 18px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.74);
+  box-shadow: 0 10px 24px rgba(35, 54, 58, 0.045);
+}
+
+.reference-upload-copy h2,
+.reference-upload-copy h3,
+.reference-review-header h3 {
+  margin: 0;
+  color: var(--start-text);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.reference-upload-copy h2 span {
+  color: var(--start-muted);
+  font-weight: 560;
+}
+
+.reference-upload-copy h3 {
+  font-size: 14px;
+}
+
+.reference-upload-copy p,
+.reference-review-header p,
+.reference-apply-row p,
+.reference-selected-file,
+.reference-review-warning {
+  margin: 6px 0 0;
+  color: var(--start-muted);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.reference-upload-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.reference-file-action-row {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.reference-file-action-row .reference-file-picker {
+  margin-right: auto;
+}
+
+.reference-file-picker,
+.reference-analyze-button,
+.reference-review-actions button {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(67, 196, 173, 0.3);
+  border-radius: 12px;
+  padding: 0 12px;
+  color: #245f56;
+  background: rgba(232, 250, 246, 0.78);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.reference-file-picker input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.reference-analyze-button:disabled,
+.reference-review-actions button:disabled,
+.reference-apply-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.reference-review-header {
+  display: grid;
+  gap: 12px;
+}
+
+.reference-review-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.reference-review-summary span,
+.reference-status-badge,
+.reference-confidence-badge {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0 9px;
+  background: rgba(47, 168, 145, 0.12);
+  color: #245f56;
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.reference-confidence-badge {
+  margin-left: 6px;
+  background: rgba(180, 90, 90, 0.12);
+  color: var(--start-danger);
+}
+
+.reference-review-list {
+  display: grid;
+  gap: 10px;
+}
+
+.reference-review-item {
+  display: grid;
+  gap: 12px;
+  border: 1px solid rgba(113, 133, 143, 0.18);
+  border-radius: 16px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.reference-review-item.is-excluded {
+  opacity: 0.72;
+}
+
+.reference-review-item.is-unmapped {
+  border-color: rgba(217, 119, 6, 0.28);
+  background: rgba(255, 251, 235, 0.86);
+}
+
+.reference-review-item h4 {
+  margin: 8px 0 10px;
+  color: #10213b;
+  font-size: 15px;
+  font-weight: 730;
+}
+
+.reference-review-facts {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.reference-review-facts div {
+  display: grid;
+  gap: 3px;
+}
+
+.reference-review-facts dt {
+  color: var(--start-muted);
+  font-size: 11px;
+  font-weight: 720;
+  text-transform: uppercase;
+}
+
+.reference-review-facts dd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 0;
+  color: #273b44;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.reference-review-facts code {
+  border-radius: 8px;
+  padding: 3px 6px;
+  color: #164d45;
+  background: rgba(67, 196, 173, 0.12);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+.reference-url-list {
+  display: grid;
+  gap: 4px;
+  max-width: 100%;
+}
+
+.reference-url-list code {
+  width: fit-content;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.reference-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.reference-edit-form {
+  display: grid;
+  gap: 10px;
+}
+
+.reference-edit-form label {
+  display: grid;
+  gap: 5px;
+  color: var(--start-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.reference-edit-form input,
+.reference-edit-form textarea {
+  width: 100%;
+  border: 1px solid var(--start-border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: #10213b;
+  background: rgba(255, 255, 255, 0.9);
+  font: inherit;
+  font-size: 13px;
+}
+
+.reference-apply-row {
+  display: grid;
+  gap: 8px;
+}
+
+.reference-apply-button.primary-button {
+  min-height: 42px;
+}
+
+.reference-qa-modal {
+  width: 100%;
+  text-align: center;
+}
+
+.reference-qa-trigger-row {
+  display: inline-flex;
+}
+
+.reference-qa-dialog {
+  width: min(860px, calc(100vw - 40px));
+  max-height: min(84vh, 820px);
+}
+
+.reference-qa-body {
+  gap: 14px;
+  overflow-y: auto;
+}
+
+.reference-sheet-list {
+  display: grid;
+  gap: 10px;
+}
+
+.reference-sheet-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  border: 1px solid rgba(216, 226, 238, 0.86);
+  border-radius: 14px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.8);
+  color: #334155;
+  cursor: pointer;
+}
+
+.reference-sheet-row.is-selected {
+  border-color: rgba(67, 196, 173, 0.52);
+  background: rgba(240, 253, 250, 0.88);
+}
+
+.reference-sheet-row.is-low-priority {
+  opacity: 0.62;
+  cursor: not-allowed;
+}
+
+.reference-sheet-row input {
+  display: grid;
+  position: relative;
+  place-content: center;
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  appearance: none;
+  border: 1.5px solid rgba(113, 133, 143, 0.55);
+  border-radius: 4px;
+  background: #ffffff;
+  color: #ffffff;
+  cursor: pointer;
+}
+
+.reference-sheet-row input::before {
+  content: '';
+  width: 4px;
+  height: 8px;
+  border: solid #ffffff;
+  border-width: 0 2px 2px 0;
+  opacity: 0;
+  transform: rotate(45deg) translate(-1px, -1px);
+}
+
+.reference-sheet-row input:checked {
+  border-color: var(--start-mint, #43c4ad);
+  background: var(--start-mint, #43c4ad);
+}
+
+.reference-sheet-row input:checked::before {
+  opacity: 1;
+}
+
+.reference-sheet-row input:disabled {
+  cursor: not-allowed;
+}
+
+.reference-sheet-main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.reference-sheet-main strong {
+  color: #10213b;
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.reference-sheet-main span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.reference-sheet-badge {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0 9px;
+  color: #245f56;
+  background: rgba(47, 168, 145, 0.12);
+  font-size: 11px;
+  font-weight: 760;
+  white-space: nowrap;
+}
+
+.reference-sheet-badge.is-muted {
+  color: #64748b;
+  background: #e2e8f0;
+}
+
 .start-submit.primary-button {
   display: inline-flex;
   width: 100%;
@@ -8661,6 +9032,11 @@
     animation-name: qaSheetPanelIn;
   }
 
+  .reference-qa-dialog {
+    width: 100%;
+    max-height: 86vh;
+  }
+
   .tech-scan-options-sheet-handle {
     display: block;
     width: 42px;
@@ -8678,6 +9054,15 @@
 
   .tech-scan-options-body {
     padding: 0 18px 16px;
+  }
+
+  .reference-sheet-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .reference-sheet-badge {
+    grid-column: 2;
+    justify-self: start;
   }
 }
 

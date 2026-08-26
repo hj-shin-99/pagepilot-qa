@@ -36,6 +36,9 @@ import { emitQaProgress } from './qaProgress.js'
 import { buildVisualPayloadFromScanResult, createVisualPayloadHandler, prepareVisualFigmaData } from './visualPayloadRoute.js'
 import { createVisualVisionService } from './visualVisionService.js'
 import { createWebVisualAnalysis } from './webVisualAnalysis.js'
+import { createReferenceFileUploadRoute } from './referenceFileUploadRoute.js'
+import { createReferenceNavigationService } from './referenceNavigationService.js'
+import { createReferenceNormalizeRoute } from './referenceNormalizeRoute.js'
 import { extractVisibleWebTextElements } from './webText.js'
 import { normalizeTechScanOptions } from '../shared/techScanOptions.js'
 import { createBrowserContextOptions, getDeviceProfile } from '../shared/deviceProfiles.js'
@@ -127,6 +130,11 @@ const qaRunDependencies = {
 
 const qaRunHandler = createQaRunHandler(qaRunDependencies)
 const qaRunStreamHandler = createQaRunStreamHandler(qaRunDependencies)
+const referenceFileUploadHandler = createReferenceFileUploadRoute()
+const referenceNavigationService = createReferenceNavigationService({
+  apiKey: process.env.OPENAI_API_KEY?.trim() || '',
+})
+const referenceNormalizeHandler = createReferenceNormalizeRoute({ service: referenceNavigationService })
 
 const aiReviewPayloadHandler = createAiReviewPayloadHandler({
   isHttpUrl,
@@ -353,6 +361,10 @@ app.post('/api/figma/render', async (req, res) => {
 })
 
 app.post('/api/visual/payload', visualPayloadHandler)
+
+app.post('/api/reference/analyze', referenceFileUploadHandler)
+
+app.post('/api/reference/normalize', referenceNormalizeHandler)
 
 app.post('/api/qa/run', qaRunHandler)
 

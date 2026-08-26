@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import DeviceScanSelector from './DeviceScanSelector'
+import ReferenceQaModal from './ReferenceQaModal'
 import TechScanOptions from './TechScanOptions'
 import { isValidFigmaUrl } from '../utils/scanSession'
 
@@ -21,6 +22,7 @@ function QaStartScreen({
   onUrlConfirm,
   onTechScanOptionsChange,
   onDevicesChange,
+  onReferenceApply,
 }) {
   const isFigmaUrlReady = isValidFigmaUrl(figmaUrl.trim())
   const isWebUrlInvalid = Boolean(inputError)
@@ -144,6 +146,10 @@ function QaStartScreen({
                       techScanOptions={techScanOptions}
                       onTechScanOptionsChange={onTechScanOptionsChange}
                     />
+                  </div>
+
+                  <div className="start-step start-step-reference">
+                    <ReferenceQaModal isDisabled={!isWebUrlReady || isScanning} onReferenceApply={onReferenceApply} />
                   </div>
 
                   <div className="start-submit-slot">

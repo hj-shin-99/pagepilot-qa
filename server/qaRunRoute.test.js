@@ -124,6 +124,57 @@ test('/api/qa/run builder skips visual when figmaUrl is empty', async () => {
   assert.deepEqual(result.devices, ['desktop'])
 })
 
+test('/api/qa/run builder omits navigation intent layer when Reference is not applied', async () => {
+  const { calls, dependencies } = createDependencies({ scanResult: { ...createBaseScanResult(), links: [{ label: 'Apply', url: 'https://example.com/apply', href: '/apply', status: 'ok' }] } })
+
+  const result = await buildQaRunResponse({ webUrl: 'https://example.com', figmaUrl: '' }, dependencies)
+
+  assert.equal(calls.scanUrl, 1)
+  assert.equal(result.tech.result.navigationIntentQa, undefined)
+  assert.equal(result.deviceResults[0].result.navigationIntentQa, undefined)
+})
+
+test('/api/qa/run builder evaluates compact confirmed navigation Reference without another scan', async () => {
+  const { calls, dependencies } = createDependencies({ scanResult: { ...createBaseScanResult(), links: [{ label: 'Apply', url: 'https://example.com/apply', href: '/apply', status: 'ok' }] } })
+
+  const result = await buildQaRunResponse({ webUrl: 'https://example.com', figmaUrl: '', navigationReference: compactNavigationReference([navigationReferenceItem('ref-1', 'Apply', '/apply')]) }, dependencies)
+
+  assert.equal(calls.scanUrl, 1)
+  assert.equal(result.tech.result.navigationIntentQa.summary.correct, 1)
+  assert.equal(result.tech.result.navigationIntentQa.items[0].status, 'matched-correct')
+  assert.deepEqual(result.tech.result.navigationIntentQa.items[0].expectedUrls.map((url) => url.raw), ['/apply'])
+})
+
+test('/api/qa/run builder isolates malformed navigation Reference as intent unavailable', async () => {
+  const { dependencies } = createDependencies({ scanResult: { ...createBaseScanResult(), links: [{ label: 'Apply', url: 'https://example.com/apply' }] } })
+
+  const result = await buildQaRunResponse({ webUrl: 'https://example.com', figmaUrl: '', navigationReference: { schemaVersion: 'bad', items: 'invalid' } }, dependencies)
+
+  assert.equal(result.tech.status, 'success')
+  assert.equal(result.visual.status, 'skipped')
+  assert.equal(result.tech.result.navigationIntentQa.meta.available, false)
+})
+
+test('/api/qa/run builder keeps navigation intent device results independent and ordered', async () => {
+  const { calls, dependencies } = createDependencies({
+    scanResultFactory(url, options) {
+      return {
+        ...createBaseScanResult(),
+        targetUrl: url,
+        pageTitle: options.deviceId,
+        links: [{ label: 'Apply', url: options.deviceId === 'mobile' ? 'https://example.com/wrong' : 'https://example.com/apply', href: '/apply', status: 'ok' }],
+      }
+    },
+  })
+
+  const result = await buildQaRunResponse({ webUrl: 'https://example.com', figmaUrl: '', devices: ['desktop', 'mobile'], navigationReference: compactNavigationReference([navigationReferenceItem('ref-1', 'Apply', '/apply')]) }, dependencies)
+
+  assert.deepEqual(calls.scanArgsList.map((entry) => entry.options.deviceId), ['desktop', 'mobile'])
+  assert.deepEqual(result.deviceResults.map((entry) => entry.deviceId), ['desktop', 'mobile'])
+  assert.equal(result.deviceResults[0].result.navigationIntentQa.items[0].status, 'matched-correct')
+  assert.equal(result.deviceResults[1].result.navigationIntentQa.items[0].status, 'matched-mismatch')
+})
+
 test('/api/qa/run builder defaults missing or invalid scan options to full selection', async () => {
   const { calls, dependencies } = createDependencies()
   await buildQaRunResponse({ webUrl: 'https://example.com', figmaUrl: '', scanOptions: { url: false, click: 'nope', unknown: false } }, dependencies)
@@ -631,6 +682,43 @@ async function measureDeviceConcurrency(devices, delays = {}) {
 
   const result = await buildQaRunResponse({ webUrl: 'https://example.com', figmaUrl: '', devices }, dependencies)
   return { starts, finishes, maxActive, result }
+}
+
+function createBaseScanResult() {
+  return {
+    targetUrl: 'https://example.com',
+    scannedAt: '2026-07-13T00:00:00.000Z',
+    pageTitle: 'Example',
+    httpStatus: 200,
+    accessible: true,
+    navigationError: '',
+    checks: [],
+    links: [],
+    missingHrefLinks: [],
+    images: [],
+    consoleMessages: [],
+    counts: { anchors: 1, buttons: 0 },
+    mobile: { viewport: { width: 390, height: 844 }, statusCode: 200, note: 'ok' },
+  }
+}
+
+function compactNavigationReference(items) {
+  return {
+    schemaVersion: 'navigation-intent-reference-v1',
+    sourceDocument: { fileName: 'reference.xlsx' },
+    items,
+  }
+}
+
+function navigationReferenceItem(referenceId, label, raw) {
+  return {
+    referenceId,
+    source: { sheetName: 'Reference', rowNumber: Number(referenceId.split('-')[1]) || 1, evidenceText: label },
+    pageContext: { sectionHint: '', depthPath: [] },
+    element: { label, aliases: [], roleHint: 'link', actionHint: 'navigation' },
+    expected: { type: 'url', urls: [{ raw, matchMode: 'path-and-query', allowSameOrigin: true, allowRedirect: false, allowTrailingSlashVariant: true, dynamicParameters: [] }] },
+    userDecision: { status: 'confirmed', edited: false, excludedReason: '' },
+  }
 }
 
 async function runMultiDeviceWithMobileCompatibility(canonicalMobile) {

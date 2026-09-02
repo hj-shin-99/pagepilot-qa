@@ -15,13 +15,16 @@ export function appendNdjsonChunk(buffer, chunk) {
 
 import { normalizeDeviceIds } from '../../shared/deviceProfiles.js'
 
-export async function requestQaRunStream({ webUrl, figmaUrl, scanOptions, devices, onProgress, fetchFn = fetch }) {
+export async function requestQaRunStream({ webUrl, figmaUrl, scanOptions, devices, navigationReference = null, onProgress, fetchFn = fetch }) {
+  const body = navigationReference
+    ? { webUrl, figmaUrl, scanOptions, devices: normalizeDeviceIds(devices), navigationReference }
+    : { webUrl, figmaUrl, scanOptions, devices: normalizeDeviceIds(devices) }
   let response
   try {
     response = await fetchFn('/api/qa/run-stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ webUrl, figmaUrl, scanOptions, devices: normalizeDeviceIds(devices) }),
+      body: JSON.stringify(body),
     })
   } catch (error) {
     throw createFallbackError(error)

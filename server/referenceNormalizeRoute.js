@@ -33,5 +33,5 @@ function mapReferenceNormalizeError(error) {
 
 function isSafeDiagnostics(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
-  return Object.keys(value).every((key) => ['model', 'finishReason', 'contentLength', 'contentType', 'promptTokens', 'completionTokens', 'totalTokens'].includes(key))
+  return Object.keys(value).every((key) => ['model', 'finishReason', 'contentLength', 'contentType', 'promptTokens', 'completionTokens', 'totalTokens', 'category', 'status', 'errorCode'].includes(key))
 }

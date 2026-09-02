@@ -3,9 +3,13 @@ import { createPortal } from 'react-dom'
 import ReferenceReviewPanel from './ReferenceReviewPanel'
 import { analyzeReferenceFile, normalizeReference } from '../utils/referenceQa'
 import {
+  createReferencePreset,
+  createReferencePresetFilename,
   createReferenceFileSelectionState,
   createReferenceNormalizeFailureState,
   createReferenceNormalizeSuccessState,
+  importReferencePresetFromText,
+  MAX_REFERENCE_PRESET_BYTES,
   resetReferenceReviewState,
   updateReferenceSheetDraftSelection,
 } from '../utils/referenceReview'
@@ -18,6 +22,7 @@ function ReferenceQaModal({ isDisabled, onReferenceApply }) {
   const [isNormalizing, setIsNormalizing] = useState(false)
   const triggerRef = useRef(null)
   const dialogRef = useRef(null)
+  const fileInputRef = useRef(null)
   const shouldRestoreFocusRef = useRef(false)
   const titleId = 'reference-qa-dialog-title'
   const descriptionId = 'reference-qa-dialog-description'
@@ -63,11 +68,44 @@ function ReferenceQaModal({ isDisabled, onReferenceApply }) {
     setIsOpen(false)
   }
 
-  const handleFileChange = (event) => {
+  const handleFileChange = async (event) => {
     const file = event.target.files?.[0] || null
-    setSelectedSheetNames([])
-    setReferenceState(createReferenceFileSelectionState(file))
-    if (typeof onReferenceApply === 'function') onReferenceApply(null)
+    event.target.value = ''
+    if (!file) return
+
+    if (isSupportedReferenceExcel(file)) {
+      setSelectedSheetNames([])
+      setReferenceState(createReferenceFileSelectionState(file))
+      if (typeof onReferenceApply === 'function') onReferenceApply(null)
+      return
+    }
+
+    if (isSupportedPresetFile(file)) {
+      await importPresetFile(file)
+      return
+    }
+
+    setReferenceState((current) => ({ ...current, referenceError: '지원하는 .xlsx 또는 Reference 설정 JSON 파일을 선택해 주세요.' }))
+  }
+
+  const importPresetFile = async (file) => {
+    if (file.size > MAX_REFERENCE_PRESET_BYTES) {
+      setReferenceState((current) => ({ ...current, referenceError: 'Reference 설정 파일이 너무 큽니다.' }))
+      return
+    }
+    try {
+      const next = importReferencePresetFromText(await file.text())
+      setSelectedSheetNames(next.normalizedSheetNames)
+      setReferenceState({ ...next, presetFileName: file.name })
+      if (typeof onReferenceApply === 'function') onReferenceApply(null)
+    } catch (error) {
+      setReferenceState((current) => ({ ...current, referenceError: error instanceof Error ? error.message : 'Reference 설정 가져오기에 실패했습니다.' }))
+    }
+  }
+
+  const handleBrowseClick = () => {
+    if (isDisabled || isAnalyzing || isNormalizing) return
+    fileInputRef.current?.click()
   }
 
   const handleAnalyze = async () => {
@@ -115,9 +153,25 @@ function ReferenceQaModal({ isDisabled, onReferenceApply }) {
     if (typeof onReferenceApply === 'function') onReferenceApply(null)
   }
 
-  const handleApply = (confirmedReferenceMap) => {
-    setReferenceState((current) => ({ ...current, confirmedReferenceMap }))
-    if (typeof onReferenceApply === 'function') onReferenceApply(confirmedReferenceMap)
+  const handleApply = async (confirmedReferenceMap) => {
+    try {
+      if (typeof onReferenceApply === 'function') await onReferenceApply(confirmedReferenceMap)
+      setReferenceState((current) => ({ ...current, confirmedReferenceMap, referenceError: '' }))
+      closeModal()
+    } catch (error) {
+      setReferenceState((current) => ({ ...current, referenceError: error instanceof Error ? error.message : 'Reference 적용에 실패했습니다.' }))
+    }
+  }
+
+  const handlePresetExport = () => {
+    if (!referenceState.referenceMap) return
+    const preset = createReferencePreset({
+      referenceMap: referenceState.referenceMap,
+      items: referenceState.reviewItems,
+      meta: referenceState.referenceMeta,
+      normalizedSheetNames: referenceState.normalizedSheetNames,
+    })
+    downloadJsonPreset(preset, createReferencePresetFilename(referenceState.referenceMap.sourceDocument?.fileName))
   }
 
   const handleDialogKeyDown = (event) => {
@@ -184,24 +238,28 @@ function ReferenceQaModal({ isDisabled, onReferenceApply }) {
               <section className="reference-upload-card" aria-label="Reference File 선택">
                 <div className="reference-upload-copy">
                   <h3>파일 선택</h3>
-                  <p>IA / 기능정의서 / Sitemap Excel (.xlsx)을 업로드하면 Expected Navigation Map을 미리 검토할 수 있습니다.</p>
+                  <p>IA / 기능정의서 / Sitemap Excel 또는 저장한 Reference 설정을 선택할 수 있습니다.</p>
                 </div>
                 <div className="reference-upload-controls reference-file-action-row">
-                  <label className="reference-file-picker" htmlFor="reference-file-input">
-                    <span>{referenceState.selectedFile ? '다른 Reference 선택' : 'Reference Excel 선택'}</span>
-                    <input
-                      id="reference-file-input"
-                      accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                      type="file"
-                      disabled={isDisabled || isAnalyzing || isNormalizing}
-                      onChange={handleFileChange}
-                    />
-                  </label>
-                  <button className="reference-analyze-button" type="button" disabled={!referenceState.selectedFile || isDisabled || isAnalyzing || isNormalizing} onClick={handleAnalyze}>
-                    {isAnalyzing ? '분석 중...' : '분석'}
-                  </button>
+                  <input
+                    ref={fileInputRef}
+                    id="reference-file-input"
+                    className="reference-hidden-file-input"
+                    accept=".xlsx,.pagepilot-reference.json,.json,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    type="file"
+                    disabled={isDisabled || isAnalyzing || isNormalizing}
+                    onChange={handleFileChange}
+                  />
+                  <div className="reference-file-picker-row">
+                    <input className="reference-file-name-display" value={referenceState.selectedFile?.name || referenceState.presetFileName || '선택된 파일 없음'} readOnly aria-label="선택된 Reference 파일" />
+                    <button className="reference-browse-button" type="button" disabled={isDisabled || isAnalyzing || isNormalizing} onClick={handleBrowseClick}>찾아보기</button>
+                  </div>
                 </div>
-                {referenceState.selectedFile ? <p className="reference-selected-file">선택됨: {referenceState.selectedFile.name}</p> : null}
+                {referenceState.selectedFile ? (
+                  <button className="reference-analyze-button" type="button" disabled={isDisabled || isAnalyzing || isNormalizing} onClick={handleAnalyze}>
+                    {isAnalyzing ? '분석 중...' : '분석하기'}
+                  </button>
+                ) : null}
                 {referenceState.referenceError ? <p className="start-error reference-error">{referenceState.referenceError}</p> : null}
               </section>
 
@@ -225,6 +283,7 @@ function ReferenceQaModal({ isDisabled, onReferenceApply }) {
                   isDisabled={isDisabled || isAnalyzing || isNormalizing}
                   onItemsChange={handleItemsChange}
                   onApply={handleApply}
+                  onExport={handlePresetExport}
                 />
               ) : null}
             </div>
@@ -284,6 +343,27 @@ function formatSheetSummary(sheet) {
 function formatHeaderSummary(headerCandidatesSummary = []) {
   const labels = headerCandidatesSummary.flatMap((row) => row.labels || []).slice(0, 6)
   return labels.length ? `headerCandidates: ${labels.join(', ')}` : 'headerCandidates: 없음'
+}
+
+function isSupportedReferenceExcel(file) {
+  return /\.xlsx$/i.test(file?.name || '')
+}
+
+function isSupportedPresetFile(file) {
+  return /(?:\.pagepilot-reference\.json|\.json)$/i.test(file?.name || '')
+}
+
+function downloadJsonPreset(preset, filename) {
+  const blob = new Blob([JSON.stringify(preset, null, 2)], { type: 'application/json;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  anchor.rel = 'noopener'
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(url)
 }
 
 function getFocusableElements(dialog) {

@@ -385,6 +385,7 @@ export function createCompactTechResult(result = {}) {
     clickActionAudit: result.clickActionAudit || {},
     landingPages: Array.isArray(result.landingPages) ? result.landingPages : [],
     landingAudit: result.landingAudit || {},
+    ...(result.navigationIntentQa ? { navigationIntentQa: result.navigationIntentQa } : {}),
     formInteractions: Array.isArray(result.formInteractions) ? result.formInteractions : [],
     formAudit: result.formAudit || {},
     hoverInteractions: Array.isArray(result.hoverInteractions) ? result.hoverInteractions : [],

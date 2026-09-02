@@ -1,5 +1,6 @@
 import { createDeviceDescriptor, normalizeDeviceIds } from '../shared/deviceProfiles.js'
 import { normalizeTechScanOptions } from '../shared/techScanOptions.js'
+import { evaluateNavigationIntentQa } from './navigationIntentQa.js'
 import { createQaProgressReporter } from './qaProgress.js'
 
 export const MAX_DEVICE_SCAN_CONCURRENCY = 2
@@ -10,13 +11,14 @@ export function createQaRunHandler(dependencies) {
     const figmaUrl = typeof req.body?.figmaUrl === 'string' ? req.body.figmaUrl.trim() : ''
     const scanOptions = req.body?.scanOptions
     const devices = req.body?.devices
+    const navigationReference = req.body?.navigationReference
 
     if (!dependencies.isHttpUrl(webUrl)) {
       res.status(400).json({ message: 'http:// 또는 https://로 시작하는 Web URL만 사용할 수 있습니다.' })
       return
     }
 
-    const result = await buildQaRunResponse({ webUrl, figmaUrl, scanOptions, devices, signal: createRequestAbortSignal(req) }, dependencies)
+    const result = await buildQaRunResponse({ webUrl, figmaUrl, scanOptions, devices, navigationReference, signal: createRequestAbortSignal(req) }, dependencies)
     res.json(result)
   }
 }
@@ -27,6 +29,7 @@ export function createQaRunStreamHandler(dependencies) {
     const figmaUrl = typeof req.body?.figmaUrl === 'string' ? req.body.figmaUrl.trim() : ''
     const scanOptions = req.body?.scanOptions
     const devices = req.body?.devices
+    const navigationReference = req.body?.navigationReference
 
     if (!dependencies.isHttpUrl(webUrl)) {
       res.status(400).json({ message: 'http:// 또는 https://로 시작하는 Web URL만 사용할 수 있습니다.' })
@@ -42,7 +45,7 @@ export function createQaRunStreamHandler(dependencies) {
     const writeEvent = (event) => writeNdjsonEvent(res, event)
 
     try {
-      const result = await buildQaRunResponse({ webUrl, figmaUrl, scanOptions, devices, onProgress: writeEvent, signal: createRequestAbortSignal(req) }, dependencies)
+      const result = await buildQaRunResponse({ webUrl, figmaUrl, scanOptions, devices, navigationReference, onProgress: writeEvent, signal: createRequestAbortSignal(req) }, dependencies)
       writeEvent({ type: 'result', result })
     } catch (error) {
       writeEvent({ type: 'error', message: createSafeErrorMessage(error, '통합 검사 요청에 실패했습니다.') })
@@ -164,6 +167,13 @@ export async function buildQaRunResponse(input, dependencies) {
     } finally {
       timingMetrics.activeDeviceWorkers = Math.max(0, timingMetrics.activeDeviceWorkers - 1)
       timingMetrics.deviceMs.visualDesktop = Math.max(0, Date.now() - fallbackDeviceStartedAt)
+    }
+  }
+
+  if (input.navigationReference !== undefined) {
+    deviceResults = attachNavigationIntentQa(deviceResults, input.navigationReference)
+    if (visualScanResult?.deviceId) {
+      visualScanResult = deviceResults.find((entry) => entry.deviceId === visualScanResult.deviceId)?.result || visualScanResult
     }
   }
 
@@ -453,6 +463,34 @@ function attachDeviceResults(result, devices, deviceResults) {
     ...result,
     devices,
     deviceResults,
+  }
+}
+
+function attachNavigationIntentQa(deviceResults, navigationReference) {
+  return deviceResults.map((entry) => {
+    if (!entry || entry.status !== 'success' || !entry.result) return entry
+    return {
+      ...entry,
+      result: attachNavigationIntentQaToResult(entry.result, navigationReference, entry.deviceId),
+    }
+  })
+}
+
+function attachNavigationIntentQaToResult(result, navigationReference, deviceId) {
+  try {
+    return {
+      ...result,
+      navigationIntentQa: evaluateNavigationIntentQa(navigationReference, result, { baseUrl: result.targetUrl, device: deviceId || result.deviceId }),
+    }
+  } catch (error) {
+    return {
+      ...result,
+      navigationIntentQa: {
+        summary: { evaluated: 0, correct: 0, mismatch: 0, review: 1, notObserved: 0 },
+        items: [],
+        meta: { available: false, reason: createSafeErrorMessage(error, 'navigation-intent-evaluator-failed') },
+      },
+    }
   }
 }
 

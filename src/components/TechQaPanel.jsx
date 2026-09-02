@@ -55,6 +55,8 @@ function TechQaPanel({ result, onNewScan }) {
 
       <TechCompletionCard completion={display.completion} />
 
+      {view.navigationIntent.visible ? <NavigationIntentSection intent={view.navigationIntent} /> : null}
+
       <section className="detail-card tech-compact-card" id="tech-basic-section" aria-label="핵심 기본 검사 결과">
         <SectionHead
           title="핵심 기본 검사 결과"
@@ -355,6 +357,48 @@ function TechCompletionCard({ completion }) {
         </dl>
       ) : null}
     </article>
+  )
+}
+
+function NavigationIntentSection({ intent }) {
+  const rows = intent.rows || []
+  return (
+    <section className="detail-card tech-compact-card" id="navigation-intent-qa-section" aria-label="Navigation Intent QA">
+      <SectionHead
+        title="Navigation Intent QA"
+        meta={`정상 ${intent.summary.correct || 0} · 불일치 ${intent.summary.mismatch || 0} · 검토 ${intent.summary.review || 0} · 미관찰 ${intent.summary.notObserved || 0}`}
+        note="Reference 적용 항목과 현재 페이지에서 관찰된 링크/클릭/랜딩 URL evidence를 비교합니다. 미관찰 항목은 오류로 보지 않습니다."
+      />
+      {intent.available === false ? <p className="empty-row">Navigation Intent QA를 수행할 수 없습니다: {intent.reason || 'Reference 데이터 확인 필요'}</p> : null}
+      {rows.length > 0 ? (
+        <div className="tech-compact-table is-navigation-intent">
+          <div className="tech-table-head">
+            <span>Reference</span>
+            <span>상태</span>
+            <span>Expected URL</span>
+            <span>실제 URL</span>
+            <span>근거</span>
+          </div>
+          {rows.map((row) => <NavigationIntentRow row={row} key={row.rowId} />)}
+        </div>
+      ) : intent.available === false ? null : <p className="empty-row">표시할 Navigation Intent QA 결과가 없습니다.</p>}
+    </section>
+  )
+}
+
+function NavigationIntentRow({ row }) {
+  return (
+    <div className={`tech-table-row ${getStatusClass(row.status)}`}>
+      <div className="tech-table-title">
+        <span className="tech-category-chip">Intent</span>
+        <strong>{row.label}</strong>
+        <small>{formatIntentSource(row.source)}</small>
+      </div>
+      <span className={`status-badge ${getStatusClass(row.status)}`}>{row.statusLabel}</span>
+      <span className="navigation-intent-url-cell" title={formatUrlTitle(row.expectedUrls)}>{renderIntentUrls(row.expectedUrls, row.rowId, 'expected')}</span>
+      <span className="navigation-intent-url-cell" title={formatUrlTitle(row.actualUrls)}>{renderIntentUrls(row.actualUrls, row.rowId, 'actual')}</span>
+      <span className="navigation-intent-reason" title={row.reason || row.rawStatus}>{row.reason || row.rawStatus}</span>
+    </div>
   )
 }
 
@@ -816,6 +860,23 @@ function createMarkupAccessibilityItems(checkItems = []) {
 
 function formatTechStatusMessage() {
   return 'Tech QA 검사가 완료되었습니다. 아래 항목에서 문제 확인 및 검토 필요 결과를 확인해 주세요.'
+}
+
+function formatIntentSource(source = {}) {
+  const sheet = source.sheetName || 'Reference'
+  const row = source.rowNumber ? ` Row ${source.rowNumber}` : ''
+  return `${sheet}${row}`
+}
+
+function renderIntentUrls(urls = [], rowId, kind) {
+  const values = Array.isArray(urls) ? urls.filter(Boolean) : []
+  if (values.length === 0) return '-'
+  return <span className="navigation-intent-url-list">{values.map((url) => <code key={`${rowId}-${kind}-${url}`}>{url}</code>)}</span>
+}
+
+function formatUrlTitle(urls = []) {
+  const values = Array.isArray(urls) ? urls.filter(Boolean) : []
+  return values.length ? values.join('\n') : '-'
 }
 
 function formatMarkupCheckResult(item = {}, problemItems = []) {

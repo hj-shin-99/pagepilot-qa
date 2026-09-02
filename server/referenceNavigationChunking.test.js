@@ -127,6 +127,7 @@ test('all chunks fail returns safe zero-mapped review state instead of throwing'
   assert.equal(result.meta.chunking.successfulChunkCount, 0)
   assert.equal(result.meta.chunking.failedChunkCount, 2)
   assert.equal(result.meta.warnings.includes('all_reference_chunks_failed'), true)
+  assert.equal(result.meta.failedChunks.every((chunk) => chunk.diagnostics.category === 'unknown_openai_error'), true)
   assert.equal(result.referenceMap.items.every((item) => item.isUnmappedCandidate === true), true)
 })
 

@@ -59,6 +59,22 @@ test('POST /api/reference/normalize exposes only safe diagnostics for empty Open
   assert.equal(JSON.stringify(response.body).includes('OPENAI_API_KEY'), false)
 })
 
+test('POST /api/reference/normalize exposes safe OpenAI failure category diagnostics only', async () => {
+  const error = new Error('OpenAI service unavailable')
+  error.code = 'openai_reference_failed'
+  error.status = 502
+  error.diagnostics = { category: 'server_error', status: 503, errorCode: 'server_error' }
+  error.rawPrompt = 'do not expose prompt'
+  error.apiKey = 'sk-do-not-expose'
+  error.rawResponse = 'do not expose response'
+  const response = await postNormalize({ reference: { sheets: [] } }, { service: { async normalize() { throw error } } })
+
+  assert.equal(response.status, 502)
+  assert.equal(response.body.code, 'openai_reference_failed')
+  assert.deepEqual(response.body.diagnostics, { category: 'server_error', status: 503, errorCode: 'server_error' })
+  assert.equal(/rawPrompt|apiKey|rawResponse|sk-do-not-expose|do not expose/i.test(JSON.stringify(response.body)), false)
+})
+
 test('index keeps existing QA run endpoints while adding reference normalize route', () => {
   const source = fsReadIndex()
 

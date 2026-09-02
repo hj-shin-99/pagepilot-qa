@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import { createLinkItems, createTechQaViewModel, getSectionVisibility, getVisibleLinkGroups } from './techQa.js'
+import { createLinkItems, createNavigationIntentDisplayModel, createTechQaViewModel, getSectionVisibility, getVisibleLinkGroups } from './techQa.js'
 import { createTechDetailRows, createTechPanelDisplayModel, createTechQaDetailViewModel, getDisplayPriorityOwner, resolveTechQaEngine } from './techQaPanelView.js'
 import { isDeviceAccordionOpen, updateDeviceAccordionState } from './deviceAccordionState.js'
 import { formatStatusClassificationTitle, TECH_QA_EXPLANATION_INVENTORY } from './techQaExplanationCatalog.js'
@@ -634,6 +634,26 @@ test('tech qa panel source keeps new section order between modal and markup', ()
   const markupIndex = source.indexOf('title="마크업 및 접근성 검사"')
 
   assert.equal(modalIndex > -1 && scrollIndex > modalIndex && responsiveIndex > scrollIndex && downloadIndex > responsiveIndex && cookieIndex > downloadIndex && imageIndex > cookieIndex && performanceIndex > imageIndex && seoIndex > performanceIndex && markupIndex > seoIndex, true)
+})
+
+test('Navigation Intent QA display model dedupes identical actual URLs for compact table display', () => {
+  const intent = createNavigationIntentDisplayModel({
+    meta: { available: true },
+    summary: { evaluated: 1, correct: 1, mismatch: 0, review: 0, notObserved: 0 },
+    items: [{ referenceId: 'intent-1', label: 'Apply', status: 'matched-correct', expectedUrls: [{ raw: '/apply' }], actualUrlEvidence: [{ url: 'https://example.com/apply', kind: 'href' }, { url: 'https://example.com/apply', kind: 'landing-final' }] }],
+  })
+
+  assert.deepEqual(intent.rows[0].actualUrls, ['https://example.com/apply'])
+})
+
+test('tech qa panel source renders Navigation Intent QA only when result is present', () => {
+  const source = fs.readFileSync('src/components/TechQaPanel.jsx', 'utf8')
+
+  assert.equal(source.includes('view.navigationIntent.visible ? <NavigationIntentSection intent={view.navigationIntent} /> : null'), true)
+  assert.equal(source.includes('id="navigation-intent-qa-section"'), true)
+  assert.equal(source.includes('Reference 적용 항목과 현재 페이지에서 관찰된 링크/클릭/랜딩 URL evidence를 비교합니다.'), true)
+  assert.equal(source.indexOf('<TechCompletionCard completion={display.completion} />') < source.indexOf('<NavigationIntentSection'), true)
+  assert.equal(source.indexOf('<NavigationIntentSection') < source.indexOf('id="tech-basic-section"'), true)
 })
 
 test('click display fixture keeps only actual errors and actionable warnings in body counts', () => {

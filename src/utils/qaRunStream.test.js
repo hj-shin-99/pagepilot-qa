@@ -37,7 +37,27 @@ test('requestQaRunStream reads progress events and returns final qa result', asy
   assert.equal(result.tech.status, 'success')
   assert.equal(result.shouldSaveCombined, false)
   assert.equal(result.webUrl, 'https://example.com')
-  assert.deepEqual(JSON.parse(requests[0].options.body).devices, ['mobile'])
+  const body = JSON.parse(requests[0].options.body)
+  assert.deepEqual(body.devices, ['mobile'])
+  assert.equal(Object.hasOwn(body, 'navigationReference'), false)
+})
+
+test('requestQaRunStream sends optional compact navigation Reference when provided', async () => {
+  const requests = []
+  const navigationReference = { schemaVersion: 'navigation-intent-reference-v1', items: [{ referenceId: 'ref-1' }] }
+
+  await requestQaRunStream({
+    webUrl: 'https://example.com',
+    figmaUrl: '',
+    scanOptions: {},
+    navigationReference,
+    fetchFn: async (url, options) => {
+      requests.push({ url, options })
+      return createStreamResponse(['{"type":"result","result":{"tech":{"status":"success"},"visual":{"status":"skipped"}}}\n'])
+    },
+  })
+
+  assert.deepEqual(JSON.parse(requests[0].options.body).navigationReference, navigationReference)
 })
 
 test('requestQaRunStream marks missing stream support as json-fallback eligible', async () => {

@@ -7,6 +7,7 @@ import { buildAiReviewPayloadFromSession, sanitizeAiReviewResponse } from './uti
 import { confirmWebUrlInput, createDebouncedWebUrlConfirmScheduler, createPublicWebUrlState, createWebUrlInputState, isValidHttpUrl } from './utils/scanSession'
 import { countIssueCards, createCompactVisualResult, createVisualIssueCards, createVisualSummary } from './utils/visualQa'
 import { createTechQaViewModel } from './utils/techQa'
+import { createCompactNavigationReferenceMap } from './utils/referenceReview'
 import { createDefaultTechScanOptions, normalizeStoredTechScanOptions, normalizeTechScanOptions } from '../shared/techScanOptions.js'
 import { getScanStageFromQaProgressEvent, getScanningResultReadyTransitionMs, SCAN_RESULT_READY_TRANSITION_MS } from './utils/scanningStages'
 import { requestQaRunStream } from './utils/qaRunStream'
@@ -44,7 +45,7 @@ function App() {
   const [selectedHistoryId, setSelectedHistoryId] = useState(initialAppState.selectedHistoryId)
   const [techScanOptions, setTechScanOptions] = useState(initialAppState.techScanOptions)
   const [devices, setDevices] = useState(initialAppState.devices)
-  const [, setConfirmedReferenceMap] = useState(null)
+  const [confirmedReferenceMap, setConfirmedReferenceMap] = useState(null)
   const minimumScanningTimerRef = useRef(null)
 
   const isScanning = visualScanState === 'loading' || techScanState === 'loading' || aiReviewState === 'loading'
@@ -159,7 +160,7 @@ function App() {
       session = await requestQaRun(webUrl, frameUrl, techScanOptions, selectedDevices, (progressEvent) => {
         setScanProgressEvent(progressEvent)
         setScanStage(getScanStageFromQaProgressEvent(progressEvent, { combined: Boolean(frameUrl) }))
-      })
+      }, confirmedReferenceMap)
     } catch (error) {
       const message = error instanceof Error ? error.message : '통합 검사 요청에 실패했습니다.'
       session = {
@@ -518,17 +519,21 @@ function waitForResultReadyTransition({
   })
 }
 
-async function requestQaRun(webUrl, figmaUrl, scanOptions, devices, onProgress) {
+async function requestQaRun(webUrl, figmaUrl, scanOptions, devices, onProgress, confirmedReferenceMap = null) {
+  const navigationReference = createCompactNavigationReferenceMap(confirmedReferenceMap)
   try {
-    return await requestQaRunStream({ webUrl, figmaUrl, scanOptions, devices, onProgress })
+    return await requestQaRunStream({ webUrl, figmaUrl, scanOptions, devices, navigationReference, onProgress })
   } catch (error) {
     if (!error?.fallbackToJson) throw error
   }
 
+  const body = navigationReference
+    ? { webUrl, figmaUrl, scanOptions, devices: normalizeDeviceIds(devices), navigationReference }
+    : { webUrl, figmaUrl, scanOptions, devices: normalizeDeviceIds(devices) }
   const response = await fetch('/api/qa/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ webUrl, figmaUrl, scanOptions, devices: normalizeDeviceIds(devices) }),
+    body: JSON.stringify(body),
   })
   const payload = await readJsonResponse(response)
   if (!response.ok) throw new Error(payload?.message || `통합 검사 요청에 실패했습니다. (${response.status})`)

@@ -394,6 +394,26 @@ test('full Tech QA synthetic result round-trips canonical phase collections with
   assert.equal(view.formInteractionGroups.items[0].issues?.legacy, 'object issue should not crash')
 })
 
+test('Tech QA history preserves Navigation Intent QA result through compact round-trip', () => {
+  const desktop = createFullTechResult('intent-desktop', 'desktop')
+  desktop.navigationIntentQa = {
+    meta: { available: true },
+    summary: { evaluated: 2, correct: 1, mismatch: 1, review: 0, notObserved: 0 },
+    items: [
+      { referenceId: 'intent-1', label: 'Apply', status: 'matched-correct', expectedUrls: [{ raw: '/apply' }], actualUrlEvidence: [{ url: 'https://intent-desktop.example/apply' }] },
+      { referenceId: 'intent-2', label: 'Offer', status: 'matched-mismatch', expectedUrls: [{ raw: '/offer' }], actualUrlEvidence: [{ url: 'https://intent-desktop.example/promo' }], reason: 'Expected URL differs' },
+    ],
+  }
+
+  const compact = createCompactHistoryItemForStorage({ type: 'tech', id: 'intent-roundtrip', url: desktop.targetUrl, scannedAt: desktop.scannedAt, devices: desktop.devices, result: desktop })
+  const restored = getHistoryTechResult(JSON.parse(JSON.stringify(compact)))
+  const view = createTechQaViewModel(restored)
+
+  assert.equal(restored.navigationIntentQa.summary.mismatch, 1)
+  assert.equal(view.navigationIntent.visible, true)
+  assert.deepEqual(view.navigationIntent.rows.map((row) => row.referenceId), ['intent-2', 'intent-1'])
+})
+
 test('runtime-like frontend History save path preserves Landing and Form after App precompact and storage load', async () => {
   await resetStorage()
   const desktop = createFullTechResult('runtime-desktop', 'desktop')

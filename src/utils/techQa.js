@@ -143,6 +143,7 @@ export function createTechQaViewModel(result = {}) {
     imageGroups,
     performanceGroups,
     seoGroups,
+    navigationIntent: createNavigationIntentDisplayModel(filteredResult.navigationIntentQa),
     links,
     allItems: allItems.sort(comparePriorityItems),
     developer: createDeveloperInfo(filteredResult, linkSummary),
@@ -168,6 +169,65 @@ function createFilteredTechResult(result = {}, scanOptions = normalizeStoredTech
     performanceItems: scanOptions.performance ? arrayOfObjects(result.performanceItems) : [],
     seoItems: scanOptions.seo ? arrayOfObjects(result.seoItems) : [],
   }
+}
+
+export function createNavigationIntentDisplayModel(navigationIntentQa) {
+  if (!navigationIntentQa || typeof navigationIntentQa !== 'object' || Array.isArray(navigationIntentQa)) return { visible: false, summary: createEmptyNavigationIntentSummary(), rows: [] }
+  const summary = {
+    ...createEmptyNavigationIntentSummary(),
+    ...(navigationIntentQa.summary && typeof navigationIntentQa.summary === 'object' ? navigationIntentQa.summary : {}),
+  }
+  const rows = arrayOfObjects(navigationIntentQa.items).map((item, index) => ({
+    rowId: `navigation-intent-${item.referenceId || index}`,
+    referenceId: item.referenceId || `intent-${index + 1}`,
+    label: item.label || item.actualLabel || 'Reference item',
+    expectedUrls: Array.isArray(item.expectedUrls) ? item.expectedUrls.map((url) => url.raw || url).filter(Boolean) : [],
+    actualLabel: item.actualLabel || '',
+    actualUrls: dedupeStrings(Array.isArray(item.actualUrlEvidence) ? item.actualUrlEvidence.map((entry) => entry.url).filter(Boolean) : []),
+    source: item.source || {},
+    reason: item.reason || '',
+    status: normalizeNavigationIntentDisplayStatus(item.status),
+    statusLabel: getNavigationIntentStatusLabel(item.status),
+    rawStatus: item.status || '',
+    confidence: item.confidence,
+  })).sort(compareNavigationIntentRows)
+
+  return {
+    visible: true,
+    summary,
+    rows,
+    available: navigationIntentQa.meta?.available !== false,
+    reason: navigationIntentQa.meta?.reason || '',
+  }
+}
+
+function createEmptyNavigationIntentSummary() {
+  return { evaluated: 0, correct: 0, mismatch: 0, review: 0, notObserved: 0 }
+}
+
+function normalizeNavigationIntentDisplayStatus(status) {
+  if (status === 'matched-mismatch') return 'error'
+  if (status === 'matched-correct') return 'ok'
+  if (status === 'reference-not-observed') return 'info'
+  return 'warn'
+}
+
+function getNavigationIntentStatusLabel(status) {
+  if (status === 'matched-correct') return '정상'
+  if (status === 'matched-mismatch') return '문제 확인'
+  if (status === 'reference-not-observed') return '미관찰'
+  return '검토 필요'
+}
+
+function compareNavigationIntentRows(left, right) {
+  const order = { error: 0, warn: 1, info: 2, ok: 3 }
+  const statusDiff = (order[left.status] ?? 9) - (order[right.status] ?? 9)
+  if (statusDiff !== 0) return statusDiff
+  return String(left.referenceId).localeCompare(String(right.referenceId))
+}
+
+function dedupeStrings(values = []) {
+  return [...new Set(values.filter(Boolean))]
 }
 
 export function createLinkItems(links = []) {

@@ -667,8 +667,8 @@ async function normalizeReferenceChunk({ chunk, compactInput, client, model, lim
       max_completion_tokens: MAX_COMPLETION_TOKENS,
     })
   } catch (error) {
-    const code = isTimeoutError(error) ? 'openai_reference_timeout' : 'openai_reference_failed'
-    return { items: [], warnings: [code], failedChunks: [createFailedChunk(chunk, code, error instanceof Error ? error.message : 'Reference normalization OpenAI 호출에 실패했습니다.')], success: false }
+    const failure = createOpenAiFailure(error)
+    return { items: [], warnings: [failure.code], failedChunks: [createFailedChunk(chunk, failure.code, failure.message, failure.diagnostics)], success: false }
   }
 
   const diagnostics = createCompletionDiagnostics(completion, model)
@@ -730,13 +730,65 @@ function createSplitChunk(parentChunk, rows, suffix, compactInput, limits) {
 }
 
 function createFailedChunk(chunk, code, message, diagnostics = null) {
+  const safeDiagnostics = createSafeChunkDiagnostics(code, diagnostics)
   return {
     chunkId: chunk.chunkId,
     candidateCount: chunk.candidateCount,
     candidateIds: chunk.candidateIds,
     code,
     message: normalizeText(message, 240),
-    ...(isSafeChunkDiagnostics(diagnostics) ? { diagnostics } : {}),
+    ...(safeDiagnostics ? { diagnostics: safeDiagnostics } : {}),
+  }
+}
+
+function createSafeChunkDiagnostics(code, diagnostics = null) {
+  const base = isSafeChunkDiagnostics(diagnostics) ? { ...diagnostics } : {}
+  const category = base.category || getFailureCategoryFromCode(code)
+  return category || Object.keys(base).length > 0 ? { ...(category ? { category } : {}), ...base } : null
+}
+
+function getFailureCategoryFromCode(code) {
+  if (code === 'openai_reference_timeout') return 'timeout'
+  if (code === 'openai_reference_failed') return 'unknown_openai_error'
+  if (code === 'empty_ai_response') return 'empty_response'
+  if (code === 'reference_chunk_length_limit') return 'finish_reason_length'
+  if (code === 'invalid_ai_json') return 'invalid_json'
+  if (code === 'invalid_ai_schema') return 'invalid_schema'
+  if (code === 'max_api_calls_exceeded') return 'max_api_calls'
+  return ''
+}
+
+function createOpenAiFailure(error) {
+  const status = Number(error?.status || error?.response?.status || error?.cause?.status)
+  const apiCode = normalizeText(error?.code || error?.error?.code || error?.type || error?.error?.type, 120)
+  const message = error instanceof Error && error.message ? error.message : 'Reference normalization OpenAI 호출에 실패했습니다.'
+  const statusCode = Number.isInteger(status) ? status : 0
+  let category = 'unknown_openai_error'
+  let code = 'openai_reference_failed'
+
+  if (isTimeoutError(error)) {
+    category = 'timeout'
+    code = 'openai_reference_timeout'
+  } else if (statusCode === 401 || statusCode === 403) {
+    category = 'auth'
+  } else if (statusCode === 429) {
+    category = 'rate_limit'
+  } else if (statusCode >= 500) {
+    category = 'server_error'
+  } else if (/model|not[_ -]?found|does not exist|availability|unsupported/i.test(`${apiCode} ${message}`)) {
+    category = 'model_unavailable'
+  } else if (/network|fetch|connection|ECONN|ENOTFOUND|ETIMEDOUT|ECONNRESET/i.test(`${apiCode} ${message}`)) {
+    category = 'network'
+  }
+
+  return {
+    code,
+    message,
+    diagnostics: {
+      category,
+      ...(statusCode ? { status: statusCode } : {}),
+      ...(apiCode ? { errorCode: apiCode } : {}),
+    },
   }
 }
 
@@ -753,7 +805,7 @@ function createEmptyChunkingMeta(chunkCount, limits) {
 
 function isSafeChunkDiagnostics(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
-  return Object.keys(value).every((key) => ['model', 'finishReason', 'contentLength', 'contentType', 'promptTokens', 'completionTokens', 'totalTokens'].includes(key))
+  return Object.keys(value).every((key) => ['model', 'finishReason', 'contentLength', 'contentType', 'promptTokens', 'completionTokens', 'totalTokens', 'category', 'status', 'errorCode'].includes(key))
 }
 
 function sortItemsByManifestOrder(items, manifest) {

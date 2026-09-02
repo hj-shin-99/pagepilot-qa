@@ -390,6 +390,7 @@ test('empty AI message content fails safely with diagnostics', async () => {
 
   assert.equal(result.meta.failedChunks[0].code, 'empty_ai_response')
   assert.deepEqual(result.meta.failedChunks[0].diagnostics, {
+    category: 'empty_response',
     model: 'gpt-5.6-terra',
     finishReason: 'stop',
     contentLength: 0,
@@ -459,6 +460,37 @@ test('OpenAI timeout or request error fails safely', async () => {
 
   assert.equal(result.meta.outputItemCount, 0)
   assert.equal(result.meta.failedChunks[0].code, 'openai_reference_timeout')
+  assert.equal(result.meta.failedChunks[0].diagnostics.category, 'timeout')
+  assert.equal(result.referenceMap.items[0].isUnmappedCandidate, true)
+})
+
+test('OpenAI quota and model availability failures expose only safe diagnostics and keep fallback', async () => {
+  const quotaError = new Error('Rate limit reached for this request')
+  quotaError.status = 429
+  quotaError.code = 'rate_limit_exceeded'
+  const modelError = new Error('The model does not exist or you do not have access to it')
+  modelError.status = 404
+  modelError.code = 'model_not_found'
+
+  const quotaResult = await createReferenceNavigationService({ apiKey: 'test-key', client: createThrowingClient(quotaError), now: fixedNow }).normalize(createReference({ cells: { A: 'Quota', B: '/quota' } }))
+  const modelResult = await createReferenceNavigationService({ apiKey: 'test-key', client: createThrowingClient(modelError), now: fixedNow }).normalize(createReference({ cells: { A: 'Model', B: '/model' } }))
+
+  assert.equal(quotaResult.meta.failedChunks[0].code, 'openai_reference_failed')
+  assert.deepEqual(quotaResult.meta.failedChunks[0].diagnostics, { category: 'rate_limit', status: 429, errorCode: 'rate_limit_exceeded' })
+  assert.equal(quotaResult.meta.warnings.includes('all_reference_chunks_failed'), true)
+  assert.equal(quotaResult.referenceMap.items[0].isUnmappedCandidate, true)
+  assert.equal(modelResult.meta.failedChunks[0].diagnostics.category, 'model_unavailable')
+  assert.equal(modelResult.meta.failedChunks[0].diagnostics.status, 404)
+})
+
+test('failed chunk metadata never exposes prompt api key or raw AI response', async () => {
+  const rawResponse = 'RAW_AI_RESPONSE_WITH_SECRET_KEY sk-test prompt body not json'
+  const result = await createServiceWithRaw(rawResponse).normalize(createReference({ cells: { A: 'Target', B: '/target' } }))
+  const serializedMeta = JSON.stringify(result.meta)
+
+  assert.equal(result.meta.failedChunks[0].code, 'invalid_ai_json')
+  assert.equal(serializedMeta.includes(rawResponse), false)
+  assert.equal(/sk-test|prompt body/i.test(serializedMeta), false)
   assert.equal(result.referenceMap.items[0].isUnmappedCandidate, true)
 })
 

@@ -2,14 +2,21 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   confirmReferenceItem,
+  confirmAllReferenceItems,
+  countBulkConfirmEligibleItems,
+  createCompactNavigationReferenceMap,
   createConfirmedReferenceMap,
   createExpectedUrlDisplayRows,
+  createExpectedUrlExportText,
+  createReferencePreset,
+  createReferencePresetFilename,
   createReferenceFileSelectionState,
   createReferenceNormalizeFailureState,
   createReferenceNormalizeSuccessState,
   createReferenceReviewState,
   editReferenceItem,
   excludeReferenceItem,
+  importReferencePresetFromText,
   resetReferenceReviewState,
   updateReferenceSheetDraftSelection,
 } from './referenceReview.js'
@@ -81,11 +88,30 @@ test('confirmedReferenceMap includes confirmed and edited items but excludes pen
   assert.equal(confirmedMap.items.some((item) => item.userDecision.status === 'excluded'), false)
 })
 
+test('bulk confirm marks pending eligible only and preserves excluded and edited decisions', () => {
+  const state = createReferenceReviewState(createReferenceMap())
+  let items = editReferenceItem(state.items, 'ref-001', { label: 'Pricing edited', aliases: ['Plans'], urls: ['/pricing-edited'] })
+  items = excludeReferenceItem(items, 'ref-002')
+
+  assert.equal(countBulkConfirmEligibleItems(items), 1)
+  const next = confirmAllReferenceItems(items)
+  const confirmedMap = createConfirmedReferenceMap(state.referenceMap, next)
+
+  assert.deepEqual(next.map((item) => item.userDecision.status), ['confirmed', 'excluded', 'confirmed'])
+  assert.equal(next[0].userDecision.edited, true)
+  assert.equal(next[0].expected.urls[0].raw, '/pricing-edited')
+  assert.deepEqual(confirmedMap.items.map((item) => item.referenceId), ['ref-001', 'ref-003'])
+  assert.equal(confirmedMap.reviewSummary.confirmed, 2)
+  assert.equal(confirmedMap.reviewSummary.excluded, 1)
+})
+
 test('Expected URL display rows keep multi URL values independent', () => {
   const rows = createExpectedUrlDisplayRows(createItem('ref-101', 'Multi', ['/a', '/b'], 0.9))
 
   assert.deepEqual(rows, ['/a', '/b'])
   assert.equal(rows.includes('/a/b'), false)
+  assert.equal(createExpectedUrlExportText(createItem('ref-101', 'Multi', ['/a', '/b'], 0.9)), '/a\n/b')
+  assert.equal(createExpectedUrlExportText(createItem('ref-101', 'Multi', ['/a', '/b'], 0.9)).includes('/a/b'), false)
 })
 
 test('Expected URL display rows keep base path and query variant independent', () => {
@@ -112,6 +138,42 @@ test('Confirm preserves multi URL array in confirmedReferenceMap', () => {
   const confirmedMap = createConfirmedReferenceMap(state.referenceMap, confirmReferenceItem(state.items, 'ref-101'))
 
   assert.deepEqual(confirmedMap.items[0].expected.urls.map((url) => url.raw), ['/a', '/b'])
+})
+
+test('compact navigation Reference map keeps only confirmed compact intent data', () => {
+  const state = createReferenceReviewState({ ...createReferenceMap(), items: [createItem('ref-101', 'Multi', ['/a', '/b?tab=1'], 0.9), createItem('ref-102', 'Pending', '/pending', 0.8)] })
+  const confirmedMap = createConfirmedReferenceMap(state.referenceMap, confirmReferenceItem(state.items, 'ref-101'))
+  const compact = createCompactNavigationReferenceMap({ ...confirmedMap, items: [...confirmedMap.items, state.items[1]] })
+
+  assert.deepEqual(compact.items.map((item) => item.referenceId), ['ref-101'])
+  assert.deepEqual(compact.items[0].expected.urls.map((url) => url.raw), ['/a', '/b?tab=1'])
+  assert.equal(compact.items[0].source.sheetName, 'Sheet1')
+  assert.equal(Object.hasOwn(compact.items[0].source, 'columns'), false)
+})
+
+test('Reference preset export excludes raw workbook data and restores review decisions', () => {
+  const state = createReferenceReviewState(createReferenceMap())
+  let items = editReferenceItem(state.items, 'ref-001', { label: 'Pricing edited', aliases: 'Plans', urls: ['/pricing-edited'] })
+  items = excludeReferenceItem(items, 'ref-002', 'not needed')
+  const preset = createReferencePreset({ referenceMap: state.referenceMap, items, meta: { selectedSheetNames: ['Sheet1'], model: 'model-name' }, normalizedSheetNames: ['Sheet1'] })
+  const serialized = JSON.stringify({ ...preset, apiKey: undefined })
+  const imported = importReferencePresetFromText(JSON.stringify(preset))
+
+  assert.equal(preset.schemaVersion, 'pagepilot-reference-preset-v1')
+  assert.equal(createReferencePresetFilename('reference.xlsx'), 'reference.pagepilot-reference.json')
+  assert.equal(serialized.includes('base64'), false)
+  assert.equal(serialized.includes('apiKey'), false)
+  assert.equal(serialized.includes('columns'), false)
+  assert.deepEqual(imported.reviewItems.map((item) => item.userDecision.status), ['confirmed', 'excluded', 'pending'])
+  assert.equal(imported.reviewItems[0].element.label, 'Pricing edited')
+  assert.equal(imported.reviewItems[1].userDecision.excludedReason, 'not needed')
+  assert.deepEqual(imported.normalizedSheetNames, ['Sheet1'])
+  assert.equal(imported.analyzedReference, null)
+})
+
+test('Reference preset import rejects malformed and unsupported versions safely', () => {
+  assert.throws(() => importReferencePresetFromText('{bad json'), /JSON/)
+  assert.throws(() => importReferencePresetFromText(JSON.stringify({ schemaVersion: 'old', referenceMap: createReferenceMap() })), /버전/)
 })
 
 test('sheet draft change keeps existing preview review state and normalized sheet names', () => {

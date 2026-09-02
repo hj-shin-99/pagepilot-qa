@@ -26,5 +26,6 @@ dist-ssr
 .omo/
 .cache/
 .cache/figma/
+debug/visual-text-runtime-latest.json
 
 .env

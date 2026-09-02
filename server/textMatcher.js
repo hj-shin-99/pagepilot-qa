@@ -109,6 +109,7 @@ export function matchTextNodes(figmaTextNodes, webTextElements, options = {}) {
         figmaNode: figmaItem.ref,
         webElement: webItem.ref,
         ...pair,
+        ...(options.includeDiagnostics === true ? { diagnostics: createPairDiagnostics(figmaItem, webItem, pair) } : {}),
       })
     })
   })
@@ -219,6 +220,37 @@ function createRejectedPair(rejectReasons, normalizedSimilarity) {
     rawTextEqual: false,
     normalizedTextEqual: false,
     rejected: true,
+  }
+}
+
+function createPairDiagnostics(figmaItem, webItem, pair) {
+  const yDiff = getDifference(figmaItem.yRatio, webItem.yRatio)
+  const xDiff = getDifference(figmaItem.xRatio, webItem.xRatio)
+  const roleRejectReasons = []
+  const roleScore = getRoleCompatibilityScore(figmaItem, webItem, roleRejectReasons)
+  const contextSimilarity = getContextSimilarity(figmaItem.contextPath, webItem.contextPath)
+  const sectionScore = getSectionCompatibilityScore(figmaItem.sectionHint, webItem.sectionHint)
+  const normalizedSimilarity = getTextSimilarity(figmaItem.normalizedText, webItem.normalizedText)
+
+  return {
+    normalizedSimilarity: roundScore(normalizedSimilarity),
+    lengthRatio: roundScore(getLengthRatio(figmaItem.normalizedText, webItem.normalizedText)),
+    geometry: {
+      xDiff,
+      yDiff,
+      xScore: roundScore(getProximityScore(xDiff, 0.3)),
+      yScore: roundScore(getProximityScore(yDiff, 0.24)),
+    },
+    contextSimilarity: roundScore(contextSimilarity),
+    sectionScore: roundScore(sectionScore),
+    roleScore,
+    fontSizeScore: roundScore(getRelativeSimilarity(figmaItem.fontSize, webItem.fontSize, 0.45)),
+    siblingScore: roundScore(getSiblingSimilarity(figmaItem.siblingIndex, webItem.siblingIndex)),
+    threshold: {
+      minimumMatchScore: 45,
+      mediumDifferenceScore: 60,
+    },
+    gate: pair.rejected ? 'hard-reject' : pair.matchScore >= 45 ? 'eligible' : 'below-threshold',
   }
 }
 

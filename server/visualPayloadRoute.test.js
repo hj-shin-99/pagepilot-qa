@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
 import { buildVisualPayloadFromScanResult, buildVisualPayloadResponse, createVisualPayloadHandler } from './visualPayloadRoute.js'
 import { buildVisualQaPayloadArtifacts } from './visualQaPayload.js'
 import { createWebVisualAnalysis } from './webVisualAnalysis.js'
@@ -7,7 +8,7 @@ import { createWebVisualAnalysis } from './webVisualAnalysis.js'
 const SAMPLE_SCREENSHOT = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF9sAAAAASUVORK5CYII='
 
 function createDependencies() {
-  const calls = { scanUrl: 0, scanArgs: null, webAnalysisInput: null }
+  const calls = { scanUrl: 0, scanArgs: null, webAnalysisInput: null, matchOptions: null, writeVisualTextDebugArtifact: 0, artifactPayload: null }
   const scanResult = {
     targetUrl: 'https://example.com/page',
     pageTitle: 'Example',
@@ -93,7 +94,8 @@ function createDependencies() {
           },
         })
       },
-      matchTextNodes(figmaNodes, webNodes) {
+      matchTextNodes(figmaNodes, webNodes, options) {
+        calls.matchOptions = options
         return {
           matchedPairs: [{
             figmaNode: figmaNodes[0],
@@ -102,10 +104,21 @@ function createDependencies() {
             matchScore: 95,
             rawTextEqual: true,
             normalizedTextEqual: true,
+            diagnostics: options?.includeDiagnostics ? { normalizedSimilarity: 1, threshold: { minimumMatchScore: 45 }, gate: 'eligible' } : undefined,
           }],
           figmaOnly: Array.from({ length: 12 }, (_, index) => ({ characters: `Figma Only ${index}` })),
           webOnly: Array.from({ length: 11 }, (_, index) => ({ text: `Web Only ${index}` })),
-          allPairs: [],
+          allPairs: options?.includeAllPairs ? [{
+            figmaNode: { nodeId: 'f-2', characters: 'Missing hero copy', layerPath: 'Hero / Copy', yRatio: 0.12 },
+            webElement: { id: 'w-2', selector: '.hero-copy', rawText: 'Rendered hero copy', yRatio: 0.13, role: 'body' },
+            matchConfidence: 'low',
+            matchScore: 35,
+            matchReasons: ['세로 위치가 가깝습니다.'],
+            rejectReasons: [],
+            rawTextEqual: false,
+            normalizedTextEqual: false,
+            diagnostics: options?.includeDiagnostics ? { normalizedSimilarity: 0.2, threshold: { minimumMatchScore: 45 }, gate: 'below-threshold' } : undefined,
+          }] : [],
         }
       },
       createTextDifferenceCandidates() {
@@ -123,6 +136,11 @@ function createDependencies() {
       async validateImageAsset(relativePath) {
         if (relativePath.includes('figma')) return { exists: true, readable: true, mimeType: 'image/png' }
         return { exists: true, readable: true, mimeType: 'image/png' }
+      },
+      async writeVisualTextDebugArtifact(payload) {
+        calls.writeVisualTextDebugArtifact += 1
+        calls.artifactPayload = payload
+        return { path: 'debug/visual-text-runtime-latest.json', sizeBytes: 1234, overwritten: true }
       },
       mapFigmaLoaderError(error) {
         return { status: error.status || 500, body: { message: error.message } }
@@ -147,17 +165,22 @@ test('buildVisualPayloadResponse uses one scanUrl call and reuses one scanResult
   assert.equal(result.meta.playwrightRunCount, 1)
   assert.equal(result.meta.openAiCalled, false)
   assert.equal('debug' in result, false)
+  assert.deepEqual(calls.matchOptions, { includeAllPairs: false })
+  assert.equal(calls.writeVisualTextDebugArtifact, 0)
 
   const serialized = JSON.stringify(result)
   assert.equal(serialized.includes('matchedPairs'), false)
+  assert.equal(serialized.includes('visualTextDiagnostics'), false)
   assert.equal(serialized.includes('<html'), false)
   assert.equal(serialized.includes('figmaStructure'), false)
 })
 
 test('buildVisualPayloadResponse exposes limited debug previews only when debug true', async () => {
-  const { dependencies } = createDependencies()
+  const { calls, dependencies } = createDependencies()
   const result = await buildVisualPayloadResponse({ figmaUrl: 'https://www.figma.com/file/abc/test?node-id=123-456', webUrl: 'https://example.com/page', debug: true }, dependencies)
 
+  assert.deepEqual(calls.matchOptions, { includeAllPairs: true, includeDiagnostics: true })
+  assert.equal(calls.writeVisualTextDebugArtifact, 0)
   assert.equal(Array.isArray(result.debug.preview.figmaOnly), true)
   assert.equal(Array.isArray(result.debug.preview.webOnly), true)
   assert.equal(result.debug.preview.figmaOnly.length, 10)
@@ -181,6 +204,40 @@ test('buildVisualPayloadResponse exposes limited debug previews only when debug 
   assert.equal(typeof result.debug.payloadQuality.parentCtaRemovedCount, 'number')
   assert.equal(typeof result.debug.payloadQuality.heroPrimaryMediaCount, 'number')
   assert.equal(typeof result.debug.payloadQuality.canonicalCountConsistencyPassed, 'boolean')
+  assert.equal(result.debug.visualTextDiagnostics.schemaVersion, 'visual-text-diagnostics-v1')
+  assert.equal(result.debug.visualTextDiagnostics.safety.openAiCalled, false)
+  assert.equal(result.debug.visualTextDiagnostics.summary.allPairCount, 1)
+  assert.equal(result.debug.visualTextDiagnostics.matching.pairCandidates[0].selectionStatus, 'below-threshold')
+  assert.equal(result.debug.visualTextDiagnostics.textDifferenceCandidates.rejectedUnmatchedPairCandidates[0].rejectionGate, 'score-below-45')
+  assert.equal(result.debug.visualTextDiagnostics.finalFlow.displayAndCoreInputs.aiReviewVisualDifferencesIncluded, false)
+})
+
+test('buildVisualPayloadResponse writes visual text artifact only with explicit debug save flag', async () => {
+  const { calls, dependencies } = createDependencies()
+  const result = await buildVisualPayloadResponse({ figmaUrl: 'https://www.figma.com/file/abc/test?node-id=123-456', webUrl: 'https://example.com/page', debug: true, saveVisualTextDebugArtifact: true }, dependencies)
+
+  assert.equal(calls.writeVisualTextDebugArtifact, 1)
+  assert.equal(calls.artifactPayload.schemaVersion, 'visual-text-diagnostics-v1')
+  assert.deepEqual(result.debug.visualTextDiagnostics.artifact, { path: 'debug/visual-text-runtime-latest.json', sizeBytes: 1234, overwritten: true })
+  assert.equal(JSON.stringify(calls.artifactPayload).includes('secret-token'), false)
+})
+
+test('visual text runtime debug artifact is ignored by git', () => {
+  const gitignore = fs.readFileSync('.gitignore', 'utf8')
+  assert.equal(gitignore.includes('debug/visual-text-runtime-latest.json'), true)
+})
+
+test('visual payload handler saves diagnostics only for explicit visual text diagnostic mode', async () => {
+  const { calls, dependencies } = createDependencies()
+  const handler = createVisualPayloadHandler(dependencies)
+  const response = createMockResponse()
+
+  await handler({ body: { figmaUrl: 'https://www.figma.com/file/abc/test?node-id=123-456', webUrl: 'https://example.com/page', debug: true, diagnosticMode: 'visual-text' } }, response)
+
+  assert.equal(response.statusCode, 200)
+  assert.equal(calls.scanUrl, 1)
+  assert.equal(calls.writeVisualTextDebugArtifact, 1)
+  assert.equal(response.body.debug.visualTextDiagnostics.artifact.path, 'debug/visual-text-runtime-latest.json')
 })
 
 test('createVisualPayloadHandler returns 400 for invalid URL without calling scanUrl', async () => {

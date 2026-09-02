@@ -115,6 +115,24 @@ test('hero heading does not match footer legal sentence', () => {
   assert.match(result.allPairs[0].rejectReasons.join(' '), /heading|legal|navigation|yRatio/)
 })
 
+test('text matcher exposes score components only for diagnostic requests', () => {
+  const normal = matchTextNodes(
+    [createFigmaNode({ nodeId: 'f-diagnostic', characters: 'Primary copy' })],
+    [createWebElement({ id: 'w-diagnostic', rawText: 'Primary copy changed', text: 'Primary copy changed' })],
+    { includeAllPairs: true },
+  )
+  const diagnostic = matchTextNodes(
+    [createFigmaNode({ nodeId: 'f-diagnostic', characters: 'Primary copy' })],
+    [createWebElement({ id: 'w-diagnostic', rawText: 'Primary copy changed', text: 'Primary copy changed' })],
+    { includeAllPairs: true, includeDiagnostics: true },
+  )
+
+  assert.equal('diagnostics' in normal.allPairs[0], false)
+  assert.equal(typeof diagnostic.allPairs[0].diagnostics.normalizedSimilarity, 'number')
+  assert.equal(diagnostic.allPairs[0].diagnostics.threshold.minimumMatchScore, 45)
+  assert.equal(diagnostic.matchedPairs[0].diagnostics.gate, 'eligible')
+})
+
 test('CTA does not match long body paragraph', () => {
   const result = matchTextNodes(
     [createFigmaNode({ nodeId: 'f-6', characters: '자세히 보기', layerPath: 'Root / CTA / Button', fontSize: 18, fontWeight: 700 })],

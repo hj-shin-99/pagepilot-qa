@@ -1,12 +1,17 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { emitQaProgress } from './qaProgress.js'
+import { createVisualTextDiagnostics } from './visualTextDiagnostics.js'
+
+const DEFAULT_VISUAL_TEXT_DEBUG_ARTIFACT_PATH = path.resolve('debug', 'visual-text-runtime-latest.json')
+const MAX_VISUAL_TEXT_DEBUG_ARTIFACT_BYTES = 1_500_000
 
 export function createVisualPayloadHandler(dependencies) {
   return async function visualPayloadHandler(req, res) {
     const figmaUrl = typeof req.body?.figmaUrl === 'string' ? req.body.figmaUrl.trim() : ''
     const webUrl = typeof req.body?.webUrl === 'string' ? req.body.webUrl.trim() : ''
     const debug = req.body?.debug === true
+    const saveVisualTextDebugArtifact = debug && (req.body?.saveVisualTextDebugArtifact === true || req.body?.diagnosticMode === 'visual-text')
 
     if (!dependencies.isHttpUrl(webUrl)) {
       res.status(400).json({ message: 'http:// 또는 https://로 시작하는 Web URL만 사용할 수 있습니다.' })
@@ -14,7 +19,7 @@ export function createVisualPayloadHandler(dependencies) {
     }
 
     try {
-      const payload = await buildVisualPayloadResponse({ figmaUrl, webUrl, debug }, dependencies)
+      const payload = await buildVisualPayloadResponse({ figmaUrl, webUrl, debug, saveVisualTextDebugArtifact }, dependencies)
       res.json(payload)
     } catch (error) {
       const mappedError = dependencies.mapFigmaLoaderError(error, 'visual-payload')
@@ -26,6 +31,7 @@ export function createVisualPayloadHandler(dependencies) {
 export async function buildVisualPayloadResponse(input, dependencies) {
   const now = dependencies.now || Date.now
   const debug = input?.debug === true
+  const saveVisualTextDebugArtifact = debug && input?.saveVisualTextDebugArtifact === true
   const totalStartedAt = now()
   const timings = {
     figmaNodeLoadMs: 0,
@@ -49,6 +55,7 @@ export async function buildVisualPayloadResponse(input, dependencies) {
     figmaUrl: input.figmaUrl,
     webUrl: input.webUrl,
     debug,
+    saveVisualTextDebugArtifact,
     scanResult,
     timings,
     totalStartedAt,
@@ -58,6 +65,7 @@ export async function buildVisualPayloadResponse(input, dependencies) {
 export async function buildVisualPayloadFromScanResult(input, dependencies) {
   const now = dependencies.now || Date.now
   const debug = input?.debug === true
+  const saveVisualTextDebugArtifact = debug && input?.saveVisualTextDebugArtifact === true
   const totalStartedAt = Number(input?.totalStartedAt) || now()
   const timings = input?.timings && typeof input.timings === 'object'
     ? { figmaNodeLoadMs: 0, figmaRenderLoadMs: 0, webScanMs: 0, textCompareMs: 0, payloadBuildMs: 0, totalMs: 0, ...input.timings }
@@ -89,7 +97,7 @@ export async function buildVisualPayloadFromScanResult(input, dependencies) {
   const matchResult = dependencies.matchTextNodes(
     figmaResult.textNodes || [],
     webAnalysis.textNodes || [],
-    { includeAllPairs: false },
+    debug ? { includeAllPairs: true, includeDiagnostics: true } : { includeAllPairs: false },
   )
   const differences = dependencies.createTextDifferenceCandidates(matchResult.matchedPairs)
   const textCompareResponse = dependencies.createTextCompareResponse({
@@ -144,11 +152,19 @@ export async function buildVisualPayloadFromScanResult(input, dependencies) {
 
   if (debug) {
     const imageValidation = await validateImageAssets(response, dependencies.validateImageAsset)
+    const visualTextDiagnostics = createVisualTextDiagnostics({
+      figmaResult,
+      webAnalysis,
+      matchResult,
+      differences,
+      payload: response,
+    })
     response.debug = createDebugPayload({
       figmaResult,
       figmaRender,
       webAnalysis,
       textComparison,
+      visualTextDiagnostics,
       timings,
       payloadQuality: artifacts.payloadQuality,
       sectionTrace: artifacts.debugArtifacts?.sectionTrace || null,
@@ -162,6 +178,9 @@ export async function buildVisualPayloadFromScanResult(input, dependencies) {
       canonicalMergeTrace: artifacts.debugArtifacts?.canonicalMergeTrace || null,
       imageValidation,
     })
+    if (saveVisualTextDebugArtifact) {
+      response.debug.visualTextDiagnostics.artifact = await writeVisualTextDebugArtifact(response.debug.visualTextDiagnostics, dependencies)
+    }
   }
 
   if (typeof input?.onTiming === 'function') {
@@ -234,7 +253,7 @@ function attachDisplayImageUrls(response) {
   }
 }
 
-function createDebugPayload({ figmaResult, figmaRender, webAnalysis, textComparison, timings, payloadQuality, sectionTrace, heroCandidateTrace, figmaActionInputTrace, webVideoPipelineTrace, entitySectionTrace, webVideoTrace, heroActionResolution, heroMediaResolution, canonicalMergeTrace, imageValidation }) {
+function createDebugPayload({ figmaResult, figmaRender, webAnalysis, textComparison, visualTextDiagnostics, timings, payloadQuality, sectionTrace, heroCandidateTrace, figmaActionInputTrace, webVideoPipelineTrace, entitySectionTrace, webVideoTrace, heroActionResolution, heroMediaResolution, canonicalMergeTrace, imageValidation }) {
   return {
     counts: {
       figmaTextNodes: Array.isArray(figmaResult.textNodes) ? figmaResult.textNodes.length : 0,
@@ -260,6 +279,7 @@ function createDebugPayload({ figmaResult, figmaRender, webAnalysis, textCompari
     },
     timing: normalizeTimingMetrics(timings),
     imageValidation,
+    visualTextDiagnostics,
     sectionTrace,
     heroCandidateTrace,
     figmaActionInputTrace,
@@ -368,6 +388,57 @@ function normalizeTimingMetrics(timings) {
 function normalizeTimingValue(value) {
   const numeric = Number(value)
   return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0
+}
+
+async function writeVisualTextDebugArtifact(visualTextDiagnostics, dependencies = {}) {
+  if (typeof dependencies.writeVisualTextDebugArtifact === 'function') {
+    return dependencies.writeVisualTextDebugArtifact(visualTextDiagnostics)
+  }
+
+  const artifactPath = dependencies.visualTextDebugArtifactPath || DEFAULT_VISUAL_TEXT_DEBUG_ARTIFACT_PATH
+  const payload = boundVisualTextDebugArtifact(visualTextDiagnostics)
+  await fs.promises.mkdir(path.dirname(artifactPath), { recursive: true })
+  await fs.promises.writeFile(artifactPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
+  const stats = await fs.promises.stat(artifactPath)
+  return {
+    path: artifactPath,
+    sizeBytes: stats.size,
+    overwritten: true,
+  }
+}
+
+function boundVisualTextDebugArtifact(visualTextDiagnostics) {
+  let payload = visualTextDiagnostics && typeof visualTextDiagnostics === 'object' ? visualTextDiagnostics : {}
+  let serialized = JSON.stringify(payload)
+  if (Buffer.byteLength(serialized, 'utf8') <= MAX_VISUAL_TEXT_DEBUG_ARTIFACT_BYTES) return payload
+
+  payload = {
+    ...payload,
+    matching: {
+      ...payload.matching,
+      pairCandidates: Array.isArray(payload.matching?.pairCandidates) ? payload.matching.pairCandidates.slice(0, 80) : [],
+    },
+    textDifferenceCandidates: {
+      ...payload.textDifferenceCandidates,
+      rejectedUnmatchedPairCandidates: Array.isArray(payload.textDifferenceCandidates?.rejectedUnmatchedPairCandidates) ? payload.textDifferenceCandidates.rejectedUnmatchedPairCandidates.slice(0, 40) : [],
+    },
+  }
+  serialized = JSON.stringify(payload)
+  if (Buffer.byteLength(serialized, 'utf8') <= MAX_VISUAL_TEXT_DEBUG_ARTIFACT_BYTES) return payload
+
+  return {
+    schemaVersion: payload.schemaVersion || 'visual-text-diagnostics-v1',
+    generatedAt: payload.generatedAt || new Date().toISOString(),
+    bounded: true,
+    truncated: true,
+    summary: payload.summary || {},
+    figmaText: { topRegionMeaningful: payload.figmaText?.topRegionMeaningful || [] },
+    webText: { topRegionMeaningful: payload.webText?.topRegionMeaningful || [] },
+    matching: { summary: payload.matching?.summary || {}, matchedPairs: payload.matching?.matchedPairs || [] },
+    textDifferenceCandidates: { matchedDifferenceCandidates: payload.textDifferenceCandidates?.matchedDifferenceCandidates || [] },
+    finalFlow: payload.finalFlow || {},
+    safety: payload.safety || {},
+  }
 }
 
 async function validateImageAssets(payload, validateImageAsset = defaultValidateImageAsset) {

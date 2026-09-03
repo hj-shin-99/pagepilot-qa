@@ -68,6 +68,21 @@ test('AI Review payload classifies ordinal numeric copy as copy and real price v
   assert.deepEqual(payload.visualEvidence.textDifferences.slice(1).map((item) => item.severity), ['critical', 'critical'])
 })
 
+test('AI Review payload preserves recovered text evidence as text difference metadata', () => {
+  const qaResult = createQaResult()
+  qaResult.visual.result.comparison.differences = [
+    { type: 'text', category: 'copy', recovered: true, figmaText: 'Smart lease offer starts now', webText: 'The first of a new era', confidence: 'medium' },
+  ]
+
+  const payload = buildAiReviewPayloadFromQaResult(qaResult)
+
+  assert.equal(payload.visualEvidence.textDifferences.length, 1)
+  assert.equal(payload.visualEvidence.textDifferences[0].kind, 'text-difference')
+  assert.equal(payload.visualEvidence.textDifferences[0].type, 'text')
+  assert.equal(payload.visualEvidence.textDifferences[0].category, 'copy')
+  assert.equal(payload.visualEvidence.textDifferences[0].recovered, true)
+})
+
 test('AI Review payload forwards CTA and media descendant boxes for hero crop', () => {
   const qaResult = createQaResult()
   qaResult.visual.result.aiHints.heroCtaGroup = {

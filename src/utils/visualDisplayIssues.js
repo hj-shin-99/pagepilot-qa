@@ -351,7 +351,9 @@ function dedupeDisplayIssues(items) {
 }
 
 function areDuplicateDisplayIssues(first = {}, second = {}) {
-  if (normalizeCategory(first.category) !== normalizeCategory(second.category)) return false
+  const firstCategory = normalizeCategory(first.category)
+  const secondCategory = normalizeCategory(second.category)
+  if (firstCategory !== secondCategory && !isTextMediaValueDuplicate(first, second)) return false
   const firstValues = `${normalizeComparableText(first.figmaValue)}:${normalizeComparableText(first.webValue)}`
   const secondValues = `${normalizeComparableText(second.figmaValue)}:${normalizeComparableText(second.webValue)}`
   const sectionsCompatible = areSectionsCompatible(first, second)
@@ -363,6 +365,19 @@ function areDuplicateDisplayIssues(first = {}, second = {}) {
   return Boolean(firstNumbers && firstNumbers === secondNumbers && sectionsCompatible)
 }
 
+function isTextMediaValueDuplicate(first = {}, second = {}) {
+  const categories = new Set([normalizeCategory(first.category), normalizeCategory(second.category)])
+  if (!categories.has('text') || !categories.has('media')) return false
+  if (hasMediaValuePair(first) || hasMediaValuePair(second)) return false
+  if (!areSectionsCompatible(first, second)) return false
+  return normalizeComparableText(first.figmaValue) === normalizeComparableText(second.figmaValue)
+    && normalizeComparableText(first.webValue) === normalizeComparableText(second.webValue)
+}
+
+function hasMediaValuePair(item = {}) {
+  return ['image', 'video'].includes(mediaToken(item.figmaValue)) || ['image', 'video'].includes(mediaToken(item.webValue))
+}
+
 function areSectionsCompatible(first = {}, second = {}) {
   const firstSection = sectionToken(first)
   const secondSection = sectionToken(second)
@@ -370,7 +385,9 @@ function areSectionsCompatible(first = {}, second = {}) {
 }
 
 function mergeDisplayIssue(current, next) {
-  const preferred = next.sourcePriority < current.sourcePriority ? next : current
+  const preferred = isTextMediaValueDuplicate(current, next)
+    ? preferTextDisplayIssue(current, next)
+    : next.sourcePriority < current.sourcePriority ? next : current
   const canonical = next.source === 'comparison' || next.source === 'cta' || next.source === 'media' || next.source === 'price' ? next : current
   return {
     ...current,
@@ -400,6 +417,14 @@ function mergeDisplayIssue(current, next) {
   }
 }
 
+function preferTextDisplayIssue(first, second) {
+  const firstCategory = normalizeCategory(first.category)
+  const secondCategory = normalizeCategory(second.category)
+  if (firstCategory === 'text' && secondCategory !== 'text') return first
+  if (secondCategory === 'text' && firstCategory !== 'text') return second
+  return second.sourcePriority < first.sourcePriority ? second : first
+}
+
 function compareDisplayIssues(first, second) {
   const yDiff = compareNullableNumber(first.yRatio, second.yRatio)
   if (yDiff !== 0) return yDiff
@@ -413,12 +438,24 @@ function compareDisplayIssues(first, second) {
 }
 
 function classifyComparisonDifference(item = {}, prices = []) {
-  const text = `${item.role || ''} ${item.sectionRole || ''} ${item.sectionPath || ''} ${item.numericType || ''}`.toLowerCase()
+  const text = `${item.role || ''} ${item.sectionRole || ''} ${item.sectionPath || ''} ${item.numericType || ''} ${item.type || ''} ${item.category || ''}`.toLowerCase()
   if (CTA_ROLES.has(textOf(item.role)) || /cta|button|action|hero actions/.test(text)) return 'cta'
   if (PRICE_TYPES.has(textOf(item.numericType)) || hasPriceSignal(item, prices)) return 'price'
-  if (/media|image|video|kv|visual/.test(text)) return 'media'
+  if (hasTextValuePair(item) && !hasExplicitMediaEvidence(item)) return 'text'
+  if (/media|image|video|kv|visual/.test(text) || hasExplicitMediaEvidence(item)) return 'media'
   if (!item.figmaText || !item.webText) return 'missing'
   return 'text'
+}
+
+function hasTextValuePair(item = {}) {
+  return Boolean(textOf(item.figmaText || item.figmaValue || item.text) && textOf(item.webText || item.webValue))
+}
+
+function hasExplicitMediaEvidence(item = {}) {
+  const mediaEvidence = `${item.mediaType || ''} ${item.figmaMediaType || ''} ${item.webMediaType || ''} ${item.mediaPair || ''} ${item.comparisonHint || ''}`
+  if (/media|image|video|figma-image-vs-web-video|web-image-vs-figma-video/i.test(mediaEvidence)) return true
+  return ['image', 'video'].includes(mediaToken(item.figmaText || item.figmaValue || item.text))
+    || ['image', 'video'].includes(mediaToken(item.webText || item.webValue))
 }
 
 function hasPriceSignal(item = {}, prices = []) {

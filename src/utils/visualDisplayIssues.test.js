@@ -44,6 +44,38 @@ test('clear media image video difference is included', () => {
   assert.equal(report.items[0].webValue, 'video')
 })
 
+test('recovered text in visual section stays Text and does not create KV Media duplicate', () => {
+  const result = {
+    comparison: { differences: [
+      { type: 'text', category: 'copy', recovered: true, figmaText: 'Smart lease offer starts now', webText: 'The first of a new era', sectionPath: 'Main Visual / Copy', confidence: 'medium', yRatio: 0.12 },
+    ] },
+    aiHints: {},
+  }
+  const report = createVisualDisplayIssueReport(result)
+
+  assert.equal(report.items.length, 1)
+  assert.equal(report.items[0].categoryLabel, 'Text')
+  assert.equal(report.items[0].figmaValue, 'Smart lease offer starts now')
+  assert.equal(report.items.some((item) => item.categoryLabel === 'KV / Media'), false)
+})
+
+test('text-only AI Media duplicate is deduped behind canonical Text while real media remains', () => {
+  const result = {
+    comparison: { differences: [
+      { type: 'text', category: 'copy', recovered: true, figmaText: 'Smart lease offer starts now', webText: 'The first of a new era', area: 'Main Visual', confidence: 'medium', yRatio: 0.12 },
+    ] },
+    aiHints: { heroMediaGroup: { comparisonHint: 'figma-image-vs-web-video', figma: { mediaTypes: ['image'], primaryCandidates: [{ yRatio: 0.1 }] }, web: { mediaTypes: ['video'], primaryCandidates: [{ yRatio: 0.11 }] } } },
+  }
+  const aiReview = { meta: { visionUsed: true, fallbackUsed: false }, review: { visualDifferences: [
+    { area: 'Main Visual', category: 'Media', title: 'KV visual text differs', summary: 'Copy differs.', figmaValue: 'Smart lease offer starts now', webValue: 'The first of a new era', confidence: 'high', yRatio: 0.12 },
+  ] } }
+  const report = createVisualDisplayIssueReport(result, aiReview)
+
+  assert.equal(report.items.filter((item) => item.figmaValue === 'Smart lease offer starts now').length, 1)
+  assert.equal(report.items.find((item) => item.figmaValue === 'Smart lease offer starts now')?.categoryLabel, 'Text')
+  assert.equal(report.items.filter((item) => item.categoryLabel === 'KV / Media' && item.figmaValue === 'image' && item.webValue === 'video').length, 1)
+})
+
 test('spacing and punctuation only text differences are excluded', () => {
   const result = { comparison: { differences: [{ figmaText: 'Hello, World!', webText: 'Hello World', confidence: 'high' }] }, aiHints: {} }
   const report = createVisualDisplayIssueReport(result)

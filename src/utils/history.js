@@ -385,7 +385,7 @@ export function createCompactTechResult(result = {}) {
     clickActionAudit: result.clickActionAudit || {},
     landingPages: Array.isArray(result.landingPages) ? result.landingPages : [],
     landingAudit: result.landingAudit || {},
-    ...(result.navigationIntentQa ? { navigationIntentQa: result.navigationIntentQa } : {}),
+    ...(result.navigationIntentQa ? { navigationIntentQa: compactNavigationIntentQa(result.navigationIntentQa) } : {}),
     formInteractions: Array.isArray(result.formInteractions) ? result.formInteractions : [],
     formAudit: result.formAudit || {},
     hoverInteractions: Array.isArray(result.hoverInteractions) ? result.hoverInteractions : [],
@@ -426,6 +426,35 @@ function preserveCanonicalTechFields(compactResult = {}, result = {}) {
     else if (value && typeof value === 'object' && TECH_CANONICAL_OBJECT_KEYS.has(key)) compactResult[key] = value
   })
   return compactResult
+}
+
+function compactNavigationIntentQa(navigationIntentQa) {
+  if (!navigationIntentQa || typeof navigationIntentQa !== 'object' || Array.isArray(navigationIntentQa)) return navigationIntentQa
+  return {
+    ...navigationIntentQa,
+    items: Array.isArray(navigationIntentQa.items)
+      ? navigationIntentQa.items.map(compactNavigationIntentItem).filter(Boolean)
+      : [],
+  }
+}
+
+function compactNavigationIntentItem(item = {}) {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return null
+  return {
+    ...item,
+    expectedUrls: compactNavigationIntentExpectedUrls(item.expectedUrls),
+  }
+}
+
+function compactNavigationIntentExpectedUrls(expectedUrls) {
+  if (!Array.isArray(expectedUrls)) return []
+  return expectedUrls.map(compactNavigationIntentExpectedUrl).filter(Boolean)
+}
+
+function compactNavigationIntentExpectedUrl(value) {
+  if (typeof value === 'string') return value
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return ''
+  return getString(value.raw)
 }
 
 function pruneHistoryPayload(value, key = '', depth = 0, options = {}) {

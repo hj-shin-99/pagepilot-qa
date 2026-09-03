@@ -321,7 +321,13 @@ test('history stores and restores combined session data without raw payloads', a
 
 test('combined history exposes restorable Visual and Tech results for tab switching without API replay', async () => {
   await resetStorage()
-  await saveHistoryItem(createCombinedItem('combined-restore', 2))
+  const combined = createCombinedItem('combined-restore', 2)
+  combined.tech.compactResult.navigationIntentQa = {
+    meta: { available: true },
+    summary: { evaluated: 1, correct: 1, mismatch: 0, review: 0, notObserved: 0 },
+    items: [{ referenceId: 'intent-1', label: 'Apply', status: 'matched-correct', expectedUrls: [{ raw: '/apply', matchMode: 'path-prefix', allowRedirect: true, allowTrailingSlashVariant: true }], actualUrlEvidence: [{ url: 'https://combined-restore.example/apply' }] }],
+  }
+  await saveHistoryItem(combined)
 
   const [item] = await loadHistoryItems()
   const visualResult = getHistoryVisualResult(item)
@@ -336,6 +342,7 @@ test('combined history exposes restorable Visual and Tech results for tab switch
   assert.equal(techResult.deviceResults.length, 3)
   assert.equal(techResult.deviceResults.every((entry) => entry.result && entry.result.scanOptions), true)
   assert.equal(techView.targetUrl, 'https://combined-restore.example')
+  assert.deepEqual(techView.navigationIntent.rows[0].expectedUrls, ['/apply'])
 })
 
 test('combined history restore supports legacy tech.result and keeps multi-device shape', () => {
@@ -409,7 +416,11 @@ test('Tech QA history preserves Navigation Intent QA result through compact roun
   const restored = getHistoryTechResult(JSON.parse(JSON.stringify(compact)))
   const view = createTechQaViewModel(restored)
 
+  assert.deepEqual(compact.result.navigationIntentQa.items[0].expectedUrls, ['/apply'])
+  assert.deepEqual(compact.result.navigationIntentQa.items[1].expectedUrls, ['/offer'])
   assert.equal(restored.navigationIntentQa.summary.mismatch, 1)
+  assert.deepEqual(restored.navigationIntentQa.items[0].expectedUrls, ['/apply'])
+  assert.deepEqual(view.navigationIntent.rows[1].expectedUrls, ['/apply'])
   assert.equal(view.navigationIntent.visible, true)
   assert.deepEqual(view.navigationIntent.rows.map((row) => row.referenceId), ['intent-2', 'intent-1'])
 })

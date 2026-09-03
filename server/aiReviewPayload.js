@@ -272,11 +272,13 @@ function createVisualIssues(visual = {}) {
   const differences = Array.isArray(visual.comparison?.differences) ? visual.comparison.differences : []
   const issues = differences.slice(0, MAX_VISUAL_ITEMS).map((difference) => ({
     kind: 'text-difference',
+    type: safeText(difference.type),
     severity: classifyVisualDifferenceSeverity(difference),
     category: classifyVisualDifferenceCategory(difference),
     figmaText: safeText(difference.figmaText || difference.text),
     webText: safeText(difference.webText),
     confidence: safeText(difference.confidence || difference.matchConfidence),
+    recovered: difference.recovered === true,
   }))
 
   const ctaGroup = visual.aiHints?.heroCtaGroup || {}

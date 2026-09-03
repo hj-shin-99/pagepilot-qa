@@ -102,6 +102,44 @@ test('visual linebreak only difference does not create a text difference', () =>
   assert.equal(differences.length, 0)
 })
 
+test('unmatched local text pair can be recovered as a text difference', () => {
+  const result = matchTextNodes(
+    [
+      createFigmaNode({ nodeId: 'f-anchor', characters: 'Hero title', yRatio: 0.05, fontSize: 40, layerPath: 'Root / Hero / Title', siblingIndex: 0 }),
+      createFigmaNode({ nodeId: 'f-recovered', characters: '가입', xRatio: 0.15, yRatio: 0.18, widthRatio: 0.08, fontSize: 16, layerPath: 'Root / Hero / CTA / Button', siblingIndex: 1 }),
+    ],
+    [
+      createWebElement({ id: 'w-anchor', rawText: 'Hero title', text: 'Hero title', yRatio: 0.05, fontSize: 40, selector: '.hero-title', domPath: 'main > section.hero > h1', siblingIndex: 0 }),
+      createWebElement({ id: 'w-recovered', rawText: '상담', text: '상담', tagName: 'button', xRatio: 0.151, yRatio: 0.181, widthRatio: 0.081, fontSize: 16, selector: '.hero .primary-cta', domPath: 'main > section.hero > button.primary-cta', siblingIndex: 1 }),
+    ],
+  )
+
+  assert.equal(result.matchedPairs.length, 1)
+  assert.equal(result.figmaOnly[0].nodeId, 'f-recovered')
+  assert.equal(result.webOnly[0].id, 'w-recovered')
+
+  const differences = createTextDifferenceCandidates(result.matchedPairs, result)
+  assert.equal(differences.length, 1)
+  assert.equal(differences[0].figmaText, '가입')
+  assert.equal(differences[0].webText, '상담')
+  assert.equal(differences[0].recovered, true)
+})
+
+test('unmatched recovery skips ambiguous local web candidates', () => {
+  const matchResult = {
+    matchedPairs: [],
+    figmaOnly: [createFigmaNode({ nodeId: 'f-ambiguous', characters: '가입', xRatio: 0.2, yRatio: 0.4, widthRatio: 0.08, fontSize: 16, layerPath: 'Root / Offer / CTA / Button', siblingIndex: 2 })],
+    webOnly: [
+      createWebElement({ id: 'w-ambiguous-a', rawText: '상담', text: '상담', tagName: 'button', xRatio: 0.2, yRatio: 0.4, widthRatio: 0.08, fontSize: 16, selector: '.offer .primary', domPath: 'main > section.offer > button.primary', sectionHint: 'middle', siblingIndex: 2 }),
+      createWebElement({ id: 'w-ambiguous-b', rawText: '문의', text: '문의', tagName: 'button', xRatio: 0.201, yRatio: 0.401, widthRatio: 0.08, fontSize: 16, selector: '.offer .secondary', domPath: 'main > section.offer > button.secondary', sectionHint: 'middle', siblingIndex: 2 }),
+    ],
+    allPairs: [],
+  }
+
+  const differences = createTextDifferenceCandidates(matchResult.matchedPairs, matchResult)
+  assert.equal(differences.length, 0)
+})
+
 test('hero heading does not match footer legal sentence', () => {
   const result = matchTextNodes(
     [createFigmaNode({ nodeId: 'f-5', characters: '지금 시작하세요', layerPath: 'Root / Hero / Title', fontSize: 40, fontWeight: 700 })],
@@ -112,6 +150,7 @@ test('hero heading does not match footer legal sentence', () => {
   assert.equal(result.matchedPairs.length, 0)
   assert.equal(result.figmaOnly.length, 1)
   assert.equal(result.webOnly.length, 1)
+  assert.equal(createTextDifferenceCandidates(result.matchedPairs, result).length, 0)
   assert.match(result.allPairs[0].rejectReasons.join(' '), /heading|legal|navigation|yRatio/)
 })
 

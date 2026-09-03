@@ -173,6 +173,25 @@ test('Vision success dedupes equivalent KV media, CTA, text, and numeric issues'
   assert.equal(items.every((item) => ['텍스트가 다릅니다.', 'CTA 구성을 확인해주세요.', 'KV 이미지가 다릅니다.'].includes(item.title)), true)
 })
 
+test('Vision text-only Media issue merges with canonical Text difference as Text', () => {
+  const report = createVisualDifferenceReport({
+    comparison: { differences: [
+      { type: 'text', category: 'copy', recovered: true, figmaText: 'Smart lease offer starts now', webText: 'The first of a new era', sectionPath: 'Main Visual / Copy', confidence: 'high', yRatio: 0.12 },
+    ] },
+    aiHints: {},
+  }, {
+    meta: { visionUsed: true, fallbackUsed: false, rawVisionCount: 1 },
+    review: { visualDifferences: [
+      { area: 'Main Visual', sectionPath: 'Main Visual / Copy', category: 'Media', title: 'Hero media copy differs', summary: 'The copy differs.', figmaValue: 'Smart lease offer starts now', webValue: 'The first of a new era', confidence: 'high', yRatio: 0.12 },
+    ], mustFix: [], verify: [] },
+  }, { includeProvenance: true })
+
+  assert.equal(report.items.length, 1)
+  assert.equal(report.items[0].source, 'merged')
+  assert.equal(report.items[0].categoryLabel, 'Text')
+  assert.equal(report.items[0].provenance.canonicalCategory, 'text')
+})
+
 test('low value text count and spacing differences are excluded from default list', () => {
   const items = createVisualDifferenceItems({
     comparison: { differences: [

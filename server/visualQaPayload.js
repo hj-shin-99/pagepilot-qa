@@ -412,6 +412,8 @@ function createComparisonSummary(difference = {}, originalIndex, { figmaTextCand
     normalizeString(difference?.webSelector || webEntity?.selector || webEntity?.sourceId),
   ])
   return {
+    type: normalizeString(difference?.type),
+    category: normalizeString(difference?.category),
     text: truncateText(difference?.figmaText || difference?.webText || difference?.text || '', 120),
     figmaText: truncateText(difference?.figmaText || '', 140),
     webText: truncateText(difference?.webText || '', 140),
@@ -430,6 +432,7 @@ function createComparisonSummary(difference = {}, originalIndex, { figmaTextCand
     yRatio: spatialEvidence?.yRatio ?? null,
     widthRatio: spatialEvidence?.widthRatio ?? null,
     heightRatio: spatialEvidence?.heightRatio ?? null,
+    recovered: difference?.recovered === true,
     spatialEvidence,
     figmaSpatialEvidence,
     webSpatialEvidence,

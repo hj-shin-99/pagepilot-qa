@@ -193,6 +193,26 @@ test('generic B: common prefix with different meaningful suffix stays core Text'
   assert.equal(coreIssues[0].displayCategory, 'text')
 })
 
+test('generic B2: salient full text replacement can be core Text', () => {
+  const allIssues = [issue({ category: 'text', area: 'Main Visual', figmaValue: 'Smart lease offer starts now', webValue: 'The first of a new era', yRatio: 0.12 })]
+  const coreIssues = createCoreVisualIssues(allIssues)
+
+  assert.equal(coreIssues.length, 1)
+  assert.equal(coreIssues[0].displayCategory, 'text')
+  assert.equal(coreIssues.meta.coreCategoryCounts.text, 1)
+})
+
+test('generic B3: body footer legal full replacements stay out of core without primary evidence', () => {
+  const allIssues = [
+    issue({ category: 'text', area: 'Body', figmaValue: 'Smart lease offer starts now', webValue: 'The first of a new era', yRatio: 0.48 }),
+    issue({ category: 'text', area: 'Footer', sectionPath: 'Legal footer', figmaValue: 'Smart lease offer starts now', webValue: 'The first of a new era', yRatio: 0.9 }),
+  ]
+  const coreIssues = createCoreVisualIssues(allIssues)
+
+  assert.equal(coreIssues.length, 0)
+  assert.equal(coreIssues.meta.excludedReasonCounts['non-core'], 2)
+})
+
 test('generic C: particle-only copy difference can stay out of core', () => {
   const allIssues = [issue({ category: 'text', area: 'Main Visual', figmaValue: '상품을 확인하세요.', webValue: '상품 확인하세요.', yRatio: 0.1 })]
   const coreIssues = createCoreVisualIssues(allIssues)

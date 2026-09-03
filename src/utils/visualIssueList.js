@@ -773,8 +773,17 @@ function categoriesAreCompatible(first, second, firstItem = {}, secondItem = {})
   if (first === second) return true
   if ((first === 'cta' && second === 'count') || (first === 'count' && second === 'cta')) return true
   if (['media', 'image', 'layout'].includes(first) && ['media', 'image', 'layout'].includes(second)) return true
+  if (isTextOnlyMediaDuplicate(first, second, firstItem, secondItem)) return true
   if ((first === 'text' && second === 'price') || (first === 'price' && second === 'text')) return hasComparableValuePair(firstItem, secondItem)
   return false
+}
+
+function isTextOnlyMediaDuplicate(first, second, firstItem = {}, secondItem = {}) {
+  const categories = new Set([first, second])
+  if (!categories.has('text')) return false
+  if (![...categories].some((category) => ['media', 'image', 'layout'].includes(category))) return false
+  if (isMediaValue(`${firstItem.figmaValue || ''} ${firstItem.webValue || ''}`) || isMediaValue(`${secondItem.figmaValue || ''} ${secondItem.webValue || ''}`)) return false
+  return hasComparableValuePair(firstItem, secondItem)
 }
 
 function scoreCtaMergeEvidence(firstItem = {}, secondItem = {}) {

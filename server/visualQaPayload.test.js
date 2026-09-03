@@ -141,6 +141,20 @@ test('zero-width only difference is removed from payload differences', () => {
   assert.equal(payloadQuality.invisibleCharacterDiffRemovedCount, 1)
 })
 
+test('recovered text difference keeps text provenance in comparison payload', () => {
+  const { payload } = buildVisualQaPayloadArtifacts(createBaseInput({
+    textComparison: {
+      summary: { matchedCount: 1, differenceCount: 1, figmaOnlyCount: 1, webOnlyCount: 1 },
+      differences: [{ type: 'text', category: 'copy', recovered: true, figmaNodeId: 'f-copy', webSelector: '.hero .copy', figmaText: 'Generic smart offer headline', webText: 'A new era begins', matchConfidence: 'medium', evidence: ['recovered structurally'] }],
+    },
+  }))
+
+  assert.equal(payload.comparison.differences.length, 1)
+  assert.equal(payload.comparison.differences[0].type, 'text')
+  assert.equal(payload.comparison.differences[0].category, 'copy')
+  assert.equal(payload.comparison.differences[0].recovered, true)
+})
+
 test('1288x542 oversized figma section frame is rejected as CTA', () => {
   const { payload, payloadQuality } = buildVisualQaPayloadArtifacts(createBaseInput({
     figmaAnalysis: {

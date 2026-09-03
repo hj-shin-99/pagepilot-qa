@@ -246,6 +246,7 @@ function isMeaningChangingTextIssue(item = {}) {
   if (/오탈자|typo|spelling|철자/i.test(text)) return true
   if (isSubstantialSuffixOmission(item.figmaValue, item.webValue)) return true
   if (isHeroMainArea(item) && hasDivergentHeroCopy(item.figmaValue, item.webValue)) return true
+  if (isHeroMainArea(item) && hasMeaningfulHeroReplacement(item.figmaValue, item.webValue)) return true
   return hasOppositeMeaningPair(item.figmaValue, item.webValue)
 }
 
@@ -266,6 +267,14 @@ function hasDivergentHeroCopy(first, second) {
   const suffixOverlap = tokenOverlapRatio(aSuffix, bSuffix)
   const totalOverlap = tokenOverlapRatio(a, b)
   return suffixOverlap <= 0.5 || totalOverlap <= 0.58
+}
+
+function hasMeaningfulHeroReplacement(first, second) {
+  const a = meaningfulTokens(first)
+  const b = meaningfulTokens(second)
+  if (a.length < 2 || b.length < 2) return false
+  if (isParticleOnlyTokenDiff(a, b)) return false
+  return tokenOverlapRatio(a, b) <= 0.35
 }
 
 function commonPrefixLength(firstTokens, secondTokens) {

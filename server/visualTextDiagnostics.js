@@ -57,6 +57,7 @@ export function createVisualTextDiagnostics({ figmaResult, webAnalysis, matchRes
     },
     matching: {
       summary: matchResult?.summary || payload?.comparison || {},
+      assignment: createAssignmentDiagnostic(matchResult?.assignment),
       matchedPairs: matchedPairs.slice(0, MAX_MATCHED_PAIRS).map(createMatchedPairDiagnostic),
       figmaOnly: figmaOnly.slice(0, MAX_TEXT_ITEMS).map(createFigmaTextDiagnostic),
       webOnly: webOnly.slice(0, MAX_TEXT_ITEMS).map(createWebTextDiagnostic),
@@ -101,6 +102,46 @@ function createFigmaTextDiagnostic(node = {}) {
   }
 }
 
+function createAssignmentDiagnostic(assignment = {}) {
+  if (!assignment || typeof assignment !== 'object' || Array.isArray(assignment)) return null
+  return {
+    strategy: normalizeText(assignment.strategy),
+    componentCount: normalizeNumber(assignment.componentCount),
+    boundedComponentCount: normalizeNumber(assignment.boundedComponentCount),
+    fallbackComponentCount: normalizeNumber(assignment.fallbackComponentCount),
+    components: arrayOfObjects(assignment.components).slice(0, 30).map((component) => ({
+      componentId: normalizeText(component.componentId),
+      strategy: normalizeText(component.strategy),
+      fallbackReason: normalizeText(component.fallbackReason),
+      figmaCount: normalizeNumber(component.figmaCount),
+      webCount: normalizeNumber(component.webCount),
+      edgeCount: normalizeNumber(component.edgeCount),
+      greedy: sanitizeObject(component.greedy, 8),
+      refined: sanitizeObject(component.refined, 8),
+      candidateEdges: arrayOfObjects(component.candidateEdges).slice(0, 24).map(createAssignmentEdgeDiagnostic),
+      chosenEdges: arrayOfObjects(component.chosenEdges).slice(0, 12).map(createAssignmentEdgeDiagnostic),
+    })),
+  }
+}
+
+function createAssignmentEdgeDiagnostic(edge = {}) {
+  return {
+    edgeId: normalizeText(edge.edgeId),
+    chosen: edge.chosen === true,
+    rejectedReason: normalizeText(edge.rejectedReason),
+    figmaIndex: normalizeNumber(edge.figmaIndex),
+    webIndex: normalizeNumber(edge.webIndex),
+    figmaSourceId: normalizeText(edge.figmaSourceId),
+    webSourceId: normalizeText(edge.webSourceId),
+    edgeOrigin: normalizeText(edge.edgeOrigin || 'normal'),
+    anchorPairKey: normalizeText(edge.anchorPairKey),
+    matchScore: normalizeNumber(edge.matchScore),
+    assignmentScore: normalizeNumber(edge.assignmentScore),
+    matchConfidence: normalizeText(edge.matchConfidence),
+    scoreComponents: sanitizeObject(edge.diagnostics, 12),
+  }
+}
+
 function createWebTextDiagnostic(element = {}) {
   return {
     sourceId: getWebSourceId(element),
@@ -131,6 +172,9 @@ function createMatchedPairDiagnostic(pair = {}) {
     matchReasons: normalizeStringArray(pair.matchReasons, 8),
     rejectReasons: normalizeStringArray(pair.rejectReasons, 8),
     scoreComponents: pair.diagnostics || null,
+    edgeOrigin: normalizeText(pair.edgeOrigin || 'normal'),
+    anchorPairKey: normalizeText(pair.anchorPairKey),
+    localSiblingEvidence: sanitizeObject(pair.localSiblingEvidence, 8),
     textEqual: pair.rawTextEqual === true,
     normalizedTextEqual: pair.normalizedTextEqual === true,
   }
@@ -156,6 +200,9 @@ function createPairCandidateDiagnostic(pair = {}, selectedKeys, consumedFigmaIds
     matchReasons: normalizeStringArray(pair.matchReasons, 8),
     rejectReasons: normalizeStringArray(pair.rejectReasons, 8),
     scoreComponents: pair.diagnostics || null,
+    edgeOrigin: normalizeText(pair.edgeOrigin || 'normal'),
+    anchorPairKey: normalizeText(pair.anchorPairKey),
+    localSiblingEvidence: sanitizeObject(pair.localSiblingEvidence, 8),
   }
 }
 

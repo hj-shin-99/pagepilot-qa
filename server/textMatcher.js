@@ -1,6 +1,11 @@
 import { inferWebTextRole } from './webText.js'
 
 const HARD_REJECT_SCORE = -1
+const MIN_MATCH_SCORE = 45
+const LOCAL_SIBLING_ALTERNATE_SCORE = 62
+const MAX_LOCAL_SIBLING_ALTERNATE_EDGES = 80
+const MAX_BOUNDED_COMPONENT_SIDE = 6
+const MAX_BOUNDED_COMPONENT_EDGES = 24
 
 export function normalizeTextForMatching(value) {
   return String(value || '')
@@ -108,26 +113,27 @@ export function matchTextNodes(figmaTextNodes, webTextElements, options = {}) {
         webIndex,
         figmaNode: figmaItem.ref,
         webElement: webItem.ref,
+        edgeOrigin: 'normal',
         ...pair,
         ...(options.includeDiagnostics === true ? { diagnostics: createPairDiagnostics(figmaItem, webItem, pair) } : {}),
       })
     })
   })
 
-  const candidatePairs = allPairs
-    .filter((pair) => !pair.rejected && pair.matchScore >= 45)
+  const normalCandidatePairs = allPairs
+    .filter((pair) => !pair.rejected && pair.matchScore >= MIN_MATCH_SCORE)
     .sort(comparePairsForSelection)
-
-  const usedFigma = new Set()
-  const usedWeb = new Set()
-  const matchedPairs = []
-
-  candidatePairs.forEach((pair) => {
-    if (usedFigma.has(pair.figmaIndex) || usedWeb.has(pair.webIndex)) return
-    usedFigma.add(pair.figmaIndex)
-    usedWeb.add(pair.webIndex)
-    matchedPairs.push(stripPairIndexes(pair))
+  const alternatePairs = createLocalSiblingAlternatePairs({
+    candidatePairs: normalCandidatePairs,
+    allPairs,
+    figmaItems,
+    webItems,
+    includeDiagnostics: options.includeDiagnostics === true,
   })
+  const candidatePairs = [...normalCandidatePairs, ...alternatePairs].sort(comparePairsForSelection)
+
+  const assignment = selectMatchedPairs(candidatePairs, figmaItems, webItems, options)
+  const { usedFigma, usedWeb } = assignment
 
   const figmaOnly = figmaItems
     .filter((_, index) => !usedFigma.has(index))
@@ -137,10 +143,11 @@ export function matchTextNodes(figmaTextNodes, webTextElements, options = {}) {
     .map((item) => item.ref)
 
   return {
-    matchedPairs,
+    matchedPairs: assignment.matchedPairs.map(stripPairIndexes),
     figmaOnly,
     webOnly,
-    allPairs: options.includeAllPairs ? allPairs.map(stripPairIndexes) : [],
+    allPairs: options.includeAllPairs ? [...allPairs, ...alternatePairs].map(stripPairIndexes) : [],
+    ...(options.includeDiagnostics === true ? { assignment: assignment.diagnostics } : {}),
   }
 }
 
@@ -223,6 +230,457 @@ function createRejectedPair(rejectReasons, normalizedSimilarity) {
   }
 }
 
+function createLocalSiblingAlternatePairs({ candidatePairs, allPairs, figmaItems, webItems, includeDiagnostics }) {
+  const allPairsByKey = new Map(allPairs.map((pair) => [createIndexedPairKey(pair), pair]))
+  const existingCandidateKeys = new Set(candidatePairs.map(createIndexedPairKey))
+  const alternateKeys = new Set()
+  const alternates = []
+
+  candidatePairs.forEach((anchorPair) => {
+    if (alternates.length >= MAX_LOCAL_SIBLING_ALTERNATE_EDGES) return
+    if (!isStrongLocalSiblingAnchor(anchorPair)) return
+
+    ;[-1, 1].forEach((direction) => {
+      if (alternates.length >= MAX_LOCAL_SIBLING_ALTERNATE_EDGES) return
+      const figmaIndex = anchorPair.figmaIndex + direction
+      const webIndex = anchorPair.webIndex + direction
+      const key = `${figmaIndex}:${webIndex}`
+      if (existingCandidateKeys.has(key) || alternateKeys.has(key)) return
+
+      const basePair = allPairsByKey.get(key)
+      const figmaAnchor = figmaItems[anchorPair.figmaIndex]
+      const webAnchor = webItems[anchorPair.webIndex]
+      const figmaSibling = figmaItems[figmaIndex]
+      const webSibling = webItems[webIndex]
+      const evaluation = evaluateLocalSiblingAlternate({ anchorPair, basePair, figmaAnchor, figmaSibling, webAnchor, webSibling, direction })
+      if (!evaluation.accepted) return
+
+      const alternatePair = {
+        ...basePair,
+        figmaIndex,
+        webIndex,
+        figmaNode: figmaSibling.ref,
+        webElement: webSibling.ref,
+        edgeOrigin: 'local-sibling-alternate',
+        anchorPairKey: createIndexedPairKey(anchorPair),
+        localSiblingEvidence: evaluation.evidence,
+        matchScore: Math.max(LOCAL_SIBLING_ALTERNATE_SCORE, Number(basePair?.matchScore || 0)),
+        matchConfidence: 'medium',
+        matchReasons: [
+          'local sibling sequence가 strong anchor와 같은 순서로 정렬됩니다.',
+          '인접 텍스트 블록의 구조/위치 근거가 충분합니다.',
+          ...(Array.isArray(basePair?.matchReasons) ? basePair.matchReasons.slice(0, 2) : []),
+        ],
+        rejectReasons: [],
+        rejected: false,
+        rawTextEqual: figmaSibling.rawText === webSibling.rawText,
+        normalizedTextEqual: figmaSibling.normalizedText === webSibling.normalizedText,
+      }
+      if (includeDiagnostics) alternatePair.diagnostics = createPairDiagnostics(figmaSibling, webSibling, alternatePair)
+      alternateKeys.add(key)
+      alternates.push(alternatePair)
+    })
+  })
+
+  return alternates
+}
+
+function isStrongLocalSiblingAnchor(pair) {
+  return pair.edgeOrigin === 'normal'
+    && !pair.rejected
+    && (pair.matchConfidence === 'high' || pair.matchConfidence === 'medium' || Number(pair.matchScore || 0) >= 72)
+    && Number(pair.matchScore || 0) >= 60
+}
+
+function evaluateLocalSiblingAlternate({ anchorPair, basePair, figmaAnchor, figmaSibling, webAnchor, webSibling, direction }) {
+  if (!basePair || !figmaAnchor || !figmaSibling || !webAnchor || !webSibling) return rejectLocalSiblingAlternate('missing-sibling')
+  if (basePair.rejected) return rejectLocalSiblingAlternate('base-pair-hard-rejected')
+  if (!isMeaningfulVisibleText(figmaSibling) || !isMeaningfulVisibleText(webSibling)) return rejectLocalSiblingAlternate('non-meaningful-or-hidden-text')
+  if (!hasCompatibleSiblingRoles(figmaSibling, webSibling)) return rejectLocalSiblingAlternate('incompatible-role-boundary')
+  if (!isLocallyAdjacent(figmaAnchor, figmaSibling) || !isLocallyAdjacent(webAnchor, webSibling)) return rejectLocalSiblingAlternate('not-local-adjacent-siblings')
+  if (!hasSameReadingDirection(anchorPair, direction)) return rejectLocalSiblingAlternate('reading-order-mismatch')
+  if (!hasSameVisualSiblingDirection(figmaAnchor, figmaSibling, webAnchor, webSibling)) return rejectLocalSiblingAlternate('visual-order-mismatch')
+  if (!hasStableSiblingAlignment(figmaAnchor, figmaSibling, webAnchor, webSibling)) return rejectLocalSiblingAlternate('insufficient-alignment')
+  if (!hasMinimumSiblingTextSanity(figmaSibling, webSibling)) return rejectLocalSiblingAlternate('text-shape-sanity-failed')
+
+  return {
+    accepted: true,
+    evidence: {
+      anchorPairKey: createIndexedPairKey(anchorPair),
+      anchorFigmaSourceId: figmaAnchor.sourceId || '',
+      anchorWebSourceId: webAnchor.sourceId || '',
+      direction: direction > 0 ? 'next' : 'previous',
+      figmaSiblingDelta: createSiblingDelta(figmaAnchor, figmaSibling),
+      webSiblingDelta: createSiblingDelta(webAnchor, webSibling),
+      normalizedSimilarity: roundScore(getTextSimilarity(figmaSibling.normalizedText, webSibling.normalizedText)),
+      lengthRatio: roundScore(getLengthRatio(figmaSibling.normalizedText, webSibling.normalizedText)),
+      basePairScore: normalizeNumber(basePair.matchScore),
+    },
+  }
+}
+
+function rejectLocalSiblingAlternate(reason) {
+  return { accepted: false, reason }
+}
+
+function isMeaningfulVisibleText(item) {
+  if (!item || item.ref?.effectivelyVisible === false || item.ref?.visible === false) return false
+  const text = String(item.rawText || '').replace(/\s+/g, ' ').trim()
+  if (text.length < 4) return false
+  return String(item.normalizedText || '').length >= 3
+}
+
+function hasCompatibleSiblingRoles(figmaItem, webItem) {
+  const firstRole = normalizeRoleBoundary(figmaItem.role)
+  const secondRole = normalizeRoleBoundary(webItem.role)
+  const blocked = new Set(['cta', 'navigation', 'legal', 'table', 'media-control'])
+  if (blocked.has(firstRole) || blocked.has(secondRole)) return firstRole === secondRole
+  return true
+}
+
+function normalizeRoleBoundary(role) {
+  const value = String(role || '').toLowerCase()
+  if (/cta|button|action|link/.test(value)) return 'cta'
+  if (/nav|menu/.test(value)) return 'navigation'
+  if (/legal|footer|privacy|terms/.test(value)) return 'legal'
+  if (/table|row|cell/.test(value)) return 'table'
+  if (/video|image|media|control/.test(value)) return 'media-control'
+  if (/heading|title|body|label|price|date|unknown/.test(value)) return value
+  return 'text'
+}
+
+function hasSameReadingDirection(anchorPair, direction) {
+  const nextFigmaIndex = anchorPair.figmaIndex + direction
+  const nextWebIndex = anchorPair.webIndex + direction
+  return direction > 0 ? nextFigmaIndex > anchorPair.figmaIndex && nextWebIndex > anchorPair.webIndex : nextFigmaIndex < anchorPair.figmaIndex && nextWebIndex < anchorPair.webIndex
+}
+
+function hasSameVisualSiblingDirection(figmaAnchor, figmaSibling, webAnchor, webSibling) {
+  const figmaDelta = createSiblingDelta(figmaAnchor, figmaSibling)
+  const webDelta = createSiblingDelta(webAnchor, webSibling)
+  if (hasOppositeSignedDelta(figmaDelta.y, webDelta.y, 0.006)) return false
+  if (hasOppositeSignedDelta(figmaDelta.x, webDelta.x, 0.01)) return false
+  return true
+}
+
+function hasOppositeSignedDelta(first, second, tolerance) {
+  if (!Number.isFinite(first) || !Number.isFinite(second)) return false
+  if (Math.abs(first) <= tolerance || Math.abs(second) <= tolerance) return false
+  return Math.sign(first) !== Math.sign(second)
+}
+
+function hasStableSiblingAlignment(figmaAnchor, figmaSibling, webAnchor, webSibling) {
+  const figmaDelta = createSiblingDelta(figmaAnchor, figmaSibling)
+  const webDelta = createSiblingDelta(webAnchor, webSibling)
+  const pairYDiff = getDifference(figmaSibling.yRatio, webSibling.yRatio)
+  const pairXDiff = getDifference(figmaSibling.xRatio, webSibling.xRatio)
+  const relativeXDiff = getDifference(figmaDelta.x, webDelta.x)
+  const relativeYDiff = getDifference(figmaDelta.y, webDelta.y)
+  const alignedX = pairXDiff === null || pairXDiff <= 0.12 || relativeXDiff === null || relativeXDiff <= 0.08
+  const alignedY = pairYDiff === null || pairYDiff <= 0.08 || relativeYDiff === null || relativeYDiff <= 0.04
+  return alignedX && alignedY
+}
+
+function createSiblingDelta(anchor, sibling) {
+  return {
+    x: Number.isFinite(anchor?.xRatio) && Number.isFinite(sibling?.xRatio) ? roundScore(sibling.xRatio - anchor.xRatio) : null,
+    y: Number.isFinite(anchor?.yRatio) && Number.isFinite(sibling?.yRatio) ? roundScore(sibling.yRatio - anchor.yRatio) : null,
+  }
+}
+
+function hasMinimumSiblingTextSanity(figmaItem, webItem) {
+  const lengthRatio = getLengthRatio(figmaItem.normalizedText, webItem.normalizedText)
+  if (lengthRatio < 0.32) return false
+  const shortest = Math.min(String(figmaItem.normalizedText || '').length, String(webItem.normalizedText || '').length)
+  return shortest >= 6
+}
+
+function selectMatchedPairs(candidatePairs, figmaItems, webItems, options = {}) {
+  const components = createAmbiguityComponents(candidatePairs)
+  const selectedPairs = []
+  const componentDiagnostics = []
+  let boundedComponentCount = 0
+
+  components.forEach((component, componentIndex) => {
+    const greedy = selectGreedyPairs(component.pairs, figmaItems, webItems)
+    const bounded = canUseBoundedAssignment(component) ? selectBoundedComponentPairs(component.pairs, figmaItems, webItems) : null
+    const chosen = bounded && compareAssignments(bounded, greedy) > 0 ? bounded : greedy
+    if (chosen.strategy === 'bounded-component') boundedComponentCount += 1
+    selectedPairs.push(...chosen.pairs)
+
+    if (options.includeDiagnostics === true) {
+      componentDiagnostics.push(createAssignmentComponentDiagnostic({
+        component,
+        componentIndex,
+        greedy,
+        bounded,
+        chosen,
+        figmaItems,
+        webItems,
+      }))
+    }
+  })
+
+  const usedFigma = new Set(selectedPairs.map((pair) => pair.figmaIndex))
+  const usedWeb = new Set(selectedPairs.map((pair) => pair.webIndex))
+
+  return {
+    matchedPairs: selectedPairs.sort(comparePairsForOutput),
+    usedFigma,
+    usedWeb,
+    diagnostics: options.includeDiagnostics === true ? {
+      strategy: boundedComponentCount > 0 ? 'bounded-component' : 'greedy',
+      componentCount: components.length,
+      boundedComponentCount,
+      fallbackComponentCount: components.length - boundedComponentCount,
+      components: componentDiagnostics,
+    } : undefined,
+  }
+}
+
+function createAmbiguityComponents(candidatePairs) {
+  const nodeToPairs = new Map()
+  candidatePairs.forEach((pair) => {
+    addMapItem(nodeToPairs, `f:${pair.figmaIndex}`, pair)
+    addMapItem(nodeToPairs, `w:${pair.webIndex}`, pair)
+  })
+
+  const visited = new Set()
+  const components = []
+  candidatePairs.forEach((startPair) => {
+    const startKey = createIndexedPairKey(startPair)
+    if (visited.has(startKey)) return
+    const queue = [startPair]
+    const pairs = []
+    const figmaIndexes = new Set()
+    const webIndexes = new Set()
+
+    while (queue.length) {
+      const pair = queue.shift()
+      const pairKey = createIndexedPairKey(pair)
+      if (visited.has(pairKey)) continue
+      visited.add(pairKey)
+      pairs.push(pair)
+      figmaIndexes.add(pair.figmaIndex)
+      webIndexes.add(pair.webIndex)
+
+      ;[`f:${pair.figmaIndex}`, `w:${pair.webIndex}`].forEach((nodeKey) => {
+        ;(nodeToPairs.get(nodeKey) || []).forEach((nextPair) => {
+          if (!visited.has(createIndexedPairKey(nextPair))) queue.push(nextPair)
+        })
+      })
+    }
+
+    components.push({ pairs, figmaIndexes: [...figmaIndexes].sort(compareNumbers), webIndexes: [...webIndexes].sort(compareNumbers) })
+  })
+
+  return components
+}
+
+function canUseBoundedAssignment(component) {
+  return component.figmaIndexes.length <= MAX_BOUNDED_COMPONENT_SIDE
+    && component.webIndexes.length <= MAX_BOUNDED_COMPONENT_SIDE
+    && component.pairs.length <= MAX_BOUNDED_COMPONENT_EDGES
+}
+
+function selectGreedyPairs(pairs, figmaItems, webItems) {
+  const usedFigma = new Set()
+  const usedWeb = new Set()
+  const selected = []
+  pairs.slice().sort(comparePairsForSelection).forEach((pair) => {
+    if (usedFigma.has(pair.figmaIndex) || usedWeb.has(pair.webIndex)) return
+    usedFigma.add(pair.figmaIndex)
+    usedWeb.add(pair.webIndex)
+    selected.push(pair)
+  })
+  return createAssignmentResult('greedy', selected, figmaItems, webItems)
+}
+
+function selectBoundedComponentPairs(pairs, figmaItems, webItems) {
+  const edgesByFigma = new Map()
+  pairs.forEach((pair) => addMapItem(edgesByFigma, pair.figmaIndex, pair))
+  const figmaIndexes = [...edgesByFigma.keys()].sort(compareNumbers)
+  let best = createAssignmentResult('bounded-component', [], figmaItems, webItems)
+
+  function visit(figmaOffset, usedWeb, selected) {
+    if (figmaOffset >= figmaIndexes.length) {
+      const candidate = createAssignmentResult('bounded-component', selected, figmaItems, webItems)
+      if (compareAssignments(candidate, best) > 0) best = candidate
+      return
+    }
+
+    const figmaIndex = figmaIndexes[figmaOffset]
+    const edges = (edgesByFigma.get(figmaIndex) || []).slice().sort(comparePairsForSelection)
+    edges.forEach((edge) => {
+      if (usedWeb.has(edge.webIndex)) return
+      usedWeb.add(edge.webIndex)
+      selected.push(edge)
+      visit(figmaOffset + 1, usedWeb, selected)
+      selected.pop()
+      usedWeb.delete(edge.webIndex)
+    })
+    visit(figmaOffset + 1, usedWeb, selected)
+  }
+
+  visit(0, new Set(), [])
+  return best
+}
+
+function createAssignmentResult(strategy, pairs, figmaItems, webItems) {
+  const score = pairs.reduce((sum, pair) => sum + getAssignmentEdgeScore(pair, figmaItems, webItems), 0)
+  const orderPenalty = getReadingOrderInversionCount(pairs) * 48
+  const localOrderBonus = getLocalAdjacencyBonus(pairs, figmaItems, webItems)
+  const objectiveScore = roundScore(pairs.length * 100 + score + localOrderBonus - orderPenalty)
+  return {
+    strategy,
+    pairs: pairs.slice().sort(comparePairsForOutput),
+    pairCount: pairs.length,
+    rawScore: roundScore(score),
+    localOrderBonus: roundScore(localOrderBonus),
+    orderPenalty: roundScore(orderPenalty),
+    objectiveScore,
+  }
+}
+
+function compareAssignments(first, second) {
+  if (first.pairCount !== second.pairCount) return first.pairCount - second.pairCount
+  if (first.objectiveScore !== second.objectiveScore) return first.objectiveScore - second.objectiveScore
+  if (first.rawScore !== second.rawScore) return first.rawScore - second.rawScore
+  return compareAssignmentPairKeys(first.pairs, second.pairs)
+}
+
+function getAssignmentEdgeScore(pair, figmaItems = [], webItems = []) {
+  const figmaItem = figmaItems[pair.figmaIndex]
+  const webItem = webItems[pair.webIndex]
+  if (!figmaItem || !webItem) return Number(pair.matchScore || 0)
+  const yDiff = getDifference(figmaItem.yRatio, webItem.yRatio)
+  const xDiff = getDifference(figmaItem.xRatio, webItem.xRatio)
+  const normalizedSimilarity = getTextSimilarity(figmaItem.normalizedText, webItem.normalizedText)
+  const roleScore = Math.max(0, getRoleCompatibilityScore(figmaItem, webItem, []))
+  const contextSimilarity = getContextSimilarity(figmaItem.contextPath, webItem.contextPath)
+  const sectionScore = getSectionCompatibilityScore(figmaItem.sectionHint, webItem.sectionHint)
+  const geometryScore = getProximityScore(yDiff, 0.24) * 8 + getProximityScore(xDiff, 0.3) * 4
+  const confidenceBonus = pair.matchConfidence === 'high' ? 4 : pair.matchConfidence === 'medium' ? 2 : 0
+
+  return roundScore(
+    Number(pair.matchScore || 0)
+    + normalizedSimilarity * 10
+    + roleScore * 4
+    + contextSimilarity * 4
+    + sectionScore * 3
+    + geometryScore
+    + confidenceBonus,
+  )
+}
+
+function getReadingOrderInversionCount(pairs) {
+  const sorted = pairs.slice().sort(comparePairsForOutput)
+  let inversions = 0
+  for (let leftIndex = 0; leftIndex < sorted.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < sorted.length; rightIndex += 1) {
+      if (sorted[leftIndex].webIndex > sorted[rightIndex].webIndex) inversions += 1
+    }
+  }
+  return inversions
+}
+
+function getLocalAdjacencyBonus(pairs, figmaItems = [], webItems = []) {
+  const sorted = pairs.slice().sort(comparePairsForOutput)
+  let bonus = 0
+  for (let index = 0; index < sorted.length - 1; index += 1) {
+    const current = sorted[index]
+    const next = sorted[index + 1]
+    if (current.figmaIndex >= next.figmaIndex || current.webIndex >= next.webIndex) continue
+    const figmaCurrent = figmaItems[current.figmaIndex]
+    const figmaNext = figmaItems[next.figmaIndex]
+    const webCurrent = webItems[current.webIndex]
+    const webNext = webItems[next.webIndex]
+    if (isLocallyAdjacent(figmaCurrent, figmaNext) && isLocallyAdjacent(webCurrent, webNext)) bonus += 12
+  }
+  return bonus
+}
+
+function isLocallyAdjacent(first, second) {
+  if (!first || !second) return false
+  const yDiff = getDifference(first.yRatio, second.yRatio)
+  const xDiff = getDifference(first.xRatio, second.xRatio)
+  const contextSimilarity = getContextSimilarity(first.contextPath, second.contextPath)
+  const sameSection = first.sectionHint && first.sectionHint === second.sectionHint
+  return (yDiff === null || yDiff <= 0.08) && (xDiff === null || xDiff <= 0.18) && (contextSimilarity >= 0.2 || sameSection)
+}
+
+function createAssignmentComponentDiagnostic({ component, componentIndex, greedy, bounded, chosen, figmaItems, webItems }) {
+  const chosenKeys = new Set(chosen.pairs.map(createIndexedPairKey))
+  return {
+    componentId: `component-${componentIndex + 1}`,
+    strategy: chosen.strategy,
+    fallbackReason: bounded ? '' : 'component-too-large',
+    figmaCount: component.figmaIndexes.length,
+    webCount: component.webIndexes.length,
+    edgeCount: component.pairs.length,
+    greedy: createAssignmentSummary(greedy),
+    refined: bounded ? createAssignmentSummary(bounded) : null,
+    candidateEdges: component.pairs.slice().sort(comparePairsForSelection).slice(0, 40).map((pair) => createAssignmentEdgeDiagnostic(pair, figmaItems, webItems, chosenKeys)),
+    chosenEdges: chosen.pairs.map((pair) => createAssignmentEdgeDiagnostic(pair, figmaItems, webItems, chosenKeys)),
+  }
+}
+
+function createAssignmentSummary(result) {
+  return {
+    strategy: result.strategy,
+    pairCount: result.pairCount,
+    rawScore: result.rawScore,
+    objectiveScore: result.objectiveScore,
+    localOrderBonus: result.localOrderBonus,
+    orderPenalty: result.orderPenalty,
+  }
+}
+
+function createAssignmentEdgeDiagnostic(pair, figmaItems, webItems, chosenKeys) {
+  const figmaItem = figmaItems[pair.figmaIndex]
+  const webItem = webItems[pair.webIndex]
+  return {
+    edgeId: createIndexedPairKey(pair),
+    chosen: chosenKeys.has(createIndexedPairKey(pair)),
+    rejectedReason: chosenKeys.has(createIndexedPairKey(pair)) ? '' : 'not-selected-by-assignment',
+    figmaIndex: pair.figmaIndex,
+    webIndex: pair.webIndex,
+    figmaSourceId: figmaItem?.sourceId || '',
+    webSourceId: webItem?.sourceId || '',
+    edgeOrigin: pair.edgeOrigin || 'normal',
+    anchorPairKey: pair.anchorPairKey || '',
+    matchScore: normalizeNumber(pair.matchScore),
+    assignmentScore: getAssignmentEdgeScore(pair, figmaItems, webItems),
+    matchConfidence: pair.matchConfidence,
+    diagnostics: pair.diagnostics || createPairDiagnostics(figmaItem, webItem, pair),
+  }
+}
+
+function addMapItem(map, key, value) {
+  const values = map.get(key) || []
+  values.push(value)
+  map.set(key, values)
+}
+
+function createIndexedPairKey(pair) {
+  return `${pair.figmaIndex}:${pair.webIndex}`
+}
+
+function comparePairsForOutput(first, second) {
+  if (first.figmaIndex !== second.figmaIndex) return first.figmaIndex - second.figmaIndex
+  return first.webIndex - second.webIndex
+}
+
+function compareAssignmentPairKeys(firstPairs, secondPairs) {
+  const firstKey = firstPairs.map(createIndexedPairKey).join('|')
+  const secondKey = secondPairs.map(createIndexedPairKey).join('|')
+  return secondKey.localeCompare(firstKey)
+}
+
+function compareNumbers(first, second) {
+  return first - second
+}
+
 function createPairDiagnostics(figmaItem, webItem, pair) {
   const yDiff = getDifference(figmaItem.yRatio, webItem.yRatio)
   const xDiff = getDifference(figmaItem.xRatio, webItem.xRatio)
@@ -251,6 +709,9 @@ function createPairDiagnostics(figmaItem, webItem, pair) {
       mediumDifferenceScore: 60,
     },
     gate: pair.rejected ? 'hard-reject' : pair.matchScore >= 45 ? 'eligible' : 'below-threshold',
+    edgeOrigin: pair.edgeOrigin || 'normal',
+    anchorPairKey: pair.anchorPairKey || '',
+    localSiblingEvidence: pair.localSiblingEvidence || null,
   }
 }
 

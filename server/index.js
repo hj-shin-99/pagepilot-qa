@@ -303,7 +303,7 @@ app.post('/api/figma/text-compare', async (req, res) => {
       webResult.textElements,
       { includeAllPairs },
     )
-    const differences = createTextDifferenceCandidates(matchResult.matchedPairs)
+    const differences = createTextDifferenceCandidates(matchResult.matchedPairs, matchResult)
     const response = createTextCompareResponse({
       figmaTextNodes: figmaResult.textNodes || [],
       webTextElements: webResult.textElements,

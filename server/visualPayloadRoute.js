@@ -91,7 +91,7 @@ export async function buildVisualPayloadFromScanResult(input, dependencies) {
     webAnalysis.textNodes || [],
     { includeAllPairs: false },
   )
-  const differences = dependencies.createTextDifferenceCandidates(matchResult.matchedPairs)
+  const differences = dependencies.createTextDifferenceCandidates(matchResult.matchedPairs, matchResult)
   const textCompareResponse = dependencies.createTextCompareResponse({
     figmaTextNodes: figmaResult.textNodes || [],
     webTextElements: webAnalysis.textNodes || [],

@@ -7,7 +7,7 @@ import { createWebVisualAnalysis } from './webVisualAnalysis.js'
 const SAMPLE_SCREENSHOT = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF9sAAAAASUVORK5CYII='
 
 function createDependencies() {
-  const calls = { scanUrl: 0, scanArgs: null, webAnalysisInput: null }
+  const calls = { scanUrl: 0, scanArgs: null, webAnalysisInput: null, textDiffArgs: null }
   const scanResult = {
     targetUrl: 'https://example.com/page',
     pageTitle: 'Example',
@@ -108,7 +108,8 @@ function createDependencies() {
           allPairs: [],
         }
       },
-      createTextDifferenceCandidates() {
+      createTextDifferenceCandidates(matchedPairs, matchResult) {
+        calls.textDiffArgs = { matchedPairs, matchResult }
         return Array.from({ length: 25 }, (_, index) => ({ figmaText: `Figma ${index}`, webText: `Web ${index}`, matchConfidence: 'high', evidence: ['same region'] }))
       },
       createTextCompareResponse() {
@@ -140,6 +141,8 @@ test('buildVisualPayloadResponse uses one scanUrl call and reuses one scanResult
   assert.equal(calls.scanArgs.options.includeVisualPayloadData, true)
   assert.equal(calls.scanArgs.options.includeMobile, false)
   assert.equal(calls.webAnalysisInput.visualPayloadData.textNodes[0].text, 'Hero title')
+  assert.equal(calls.textDiffArgs.matchResult.figmaOnly.length, 12)
+  assert.equal(calls.textDiffArgs.matchedPairs.length, 1)
   assert.equal(result.figma.displayImageUrl, '/api/figma/render/render-1')
   assert.equal(result.web.screenshot.path, '.cache/visual/screenshots/7ab5b706fd88d75e7418254e.png')
   assert.equal(result.web.displayImageUrl, '/api/visual/screenshot/7ab5b706fd88d75e7418254e.png')

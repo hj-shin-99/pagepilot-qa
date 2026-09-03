@@ -181,7 +181,7 @@ export function createNavigationIntentDisplayModel(navigationIntentQa) {
     rowId: `navigation-intent-${item.referenceId || index}`,
     referenceId: item.referenceId || `intent-${index + 1}`,
     label: item.label || item.actualLabel || 'Reference item',
-    expectedUrls: Array.isArray(item.expectedUrls) ? item.expectedUrls.map((url) => url.raw || url).filter(Boolean) : [],
+    expectedUrls: normalizeNavigationIntentExpectedUrls(item.expectedUrls),
     actualLabel: item.actualLabel || '',
     actualUrls: dedupeStrings(Array.isArray(item.actualUrlEvidence) ? item.actualUrlEvidence.map((entry) => entry.url).filter(Boolean) : []),
     source: item.source || {},
@@ -199,6 +199,17 @@ export function createNavigationIntentDisplayModel(navigationIntentQa) {
     available: navigationIntentQa.meta?.available !== false,
     reason: navigationIntentQa.meta?.reason || '',
   }
+}
+
+function normalizeNavigationIntentExpectedUrls(expectedUrls) {
+  if (!Array.isArray(expectedUrls)) return []
+  return expectedUrls.map(normalizeNavigationIntentExpectedUrl).filter(Boolean)
+}
+
+function normalizeNavigationIntentExpectedUrl(value) {
+  if (typeof value === 'string') return value
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return ''
+  return typeof value.raw === 'string' ? value.raw : ''
 }
 
 function createEmptyNavigationIntentSummary() {

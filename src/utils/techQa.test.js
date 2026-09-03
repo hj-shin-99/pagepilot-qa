@@ -646,6 +646,19 @@ test('Navigation Intent QA display model dedupes identical actual URLs for compa
   assert.deepEqual(intent.rows[0].actualUrls, ['https://example.com/apply'])
 })
 
+test('Navigation Intent QA display model drops legacy malformed expected URL objects', () => {
+  const intent = createNavigationIntentDisplayModel({
+    meta: { available: true },
+    summary: { evaluated: 1, correct: 1, mismatch: 0, review: 0, notObserved: 0 },
+    items: [
+      { referenceId: 'intent-1', label: 'Legacy Apply', status: 'matched-correct', expectedUrls: [{ matchMode: 'path-prefix', allowRedirect: true, allowTrailingSlashVariant: true }, { raw: '/apply' }, '/backup'], actualUrlEvidence: [{ url: 'https://example.com/apply' }] },
+    ],
+  })
+
+  assert.deepEqual(intent.rows[0].expectedUrls, ['/apply', '/backup'])
+  assert.equal(intent.rows[0].expectedUrls.every((url) => typeof url === 'string'), true)
+})
+
 test('tech qa panel source renders Navigation Intent QA only when result is present', () => {
   const source = fs.readFileSync('src/components/TechQaPanel.jsx', 'utf8')
 

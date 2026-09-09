@@ -14,10 +14,12 @@ import {
   createReferenceNormalizeFailureState,
   createReferenceNormalizeSuccessState,
   createReferenceReviewState,
+  createReferenceTelemetryRows,
   editReferenceItem,
   excludeReferenceItem,
   importReferencePresetFromText,
   resetReferenceReviewState,
+  shouldShowReferenceSheetSelection,
   updateReferenceSheetDraftSelection,
 } from './referenceReview.js'
 
@@ -155,7 +157,7 @@ test('Reference preset export excludes raw workbook data and restores review dec
   const state = createReferenceReviewState(createReferenceMap())
   let items = editReferenceItem(state.items, 'ref-001', { label: 'Pricing edited', aliases: 'Plans', urls: ['/pricing-edited'] })
   items = excludeReferenceItem(items, 'ref-002', 'not needed')
-  const preset = createReferencePreset({ referenceMap: state.referenceMap, items, meta: { selectedSheetNames: ['Sheet1'], model: 'model-name' }, normalizedSheetNames: ['Sheet1'] })
+  const preset = createReferencePreset({ referenceMap: state.referenceMap, items, meta: { selectedSheetNames: ['Sheet1'], model: 'model-name', usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, cache: { keyHash: 'abc123', status: 'miss' } }, normalizedSheetNames: ['Sheet1'] })
   const serialized = JSON.stringify({ ...preset, apiKey: undefined })
   const imported = importReferencePresetFromText(JSON.stringify(preset))
 
@@ -164,11 +166,100 @@ test('Reference preset export excludes raw workbook data and restores review dec
   assert.equal(serialized.includes('base64'), false)
   assert.equal(serialized.includes('apiKey'), false)
   assert.equal(serialized.includes('columns'), false)
+  assert.equal(serialized.includes('promptTokens'), false)
+  assert.equal(serialized.includes('keyHash'), false)
   assert.deepEqual(imported.reviewItems.map((item) => item.userDecision.status), ['confirmed', 'excluded', 'pending'])
   assert.equal(imported.reviewItems[0].element.label, 'Pricing edited')
   assert.equal(imported.reviewItems[1].userDecision.excludedReason, 'not needed')
   assert.deepEqual(imported.normalizedSheetNames, ['Sheet1'])
   assert.equal(imported.analyzedReference, null)
+})
+
+test('Reference telemetry rows show live AI cache miss with current request tokens', () => {
+  const rows = createReferenceTelemetryRows({
+    model: 'test-model',
+    openAiCalled: true,
+    chunking: { apiCallCount: 2, failedChunkCount: 0 },
+    cache: { status: 'miss', hit: false, read: true, written: true, keyHash: 'safe-hash-only' },
+    usage: { promptTokens: 1200, completionTokens: 340, totalTokens: 1540, completionCount: 2 },
+  })
+
+  assertTelemetryRows(rows, {
+    'AI 분석': '사용됨',
+    Cache: 'MISS',
+    '이번 분석 AI Calls': '2',
+    '이번 분석 Input Tokens': '1200',
+    '이번 분석 Output Tokens': '340',
+    '이번 분석 Total Tokens': '1540',
+    Model: 'test-model',
+  })
+})
+
+test('Reference telemetry rows show cache hit as zero-cost current request', () => {
+  const rows = createReferenceTelemetryRows({
+    model: 'test-model',
+    openAiCalled: false,
+    chunking: { apiCallCount: 0 },
+    cache: { status: 'hit', hit: true },
+    usage: { promptTokens: 999, completionTokens: 111, totalTokens: 1110 },
+  })
+
+  assertTelemetryRows(rows, {
+    'AI 분석': '캐시 사용',
+    Cache: 'HIT',
+    '이번 분석 AI Calls': '0',
+    '이번 분석 Input Tokens': '0',
+    '이번 분석 Output Tokens': '0',
+    '이번 분석 Total Tokens': '0',
+    Model: 'test-model',
+  })
+})
+
+test('Reference telemetry rows show preset import as saved Reference without current API cost', () => {
+  const rows = createReferenceTelemetryRows({ importedPreset: true, model: 'origin-model', chunking: { apiCallCount: 7 }, usage: { totalTokens: 9000 } })
+
+  assertTelemetryRows(rows, {
+    'AI 분석': '저장된 Reference 사용',
+    Cache: '-',
+    '이번 분석 AI Calls': '0',
+    '이번 분석 Input Tokens': '0',
+    '이번 분석 Output Tokens': '0',
+    '이번 분석 Total Tokens': '0',
+    Model: '원본 분석 모델: origin-model',
+  })
+})
+
+test('Reference telemetry rows never fake zero tokens when live usage is missing', () => {
+  const rows = createReferenceTelemetryRows({ openAiCalled: true, model: 'test-model', chunking: { apiCallCount: 1 }, cache: { status: 'miss' }, usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } })
+
+  assertTelemetryRows(rows, {
+    'AI 분석': '사용됨',
+    Cache: 'MISS',
+    '이번 분석 AI Calls': '1',
+    '이번 분석 Input Tokens': '확인 불가',
+    '이번 분석 Output Tokens': '확인 불가',
+    '이번 분석 Total Tokens': '확인 불가',
+  })
+})
+
+test('Reference telemetry rows preserve fallback visibility with attempted calls', () => {
+  const rows = createReferenceTelemetryRows({
+    openAiCalled: true,
+    model: 'test-model',
+    chunking: { apiCallCount: 3, failedChunkCount: 1 },
+    failedChunks: [{ code: 'openai_reference_failed' }],
+    cache: { status: 'miss' },
+    usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+  })
+
+  assertTelemetryRows(rows, {
+    'AI 분석': '실패 / fallback',
+    Cache: 'MISS',
+    '이번 분석 AI Calls': '3',
+    '이번 분석 Input Tokens': '100',
+    '이번 분석 Output Tokens': '20',
+    '이번 분석 Total Tokens': '120',
+  })
 })
 
 test('Reference preset import rejects malformed and unsupported versions safely', () => {
@@ -204,6 +295,37 @@ test('new normalization success replaces preview and normalized sheet names', ()
   assert.deepEqual(next.referenceMeta.selectedSheetNames, ['Proposed Navigation'])
   assert.equal(next.confirmedReferenceMap, null)
   assert.equal(next.reviewItems[0].userDecision.status, 'pending')
+})
+
+test('new normalization success preserves backend usage and cache telemetry in preview meta', () => {
+  const current = createPreviewState()
+  const nextMap = { ...createReferenceMap(), items: [createItem('ref-301', 'Telemetry', '/telemetry', 0.95)] }
+  const meta = {
+    model: 'test-model',
+    chunking: { apiCallCount: 1 },
+    usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, completionCount: 1 },
+    cache: { status: 'miss', hit: false, read: true, written: true, keyHash: 'abcdef' },
+  }
+  const next = createReferenceNormalizeSuccessState(current, { referenceMap: nextMap, meta }, ['Current Navigation'])
+
+  assert.deepEqual(next.referenceMeta.usage, meta.usage)
+  assert.deepEqual(next.referenceMeta.cache, meta.cache)
+  assert.deepEqual(next.referenceMeta.selectedSheetNames, ['Current Navigation'])
+})
+
+test('Reference sheet selection visibility follows Preview state matrix', () => {
+  const analyzedState = { ...resetReferenceReviewState(), analyzedReference: { sheetSummaries: [{ sheetName: 'Navigation' }], sheets: [] } }
+  const previewState = createReferenceNormalizeSuccessState(analyzedState, { referenceMap: createReferenceMap(), meta: { selectedSheetNames: ['Navigation'] } }, ['Navigation'])
+  const presetState = importReferencePresetFromText(JSON.stringify(createReferencePreset({ referenceMap: createReferenceMap(), items: createReferenceMap().items, meta: { selectedSheetNames: ['Navigation'] }, normalizedSheetNames: ['Navigation'] })))
+  const resetForNewExcel = { ...createReferenceFileSelectionState({ name: 'new-reference.xlsx' }), analyzedReference: { sheetSummaries: [{ sheetName: 'New Navigation' }], sheets: [] } }
+  const failedAfterPreview = createReferenceNormalizeFailureState(previewState, 'Temporary failure')
+
+  assert.equal(shouldShowReferenceSheetSelection(resetReferenceReviewState()), false)
+  assert.equal(shouldShowReferenceSheetSelection(analyzedState), true)
+  assert.equal(shouldShowReferenceSheetSelection(previewState), false)
+  assert.equal(shouldShowReferenceSheetSelection(presetState), false)
+  assert.equal(shouldShowReferenceSheetSelection(resetForNewExcel), true)
+  assert.equal(shouldShowReferenceSheetSelection(failedAfterPreview), false)
 })
 
 test('new normalization failure keeps existing preview and review decisions', () => {
@@ -291,6 +413,13 @@ function createPreviewState() {
     ...state,
     reviewItems: confirmedItems,
     confirmedReferenceMap: createConfirmedReferenceMap(state.referenceMap, confirmedItems),
+  }
+}
+
+function assertTelemetryRows(rows, expected) {
+  const byLabel = Object.fromEntries(rows.map((row) => [row.label, row.value]))
+  for (const [label, value] of Object.entries(expected)) {
+    assert.equal(byLabel[label], value)
   }
 }
 

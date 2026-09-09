@@ -1,7 +1,10 @@
 const INTENT_SCHEMA_VERSION = 'navigation-intent-reference-v1'
 const GENERIC_LABELS = new Set(['view', 'more', 'list', 'detail', 'details', 'open', 'go', 'link', 'menu', '보기', '더보기', '목록', '상세', '이동'])
+const HIERARCHY_QUALIFIER_LABELS = new Set(['primary', 'secondary', 'tertiary', 'default', 'current', 'active', 'published', 'main', 'cta', 'button', 'link', 'action', 'navigation', 'nav', 'open', '주요', '기본', '현재', '활성', '게시', '버튼', '액션'])
 const VALID_MATCH_MODES = new Set(['exact-url', 'path-and-query', 'pattern'])
 const STATUS_ORDER = ['matched-mismatch', 'ambiguous-match', 'target-evidence-unavailable', 'identity-unresolved', 'reference-not-observed', 'matched-correct']
+const DIRECT_TARGET_EVIDENCE_KINDS = new Set(['href', 'click-navigation', 'new-window', 'popup'])
+const FINAL_TARGET_EVIDENCE_KINDS = new Set(['landing-final'])
 
 export function evaluateNavigationIntentQa(referenceMap, scanResult = {}, options = {}) {
   const validated = normalizeNavigationReferenceMap(referenceMap)
@@ -38,11 +41,12 @@ export function normalizeNavigationReferenceMap(referenceMap) {
 }
 
 export function collectActualNavigationCandidates(scanResult = {}) {
-  return [
+  const candidates = [
     ...collectLinkCandidates(scanResult.links),
     ...collectClickCandidates(scanResult.clickActions),
     ...collectLandingCandidates(scanResult.landingPages),
   ].filter((candidate) => candidate.normalizedLabel || candidate.normalizedAliases.length > 0 || candidate.targetEvidence.length > 0)
+  return dedupeSemanticNavigationCandidates(candidates, scanResult.targetUrl)
 }
 
 export function matchExpectedUrl(expectedUrl, actualUrl, options = {}) {
@@ -75,7 +79,7 @@ function evaluateReferenceItem(referenceItem, actualCandidates, options) {
   const topScore = matches[0].score
   const topMatches = matches.filter((match) => Math.abs(match.score - topScore) < 0.0001)
   if (topMatches.some((match) => match.weak)) {
-    return createIntentItem(referenceItem, topMatches[0].candidate, 'ambiguous-match', 'Reference identity evidence가 짧거나 일반적인 segment에만 의존해 실제 element를 확정하지 않습니다.', 0.52, options, topMatches.map(({ candidate }) => candidate.label).filter(Boolean))
+    return classifyWeakIdentityMatches(referenceItem, topMatches, actualCandidates, options)
   }
   if ((isGenericLabel(referenceItem.normalizedLabel) && matches.length > 1) || topMatches.length > 1) {
     return classifyDuplicateIdentityMatches(referenceItem, topMatches, options)
@@ -93,6 +97,37 @@ function classifyUnresolvedIdentity(referenceItem, actualCandidates, options) {
     return createIntentItem(referenceItem, { label: '', normalizedLabel: '', normalizedAliases: [], targetEvidence: observedEvidence }, 'identity-unresolved', 'Expected target은 현재 페이지에서 관찰되었지만 Reference element와 실제 element identity를 확정하지 못했습니다.', 0.5, options, [], { evidence: observedEvidence })
   }
   return createIntentItem(referenceItem, null, 'reference-not-observed', '현재 페이지에서 해당 Reference element를 관찰하지 못했고 Expected target evidence도 확인되지 않았습니다.', 0.4, options)
+}
+
+function classifyWeakIdentityMatches(referenceItem, matches, actualCandidates, options) {
+  const candidates = matches.map((match) => match.candidate)
+  const targetGroups = candidates.map((candidate) => ({ candidate, evidence: candidate.targetEvidence.filter((item) => item.url) }))
+
+  if (targetGroups.some((group) => group.evidence.length === 0)) {
+    return createIntentItem(referenceItem, candidates[0], 'target-evidence-unavailable', 'weak identity 후보 중 target evidence가 없어 자동 판정하지 않습니다.', 0.54, options, candidates.map((candidate) => candidate.label).filter(Boolean))
+  }
+
+  const uniqueTargets = new Set(targetGroups.flatMap((group) => group.evidence.map((item) => normalizeActualTargetIdentity(item.url, options.baseUrl))).filter(Boolean))
+  if (uniqueTargets.size !== 1) {
+    return createIntentItem(referenceItem, candidates[0], 'ambiguous-match', 'weak identity 후보의 실제 target URL evidence가 서로 달라 자동 판정하지 않습니다.', 0.54, options, candidates.map((candidate) => candidate.label).filter(Boolean))
+  }
+
+  const candidate = candidates.length > 1 ? mergeEquivalentCandidates(candidates, options.baseUrl) : candidates[0]
+  const targetResult = evaluateCandidateTargets(referenceItem.expectedUrls, candidate.targetEvidence, options.baseUrl)
+  if (targetResult.status === 'matched-correct' && targetResult.strongTargetEvidence) {
+    return createIntentItem(referenceItem, candidate, 'matched-correct', 'weak identity지만 직접 URL evidence와 최종 URL evidence가 같은 Expected target으로 수렴합니다.', 0.76, options, candidates.length > 1 ? candidates.map((item) => item.label).filter(Boolean) : [], targetResult)
+  }
+  if (targetResult.status === 'matched-correct') {
+    return createIntentItem(referenceItem, candidate, 'ambiguous-match', 'weak identity의 URL evidence가 Expected target과 일치하지만 직접 evidence와 최종 URL evidence 수렴이 부족해 자동 정상 판정하지 않습니다.', 0.56, options, [], targetResult)
+  }
+
+  const observedEvidence = findExpectedTargetEvidence(referenceItem.expectedUrls, actualCandidates, options.baseUrl)
+  if (observedEvidence.length > 0) {
+    return createIntentItem(referenceItem, candidate, 'identity-unresolved', 'Expected target은 관찰됐지만 weak identity evidence만으로 Reference element를 확정하지 못했습니다.', 0.56, options, [], { evidence: observedEvidence })
+  }
+  if (targetResult.status === 'target-evidence-unavailable') return createIntentItem(referenceItem, candidate, 'target-evidence-unavailable', targetResult.reason, 0.54, options)
+  if (targetResult.status === 'ambiguous-match') return createIntentItem(referenceItem, candidate, 'ambiguous-match', targetResult.reason, 0.56, options, [], targetResult)
+  return createIntentItem(referenceItem, candidate, 'ambiguous-match', 'weak identity evidence만으로 Expected URL 불일치로 단정하지 않습니다.', 0.56, options, [], targetResult)
 }
 
 function classifyDuplicateIdentityMatches(referenceItem, matches, options) {
@@ -113,7 +148,8 @@ function classifyDuplicateIdentityMatches(referenceItem, matches, options) {
 
 function classifySupportingOnlyMatch(referenceItem, candidate, actualCandidates, options, score) {
   const targetResult = evaluateCandidateTargets(referenceItem.expectedUrls, candidate.targetEvidence, options.baseUrl)
-  if (targetResult.status === 'matched-correct') return createIntentItem(referenceItem, candidate, 'matched-correct', 'supporting identity evidence와 실제 target URL이 Expected URL과 일치합니다.', Math.max(score, 0.78), options, [], targetResult)
+  if (targetResult.status === 'matched-correct' && targetResult.hasDirectTargetEvidence) return createIntentItem(referenceItem, candidate, 'matched-correct', 'supporting identity evidence와 직접 target URL이 Expected URL과 일치합니다.', Math.max(score, 0.78), options, [], targetResult)
+  if (targetResult.status === 'matched-correct') return createIntentItem(referenceItem, candidate, 'ambiguous-match', 'supporting identity의 URL evidence가 Expected target과 일치하지만 직접 href/click-navigation evidence가 부족해 자동 정상 판정하지 않습니다.', Math.min(score, 0.62), options, [], targetResult)
   const observedEvidence = findExpectedTargetEvidence(referenceItem.expectedUrls, actualCandidates, options.baseUrl)
   if (observedEvidence.length > 0) {
     return createIntentItem(referenceItem, candidate, 'identity-unresolved', 'Expected target은 현재 페이지에서 관찰되었지만 supporting identity evidence만으로 Reference element를 확정하지 못했습니다.', Math.min(score, 0.62), options, [], { evidence: observedEvidence })
@@ -146,14 +182,118 @@ function evaluateCandidateTargets(expectedUrls, targetEvidence = [], baseUrl) {
 
   const matchingEvidence = evidence.filter((item) => expectedUrls.some((expected) => evidenceMatchesExpected(expected, item, baseUrl)))
   const uniqueTargets = new Set(evidence.map((item) => normalizeActualTargetIdentity(item.url, baseUrl)).filter(Boolean))
+  const strength = createTargetEvidenceStrength(matchingEvidence)
   const redirectAllowedMatch = matchingEvidence.some((item) => item.redirected && expectedUrls.some((expected) => expected.allowRedirect === true && matchExpectedUrl(expected, item.url, { baseUrl })))
   const redirectBlockedMatch = matchingEvidence.length === 0 && evidence.some((item) => item.redirected && expectedUrls.some((expected) => expected.allowRedirect !== true && matchExpectedUrl(expected, item.url, { baseUrl })))
 
-  if (uniqueTargets.size > 1 && redirectAllowedMatch) return { status: 'matched-correct', reason: 'redirect 허용 정책에 따라 최종 URL이 Expected URL과 일치합니다.', evidence: matchingEvidence }
+  if (uniqueTargets.size > 1 && redirectAllowedMatch) return { status: 'matched-correct', reason: 'redirect 허용 정책에 따라 최종 URL이 Expected URL과 일치합니다.', evidence: matchingEvidence, ...strength }
   if (uniqueTargets.size > 1 && redirectBlockedMatch) return { status: 'matched-mismatch', reason: '최종 URL은 맞지만 redirect가 허용되지 않은 Reference target입니다.', evidence }
   if (uniqueTargets.size > 1 && matchingEvidence.length > 0) return { status: 'ambiguous-match', reason: 'href/click/landing URL evidence가 서로 달라 자동 불일치로 단정하지 않습니다.', evidence }
-  if (matchingEvidence.length > 0) return { status: 'matched-correct', reason: '실제 target URL이 Expected URL 중 하나와 일치합니다.', evidence: matchingEvidence }
+  if (uniqueTargets.size > 1) return { status: 'ambiguous-match', reason: 'href/click/landing URL evidence가 서로 달라 자동 불일치로 단정하지 않습니다.', evidence }
+  if (matchingEvidence.length > 0) return { status: 'matched-correct', reason: '실제 target URL이 Expected URL 중 하나와 일치합니다.', evidence: matchingEvidence, ...strength }
   return { status: 'matched-mismatch', reason: '실제 target URL이 Expected URL과 일치하지 않습니다.', evidence }
+}
+
+function dedupeSemanticNavigationCandidates(candidates, baseUrl) {
+  const merged = []
+  candidates.forEach((candidate) => {
+    const existingIndex = merged.findIndex((item) => shouldCollapseSemanticCandidate(item, candidate, baseUrl))
+    if (existingIndex < 0) {
+      merged.push(candidate)
+      return
+    }
+    merged[existingIndex] = mergeSemanticCandidates(merged[existingIndex], candidate, baseUrl)
+  })
+  return merged
+}
+
+function shouldCollapseSemanticCandidate(left, right, baseUrl) {
+  if (!haveOverlappingCandidateIdentity(left, right)) return false
+  if (hasConflictingExplicitSourceIdentity(left, right)) return false
+  if (hasSharedSourceIdentity(left, right)) return haveCompatibleTargetChain(left, right, baseUrl)
+  return haveConnectedTargetChain(left, right, baseUrl)
+}
+
+function mergeSemanticCandidates(left, right, baseUrl) {
+  return {
+    ...left,
+    label: left.label || right.label,
+    normalizedLabel: left.normalizedLabel || right.normalizedLabel,
+    normalizedAliases: dedupeStrings([...left.normalizedAliases, ...right.normalizedAliases, right.normalizedLabel].filter((label) => label && label !== left.normalizedLabel)),
+    identitySegments: {
+      strong: dedupeStrings([...(left.identitySegments?.strong || []), ...(right.identitySegments?.strong || [])]),
+      weak: dedupeStrings([...(left.identitySegments?.weak || []), ...(right.identitySegments?.weak || [])]),
+    },
+    role: left.role || right.role,
+    action: left.action || right.action,
+    section: left.section || right.section,
+    selector: left.selector || right.selector,
+    domPath: left.domPath || right.domPath,
+    sourceId: left.sourceId || right.sourceId,
+    sourceTypes: dedupeStrings([...(left.sourceTypes || [left.sourceType]), ...(right.sourceTypes || [right.sourceType])]),
+    targetEvidence: dedupeTargetEvidence([...left.targetEvidence, ...right.targetEvidence], baseUrl),
+  }
+}
+
+function haveOverlappingCandidateIdentity(left, right) {
+  const leftLabels = [left.normalizedLabel, ...(left.normalizedAliases || [])].filter(Boolean)
+  const rightLabels = [right.normalizedLabel, ...(right.normalizedAliases || [])].filter(Boolean)
+  return leftLabels.some((label) => rightLabels.includes(label))
+}
+
+function hasConflictingExplicitSourceIdentity(left, right) {
+  return hasDifferentKnownValue(left.selector, right.selector)
+    || hasDifferentKnownValue(left.domPath, right.domPath)
+    || hasDifferentKnownValue(left.sourceId, right.sourceId)
+}
+
+function hasSharedSourceIdentity(left, right) {
+  return hasSameKnownValue(left.selector, right.selector)
+    || hasSameKnownValue(left.domPath, right.domPath)
+    || hasSameKnownValue(left.sourceId, right.sourceId)
+}
+
+function hasDifferentKnownValue(left, right) {
+  const leftValue = normalizeText(left, 300)
+  const rightValue = normalizeText(right, 300)
+  return Boolean(leftValue && rightValue && leftValue !== rightValue)
+}
+
+function hasSameKnownValue(left, right) {
+  const leftValue = normalizeText(left, 300)
+  const rightValue = normalizeText(right, 300)
+  return Boolean(leftValue && rightValue && leftValue === rightValue)
+}
+
+function haveConnectedTargetChain(left, right, baseUrl) {
+  const leftKeys = getCandidateTargetConnectionKeys(left, baseUrl)
+  const rightKeys = getCandidateTargetConnectionKeys(right, baseUrl)
+  return leftKeys.length > 0 && rightKeys.length > 0 && leftKeys.some((key) => rightKeys.includes(key))
+}
+
+function haveCompatibleTargetChain(left, right, baseUrl) {
+  const leftKeys = getCandidateTargetConnectionKeys(left, baseUrl)
+  const rightKeys = getCandidateTargetConnectionKeys(right, baseUrl)
+  if (leftKeys.length === 0 || rightKeys.length === 0) return true
+  return leftKeys.some((key) => rightKeys.includes(key))
+}
+
+function getCandidateTargetConnectionKeys(candidate, baseUrl) {
+  return dedupeStrings((candidate.targetEvidence || []).flatMap((item) => [
+    normalizeActualTargetIdentity(item.url, baseUrl),
+    normalizeActualTargetIdentity(item.requestedUrl, baseUrl),
+  ]))
+}
+
+function createTargetEvidenceStrength(matchingEvidence) {
+  const matchingKinds = new Set(matchingEvidence.map((item) => item.kind))
+  const hasDirectTargetEvidence = [...matchingKinds].some((kind) => DIRECT_TARGET_EVIDENCE_KINDS.has(kind))
+  const hasFinalTargetEvidence = [...matchingKinds].some((kind) => FINAL_TARGET_EVIDENCE_KINDS.has(kind))
+  return {
+    hasDirectTargetEvidence,
+    hasFinalTargetEvidence,
+    strongTargetEvidence: hasDirectTargetEvidence && hasFinalTargetEvidence,
+  }
 }
 
 function evidenceMatchesExpected(expected, evidence, baseUrl) {
@@ -178,6 +318,7 @@ function createIntentItem(referenceItem, candidate, status, reason, confidence, 
     confidence: roundConfidence(confidence),
     matchEvidence: createMatchEvidence(referenceItem, candidate, ambiguousCandidates),
     source: referenceItem.source,
+    pageContext: referenceItem.pageContext,
     device: options.device,
   }
 }
@@ -215,6 +356,7 @@ function normalizeReferenceItem(item) {
     aliases: normalizeStringArray(item.element?.aliases, 12, 160),
     normalizedAliases: normalizeStringArray(item.element?.aliases, 12, 160).map(normalizeLabel).filter(Boolean),
     identitySegments: createReferenceIdentitySegments(label, item.element?.aliases, item.pageContext),
+    primaryHierarchySegments: createPrimaryHierarchySegments(label, item.element?.aliases),
     hasHierarchyLabel: hasIdentityDelimiter(label) || normalizeStringArray(item.element?.aliases, 12, 160).some(hasIdentityDelimiter),
     roleHint: normalizeText(item.element?.roleHint, 80),
     actionHint: normalizeText(item.element?.actionHint, 80),
@@ -253,11 +395,15 @@ function normalizeExpectedUrl(url) {
 function collectLinkCandidates(links = []) {
   return arrayOfObjects(links).map((link, index) => createActualCandidate({
     id: `link-${index}`,
+    sourceType: 'href',
+    sourceId: link.sourceId || link.stableId || link.elementId || '',
     label: link.label || link.text || link.title || '',
     aliases: [link.text, link.accessibleName, link.ariaLabel],
     role: link.role || 'link',
     action: 'navigation',
     section: link.section || link.sectionHint || '',
+    selector: link.selector || '',
+    domPath: link.domPath || '',
     targetEvidence: createTargetEvidence([
       { kind: 'href', url: link.url || link.href || '', requestedUrl: link.url || link.href || '' },
       { kind: 'landing-final', url: link.finalUrl || '', requestedUrl: link.url || link.href || '', redirected: Boolean(link.finalUrl && link.url && normalizeActualTargetIdentity(link.finalUrl) !== normalizeActualTargetIdentity(link.url)) },
@@ -268,11 +414,15 @@ function collectLinkCandidates(links = []) {
 function collectClickCandidates(clickActions = []) {
   return arrayOfObjects(clickActions).map((item, index) => createActualCandidate({
     id: `click-${index}`,
+    sourceType: 'click',
+    sourceId: item.sourceId || item.stableId || item.elementId || '',
     label: item.label || item.text || item.accessibleName || item.ariaLabel || '',
     aliases: [item.text, item.accessibleName, item.ariaLabel],
     role: item.role || item.tagName || item.kind || 'button',
     action: item.actionHint || item.actionType || item.interactionOutcome || (item.url || item.requestedUrl || item.landingUrl ? 'navigation' : ''),
     section: item.section || item.sectionPath || item.userLocation || '',
+    selector: item.selector || '',
+    domPath: item.domPath || '',
     targetEvidence: createTargetEvidence([
       { kind: 'href', url: item.url || item.requestedUrl || '', requestedUrl: item.url || item.requestedUrl || '' },
       { kind: item.interactionOutcome === 'new-window' ? 'new-window' : 'click-navigation', url: item.landingUrl || '', requestedUrl: item.url || item.requestedUrl || item.href || '', redirected: Boolean(item.landingUrl && (item.url || item.requestedUrl) && normalizeActualTargetIdentity(item.landingUrl) !== normalizeActualTargetIdentity(item.url || item.requestedUrl)) },
@@ -283,11 +433,15 @@ function collectClickCandidates(clickActions = []) {
 function collectLandingCandidates(landingPages = []) {
   return arrayOfObjects(landingPages).map((item, index) => createActualCandidate({
     id: `landing-${index}`,
+    sourceType: 'landing',
+    sourceId: item.sourceId || item.stableId || item.elementId || item.sources?.[0]?.sourceId || item.sources?.[0]?.stableId || item.sources?.[0]?.elementId || '',
     label: item.label || item.sources?.[0]?.label || '',
     aliases: arrayOfObjects(item.sources).map((source) => source.label),
     role: 'link',
     action: 'navigation',
     section: item.section || item.sources?.[0]?.section || '',
+    selector: item.selector || item.sources?.[0]?.selector || '',
+    domPath: item.domPath || item.sources?.[0]?.domPath || '',
     targetEvidence: createTargetEvidence([
       { kind: 'href', url: item.requestedUrl || '', requestedUrl: item.requestedUrl || '' },
       { kind: 'landing-final', url: item.finalUrl || '', requestedUrl: item.requestedUrl || '', redirected: item.redirected === true },
@@ -307,6 +461,10 @@ function createActualCandidate(candidate) {
     role: normalizeText(candidate.role, 80),
     action: normalizeText(candidate.action, 80),
     section: normalizeText(candidate.section, 160),
+    selector: normalizeText(candidate.selector, 300),
+    domPath: normalizeText(candidate.domPath, 300),
+    sourceId: normalizeText(candidate.sourceId, 160),
+    sourceType: normalizeText(candidate.sourceType, 40),
     targetEvidence: Array.isArray(candidate.targetEvidence) ? candidate.targetEvidence : [],
   }
 }
@@ -342,7 +500,7 @@ function scoreCandidateMatch(referenceItem, candidate) {
   if (strongAtomic) return createScore(0.78, 'atomic', referenceItem, candidate, false, referenceItem.hasHierarchyLabel ? 'supporting' : 'strong')
 
   const supportingAtomic = candidateLabels.find((label) => referenceItem.identitySegments.supporting.includes(label))
-  if (supportingAtomic) return createScore(0.68, 'supporting-atomic', referenceItem, candidate, false, 'supporting')
+  if (supportingAtomic) return createScore(0.68, 'supporting-atomic', referenceItem, candidate, false, isPrimaryHierarchyIdentity(referenceItem, supportingAtomic) ? 'strong' : 'supporting')
 
   const weakAtomic = candidateLabels.find((label) => referenceItem.identitySegments.weak.includes(label))
   if (weakAtomic) return createScore(0.52, 'weak-atomic', referenceItem, candidate, true, 'supporting')
@@ -505,6 +663,18 @@ function createReferenceIdentitySegments(label, aliases = [], pageContext = {}) 
   const strongSegments = dedupeStrings(strong)
   const supportingSegments = dedupeStrings(supporting).filter((segment) => !strongSegments.includes(segment))
   return { strong: strongSegments, supporting: supportingSegments, weak: dedupeStrings(weak).filter((segment) => !strongSegments.includes(segment) && !supportingSegments.includes(segment)) }
+}
+
+function createPrimaryHierarchySegments(label, aliases = []) {
+  return dedupeStrings([label, ...normalizeStringArray(aliases, 12, 160)].flatMap((value) => {
+    if (!hasIdentityDelimiter(value)) return []
+    const segments = splitIdentitySegments(value).map(normalizeLabel).filter((segment) => segment && !isGenericLabel(segment) && !HIERARCHY_QUALIFIER_LABELS.has(segment))
+    return segments.length > 0 ? [segments.at(-1)] : []
+  }))
+}
+
+function isPrimaryHierarchyIdentity(referenceItem, label) {
+  return referenceItem.primaryHierarchySegments?.includes(label) === true
 }
 
 function createActualIdentitySegments(label, aliases = []) {

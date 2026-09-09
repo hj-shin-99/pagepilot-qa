@@ -129,8 +129,50 @@ test('short generic atomic segment match remains conservative review', () => {
   assert.equal(result.summary.mismatch, 0)
 })
 
-test('hierarchy atomic label match with wrong actual URL is review not mismatch', () => {
-  const result = evaluateNavigationIntentQa(referenceMap([item('ref-1', 'Products / Calculator / Primary', '/tools/calc')]), scanResult({ targetUrl: 'https://example.test/current', links: [link('Calculator', 'https://example.test/tools/other')] }))
+test('weak generic label with exact href and landing final evidence becomes correct', () => {
+  const result = evaluateNavigationIntentQa(
+    referenceMap([item('ref-1', 'Menu / More / Primary', '/more')]),
+    scanResult({ targetUrl: 'https://example.test/current', links: [{ ...link('More', 'https://example.test/more'), finalUrl: 'https://example.test/more' }] }),
+  )
+
+  assert.equal(result.items[0].status, 'matched-correct')
+  assert.equal(result.summary.correct, 1)
+  assert.deepEqual(result.items[0].actualUrlEvidence.map((entry) => entry.kind), ['href', 'landing-final'])
+})
+
+test('weak generic label with click navigation and landing final convergence becomes correct', () => {
+  const result = evaluateNavigationIntentQa(
+    referenceMap([item('ref-1', 'Menu / More / Primary', '/next')]),
+    scanResult({
+      targetUrl: 'https://example.test/current',
+      clickActions: [{ label: 'More', role: 'link', interactionOutcome: 'navigation', landingUrl: 'https://example.test/next' }],
+      landingPages: [landing('More', 'https://example.test/next', 'https://example.test/next')],
+    }),
+  )
+
+  assert.equal(result.items[0].status, 'matched-correct')
+  assert.equal(result.items[0].actualUrlEvidence.some((entry) => entry.kind === 'click-navigation'), true)
+  assert.equal(result.items[0].actualUrlEvidence.some((entry) => entry.kind === 'landing-final'), true)
+})
+
+test('same semantic href click and landing evidence is deduped without false ambiguity', () => {
+  const scan = scanResult({
+    targetUrl: 'https://example.test/current',
+    links: [{ ...link('More', 'https://example.test/next'), selector: '#more', domPath: 'main>a.more', section: 'hero' }],
+    clickActions: [{ label: 'More', role: 'link', selector: '#more', domPath: 'main>a.more', section: 'hero', url: 'https://example.test/next', interactionOutcome: 'navigation', landingUrl: 'https://example.test/next' }],
+    landingPages: [{ label: 'More', requestedUrl: 'https://example.test/next', finalUrl: 'https://example.test/next', redirected: false, sources: [{ label: 'More', selector: '#more', domPath: 'main>a.more', section: 'hero' }] }],
+  })
+  const candidates = collectActualNavigationCandidates(scan)
+  const result = evaluateNavigationIntentQa(referenceMap([item('ref-1', 'Menu / More / Primary', '/next')]), scan)
+
+  assert.equal(candidates.length, 1)
+  assert.equal(result.meta.actualCandidateCount, 1)
+  assert.equal(result.items[0].status, 'matched-correct')
+  assert.deepEqual(result.items[0].actualUrlEvidence.map((entry) => entry.kind), ['href', 'click-navigation', 'landing-final'])
+})
+
+test('supporting depthPath label match with wrong actual URL is review not mismatch', () => {
+  const result = evaluateNavigationIntentQa(referenceMap([item('ref-1', 'Primary Action', '/tools/calc', { depthPath: ['Products', 'Calculator'] })]), scanResult({ targetUrl: 'https://example.test/current', links: [link('Calculator', 'https://example.test/tools/other')] }))
 
   assert.equal(result.items[0].status, 'ambiguous-match')
   assert.equal(result.summary.mismatch, 0)
@@ -192,7 +234,7 @@ test('conflicting target evidence is review instead of mismatch', () => {
 
 test('supporting-only identity with wrong external absolute target is review not mismatch', () => {
   const result = evaluateNavigationIntentQa(
-    referenceMap([item('ref-1', 'Catalog / External / Primary', 'https://external-a.example/path')]),
+    referenceMap([item('ref-1', 'External Action', 'https://external-a.example/path', { depthPath: ['Catalog', 'External'] })]),
     scanResult({ targetUrl: 'https://example.com/current', links: [link('External', 'https://external-b.example/path')] }),
   )
 
@@ -200,9 +242,9 @@ test('supporting-only identity with wrong external absolute target is review not
   assert.equal(result.summary.mismatch, 0)
 })
 
-test('supporting-only identity missing required query is review not hard correct', () => {
+test('supporting-only depthPath identity missing required query is review not hard correct', () => {
   const result = evaluateNavigationIntentQa(
-    referenceMap([item('ref-1', 'Section / Notice / Primary', '/notice?type=a')]),
+    referenceMap([item('ref-1', 'Primary Action', '/notice?type=a', { depthPath: ['Section', 'Notice'] })]),
     scanResult({ links: [link('Notice', 'https://example.com/notice')] }),
   )
 
@@ -212,11 +254,76 @@ test('supporting-only identity missing required query is review not hard correct
 
 test('query-specific actual id mismatch depends on identity strength', () => {
   const strong = evaluateNavigationIntentQa(referenceMap([item('ref-1', 'Article', '/article?id=100')]), scanResult({ links: [link('Article', 'https://example.com/article?id=200')] }))
-  const supporting = evaluateNavigationIntentQa(referenceMap([item('ref-2', 'News / Article / Primary', '/article?id=100')]), scanResult({ links: [link('Article', 'https://example.com/article?id=200')] }))
+  const supporting = evaluateNavigationIntentQa(referenceMap([item('ref-2', 'Primary Action', '/article?id=100', { depthPath: ['News', 'Article'] })]), scanResult({ links: [link('Article', 'https://example.com/article?id=200')] }))
 
   assert.equal(strong.items[0].status, 'matched-mismatch')
   assert.equal(supporting.items[0].status, 'ambiguous-match')
   assert.equal(supporting.summary.mismatch, 0)
+})
+
+test('supporting depthPath identity with unique href and landing final same target is correct', () => {
+  const result = evaluateNavigationIntentQa(
+    referenceMap([item('ref-1', 'Primary Action', '/article', { depthPath: ['News', 'Article'] })]),
+    scanResult({ links: [{ ...link('Article', 'https://example.com/article'), finalUrl: 'https://example.com/article' }] }),
+  )
+
+  assert.equal(result.items[0].status, 'matched-correct')
+  assert.equal(result.summary.correct, 1)
+})
+
+test('supporting depthPath identity with unique external exact URL is correct', () => {
+  const result = evaluateNavigationIntentQa(
+    referenceMap([item('ref-1', 'External Action', 'https://external.example/path', { depthPath: ['Catalog', 'External'] })]),
+    scanResult({ targetUrl: 'https://example.com/current', links: [link('External', 'https://external.example/path')] }),
+  )
+
+  assert.equal(result.items[0].status, 'matched-correct')
+  assert.equal(result.summary.correct, 1)
+})
+
+test('exact identity missing required query is matched-mismatch', () => {
+  const result = evaluateNavigationIntentQa(referenceMap([item('ref-1', 'Article', '/article?id=100')]), scanResult({ links: [link('Article', 'https://example.com/article')] }))
+
+  assert.equal(result.items[0].status, 'matched-mismatch')
+  assert.equal(result.summary.mismatch, 1)
+})
+
+test('strong hierarchy identity with wrong path is matched-mismatch', () => {
+  const result = evaluateNavigationIntentQa(referenceMap([item('ref-1', 'Products / Calculator / Primary', '/tools/calc')]), scanResult({ targetUrl: 'https://example.test/current', links: [link('Calculator', 'https://example.test/tools/other')] }))
+
+  assert.equal(result.items[0].status, 'matched-mismatch')
+  assert.equal(result.summary.mismatch, 1)
+})
+
+test('conflicting wrong target evidence stays review instead of mismatch', () => {
+  const result = evaluateNavigationIntentQa(referenceMap([item('ref-1', 'Apply', '/apply')]), scanResult({ clickActions: [{ label: 'Apply', url: 'https://example.com/other-a', interactionOutcome: 'navigation', landingUrl: 'https://example.com/other-b' }] }))
+
+  assert.equal(result.items[0].status, 'ambiguous-match')
+  assert.equal(result.summary.mismatch, 0)
+})
+
+test('semantic dedupe does not overmerge distinct DOM elements', () => {
+  const candidates = collectActualNavigationCandidates(scanResult({
+    links: [
+      { ...link('Download', 'https://example.com/file'), selector: '#hero-download', domPath: 'main>a:nth-child(1)', section: 'hero' },
+      { ...link('Download', 'https://example.com/file'), selector: '#footer-download', domPath: 'footer>a:nth-child(1)', section: 'footer' },
+    ],
+  }))
+
+  assert.equal(candidates.length, 2)
+  assert.deepEqual(candidates.map((candidate) => candidate.selector), ['#hero-download', '#footer-download'])
+})
+
+test('semantic dedupe keeps different selector and different target candidates separate', () => {
+  const candidates = collectActualNavigationCandidates(scanResult({
+    links: [
+      { ...link('Download', 'https://example.com/file-a'), selector: '#hero-download', domPath: 'main>a:nth-child(1)', section: 'hero' },
+      { ...link('Download', 'https://example.com/file-b'), selector: '#footer-download', domPath: 'footer>a:nth-child(1)', section: 'footer' },
+    ],
+  }))
+
+  assert.equal(candidates.length, 2)
+  assert.deepEqual(candidates.flatMap((candidate) => candidate.targetEvidence.map((entry) => entry.url)), ['https://example.com/file-a', 'https://example.com/file-b'])
 })
 
 test('detail page reference item without main page evidence is not observed', () => {

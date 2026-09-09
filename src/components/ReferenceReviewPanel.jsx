@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   confirmReferenceItem,
   confirmAllReferenceItems,
   createConfirmedReferenceMap,
   createExpectedUrlDisplayRows,
   createReferenceReviewSummary,
+  createReferenceTelemetryRows,
   countBulkConfirmEligibleItems,
   editReferenceItem,
   excludeReferenceItem,
@@ -13,6 +14,8 @@ import {
 function ReferenceReviewPanel({ referenceMap, items, meta, confirmedReferenceMap, isDisabled, onItemsChange, onApply, onExport }) {
   const [editingId, setEditingId] = useState('')
   const [draft, setDraft] = useState(createEmptyDraft())
+  const [shouldScrollToApply, setShouldScrollToApply] = useState(false)
+  const applyRowRef = useRef(null)
   const summary = createReferenceReviewSummary(items)
   const coverage = meta?.coverage || {}
   const rowCoverage = coverage.rowCoverage || coverage
@@ -20,6 +23,17 @@ function ReferenceReviewPanel({ referenceMap, items, meta, confirmedReferenceMap
   const chunking = meta?.chunking || {}
   const bulkConfirmCount = countBulkConfirmEligibleItems(items)
   const allChunksFailed = isAllChunksFailed(meta)
+  const warningMessage = formatReferenceWarning(meta, allChunksFailed)
+  const telemetryRows = createReferenceTelemetryRows(meta)
+
+  useEffect(() => {
+    if (!shouldScrollToApply) return undefined
+    const frame = window.requestAnimationFrame(() => {
+      scrollReferenceApplyCtaIntoView(applyRowRef.current)
+      setShouldScrollToApply(false)
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [items, shouldScrollToApply])
 
   const startEdit = (item) => {
     setEditingId(item.referenceId)
@@ -51,6 +65,7 @@ function ReferenceReviewPanel({ referenceMap, items, meta, confirmedReferenceMap
       if (!confirmed) return
     }
     onItemsChange(confirmAllReferenceItems(items))
+    setShouldScrollToApply(true)
   }
 
   return (
@@ -58,35 +73,39 @@ function ReferenceReviewPanel({ referenceMap, items, meta, confirmedReferenceMap
       <div className="reference-review-header">
         <div>
           <h3>Reference Map Preview</h3>
-          <p>미검토 항목은 적용 대상에서 제외됩니다. Confirm 또는 Edit 저장 후 적용하세요.</p>
-          <p>Row Coverage와 URL Evidence는 별도 지표입니다.</p>
+          <p>{formatPreviewSummary(meta, items.length, urlEvidenceCoverage.expectedGroundedUrls)}</p>
         </div>
-        <div className="reference-review-summary" aria-label="Reference review summary">
-          <span>선택 sheet {formatSelectedSheets(meta?.selectedSheetNames)}</span>
-          <span>Row Coverage {rowCoverage.mappedCandidateRows ?? meta?.outputItemCount ?? 0}/{rowCoverage.totalCandidateRows ?? 0}</span>
-          <span>URL Evidence {urlEvidenceCoverage.classifiedGroundedUrls ?? 0}개 분류 완료 / 검토 필요 {urlEvidenceCoverage.reviewNeededUrls ?? 0}개</span>
-          <span>Expected URL {urlEvidenceCoverage.expectedGroundedUrls ?? 0}</span>
-          <span>chunk {chunking.successfulChunkCount ?? 0}/{chunking.chunkCount ?? 0}</span>
-          <span>적용 {summary.confirmed}</span>
+        <div className="reference-review-progress" aria-label="Reference review progress">
+          <span>확정 {summary.confirmed}</span>
           <span>수정 {summary.edited}</span>
           <span>제외 {summary.excluded}</span>
-          <span>미검토 {summary.pending}</span>
+          <span>미확정 {summary.pending}</span>
         </div>
         <div className="reference-review-toolbar" aria-label="Reference Preview actions">
-          <button className="reference-bulk-confirm-button" type="button" disabled={isDisabled || bulkConfirmCount === 0} onClick={confirmAll}>전체 컨펌 ({bulkConfirmCount})</button>
-          <button className="reference-preset-export-button" type="button" disabled={isDisabled || items.length === 0 || typeof onExport !== 'function'} onClick={onExport}>설정 저장</button>
+          <strong>검토 작업</strong>
+          {bulkConfirmCount > 0 ? <button className="reference-bulk-confirm-button" type="button" disabled={isDisabled} onClick={confirmAll}>전체 확정 ({bulkConfirmCount})</button> : null}
         </div>
       </div>
 
-      {meta?.warnings?.length ? (
-        <p className="reference-review-warning">정규화 경고: {meta.warnings.join(', ')}</p>
+      {warningMessage ? (
+        <div className="reference-review-warning reference-review-fallback-note" role="status">
+          <strong>AI 분석을 사용하지 못했습니다</strong>
+          <p>{warningMessage}</p>
+        </div>
       ) : null}
-      {allChunksFailed ? (
-        <p className="reference-review-warning reference-review-fallback-note">AI 해석에 실패하여 문서에서 직접 추출한 URL 후보로 Preview를 구성했습니다. 적용 전 검토를 권장합니다. Row Coverage는 AI가 원문 row를 매핑한 비율, chunk는 성공한 AI 처리 조각 수, Confidence는 자동 매핑 신뢰도입니다.</p>
-      ) : null}
-      {chunking.failedChunkCount > 0 ? (
-        <p className="reference-review-warning">일부 후보는 AI 해석에 실패하여 검토 필요 상태로 남았습니다.</p>
-      ) : null}
+
+      <details className="reference-review-diagnostics">
+        <summary>진단 정보</summary>
+        <dl>
+          {telemetryRows.map((row) => <div className="reference-telemetry-row" key={row.label}><dt>{row.label}</dt><dd>{row.value}</dd></div>)}
+          <div><dt>선택 sheet</dt><dd>{formatSelectedSheets(meta?.selectedSheetNames)}</dd></div>
+          <div><dt>Row Coverage</dt><dd>{rowCoverage.mappedCandidateRows ?? meta?.outputItemCount ?? 0}/{rowCoverage.totalCandidateRows ?? 0}</dd></div>
+          <div><dt>URL Evidence</dt><dd>{urlEvidenceCoverage.classifiedGroundedUrls ?? 0}개 분류 완료 / 검토 필요 {urlEvidenceCoverage.reviewNeededUrls ?? 0}개</dd></div>
+          <div><dt>chunk</dt><dd>{chunking.successfulChunkCount ?? 0}/{chunking.chunkCount ?? 0}</dd></div>
+          {meta?.warnings?.length ? <div><dt>Warnings</dt><dd>{formatSafeList(meta.warnings)}</dd></div> : null}
+          {formatFailedChunkDiagnostics(meta?.failedChunks).map((entry) => <div key={entry.label}><dt>{entry.label}</dt><dd>{entry.value}</dd></div>)}
+        </dl>
+      </details>
 
       <div className="reference-review-list">
         {items.map((item) => {
@@ -162,8 +181,11 @@ function ReferenceReviewPanel({ referenceMap, items, meta, confirmedReferenceMap
         })}
       </div>
 
-      <div className="reference-apply-row">
-        <button className="primary-button reference-apply-button" type="button" disabled={isDisabled || items.length === 0} onClick={applyReference}>Reference 적용</button>
+      <div className="reference-apply-row" ref={applyRowRef}>
+        <div className="reference-final-actions" aria-label="Reference final actions">
+          <button className="reference-preset-export-button" type="button" disabled={isDisabled || items.length === 0 || typeof onExport !== 'function'} onClick={onExport}>설정 저장</button>
+          <button className="primary-button reference-apply-button" type="button" disabled={isDisabled || items.length === 0} onClick={applyReference}>Reference 적용</button>
+        </div>
         {confirmedReferenceMap ? (
           <p>Reference 적용 완료: 적용 {confirmedReferenceMap.reviewSummary.confirmed}개, 제외 {confirmedReferenceMap.reviewSummary.excluded}개, 미검토 {confirmedReferenceMap.reviewSummary.pending}개</p>
         ) : (
@@ -188,6 +210,54 @@ function isAllChunksFailed(meta) {
   const chunking = meta?.chunking || {}
   const warnings = Array.isArray(meta?.warnings) ? meta.warnings : []
   return Number(chunking.chunkCount) > 0 && Number(chunking.successfulChunkCount) === 0 && warnings.includes('all_reference_chunks_failed')
+}
+
+function scrollReferenceApplyCtaIntoView(applyRow) {
+  if (!applyRow?.scrollIntoView) return
+  const reduceMotion = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches
+  applyRow.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' })
+}
+
+function formatPreviewSummary(meta, itemCount, expectedUrlCount) {
+  const selectedSheets = formatSelectedSheets(meta?.selectedSheetNames)
+  const expectedNumber = Number(expectedUrlCount ?? 0)
+  const expectedCount = Number.isFinite(expectedNumber) ? expectedNumber : 0
+  return `${selectedSheets} · 검토 대상 ${itemCount || 0}개 · Expected URL ${expectedCount}개`
+}
+
+function formatReferenceWarning(meta, allChunksFailed) {
+  if (allChunksFailed || Number(meta?.chunking?.failedChunkCount || 0) > 0) {
+    return '문서의 URL 근거를 기준으로 미리보기를 구성했습니다. 적용 전 항목을 확인해 주세요.'
+  }
+  return ''
+}
+
+function formatSafeList(values = []) {
+  return values.map((value) => sanitizeDiagnosticText(value, 120)).filter(Boolean).join(', ')
+}
+
+function formatFailedChunkDiagnostics(failedChunks = []) {
+  if (!Array.isArray(failedChunks) || failedChunks.length === 0) return []
+  return failedChunks.slice(0, 5).map((chunk, index) => {
+    const diagnostics = chunk?.diagnostics && typeof chunk.diagnostics === 'object' && !Array.isArray(chunk.diagnostics) ? chunk.diagnostics : {}
+    const parts = [
+      sanitizeDiagnosticText(chunk?.code, 80) ? `code ${sanitizeDiagnosticText(chunk.code, 80)}` : '',
+      sanitizeDiagnosticText(diagnostics.category, 80) ? `category ${sanitizeDiagnosticText(diagnostics.category, 80)}` : '',
+      sanitizeDiagnosticText(diagnostics.stage, 80) ? `stage ${sanitizeDiagnosticText(diagnostics.stage, 80)}` : '',
+      Number.isFinite(Number(diagnostics.httpStatus)) ? `HTTP ${Number(diagnostics.httpStatus)}` : '',
+      sanitizeDiagnosticText(diagnostics.providerCode, 120) ? `provider ${sanitizeDiagnosticText(diagnostics.providerCode, 120)}` : '',
+      sanitizeDiagnosticText(diagnostics.model, 120) ? `model ${sanitizeDiagnosticText(diagnostics.model, 120)}` : '',
+      Number.isFinite(Number(diagnostics.chunkIndex)) && Number.isFinite(Number(diagnostics.chunkCount)) ? `chunk ${Number(diagnostics.chunkIndex)}/${Number(diagnostics.chunkCount)}` : '',
+      typeof diagnostics.retryable === 'boolean' ? `retryable ${diagnostics.retryable ? 'yes' : 'no'}` : '',
+      typeof diagnostics.fallbackUsed === 'boolean' ? `fallback ${diagnostics.fallbackUsed ? 'yes' : 'no'}` : '',
+    ].filter(Boolean)
+    return { label: `AI failure ${index + 1}`, value: parts.join(' · ') || '-' }
+  })
+}
+
+function sanitizeDiagnosticText(value, maxLength) {
+  const text = typeof value === 'string' ? value : value === null || value === undefined ? '' : String(value)
+  return text.replace(/sk-[A-Za-z0-9_-]+/g, '[redacted]').replace(/\s+/g, ' ').trim().slice(0, maxLength)
 }
 
 function formatStatus(status, edited) {

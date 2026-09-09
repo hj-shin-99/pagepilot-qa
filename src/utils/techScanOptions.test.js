@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createTechQaViewModel } from './techQa.js'
-import { areAllTechScanOptionsSelected, createDefaultTechScanOptions, normalizeStoredTechScanOptions, normalizeTechScanOptions } from '../../shared/techScanOptions.js'
+import { areAllTechScanOptionsSelected, createDefaultTechScanOptions, isReferenceQaDependencySatisfied, normalizeStoredTechScanOptions, normalizeTechScanOptions, REFERENCE_QA_REQUIRED_OPTION_KEYS } from '../../shared/techScanOptions.js'
 
 test('tech scan options default to all selected and normalize invalid values safely', () => {
   assert.deepEqual(createDefaultTechScanOptions(), {
@@ -39,6 +39,15 @@ test('tech scan options default to all selected and normalize invalid values saf
   })
   assert.equal(areAllTechScanOptionsSelected({ url: false }), false)
   assert.equal(areAllTechScanOptionsSelected(createDefaultTechScanOptions()), true)
+})
+
+test('Reference URL QA dependency requires URL Click and Landing options', () => {
+  assert.deepEqual(REFERENCE_QA_REQUIRED_OPTION_KEYS, ['url', 'click', 'landing'])
+  assert.equal(isReferenceQaDependencySatisfied({ url: true, click: true, landing: true }), true)
+  assert.equal(isReferenceQaDependencySatisfied({ url: false, click: true, landing: true }), false)
+  assert.equal(isReferenceQaDependencySatisfied({ url: true, click: false, landing: true }), false)
+  assert.equal(isReferenceQaDependencySatisfied({ url: true, click: true, landing: false }), false)
+  assert.equal(isReferenceQaDependencySatisfied({ url: false, click: false, landing: false }), false)
 })
 
 test('stored tech scan options keep legacy history from showing newly added sections', () => {

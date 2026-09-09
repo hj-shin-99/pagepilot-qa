@@ -659,14 +659,89 @@ test('Navigation Intent QA display model drops legacy malformed expected URL obj
   assert.equal(intent.rows[0].expectedUrls.every((url) => typeof url === 'string'), true)
 })
 
+test('Reference URL QA display model creates hierarchy segments without splitting URL paths', () => {
+  const intent = createNavigationIntentDisplayModel({
+    meta: { available: true },
+    summary: { evaluated: 3, correct: 1, mismatch: 1, review: 1, notObserved: 0 },
+    items: [
+      { referenceId: 'intent-1', label: 'CTA', pageContext: { depthPath: ['Products', 'Calculator'] }, status: 'matched-correct', expectedUrls: [{ raw: '/tools/calc' }], actualUrlEvidence: [{ url: 'https://example.com/tools/calc' }] },
+      { referenceId: 'intent-2', label: 'A / B / C', status: 'matched-mismatch', expectedUrls: [{ raw: '/expected' }], actualUrlEvidence: [{ url: 'https://example.com/actual' }] },
+      { referenceId: 'intent-3', label: 'https://example.com/a/b', status: 'ambiguous-match', expectedUrls: [{ raw: '/a/b' }], actualUrlEvidence: [{ url: { href: '/bad-object' } }], reason: { text: 'bad object' } },
+    ],
+  })
+
+  const rowsById = Object.fromEntries(intent.rows.map((row) => [row.referenceId, row]))
+  assert.deepEqual(rowsById['intent-1'].hierarchySegments, ['Products', 'Calculator', 'CTA'])
+  assert.deepEqual(rowsById['intent-2'].hierarchySegments, ['A', 'B', 'C'])
+  assert.deepEqual(rowsById['intent-3'].hierarchySegments, ['https://example.com/a/b'])
+  assert.deepEqual(rowsById['intent-3'].actualUrls, [])
+  assert.equal(rowsById['intent-3'].reason, '')
+  assert.equal(rowsById['intent-2'].statusLabel, '불일치')
+  assert.equal(intent.summary.mismatch, 1)
+})
+
+test('Reference URL QA display model derives original source row without using sorted display index', () => {
+  const intent = createNavigationIntentDisplayModel({
+    meta: { available: true },
+    items: [
+      { referenceId: 'structured', label: 'Structured', source: { sheetName: 'Sheet1', rowNumber: 25 }, status: 'matched-correct', expectedUrls: [{ raw: '/structured' }], actualUrlEvidence: [] },
+      { referenceId: 'legacy', label: 'Legacy', source: { sheetName: 'Sheet1', sourceLabel: 'Reference source row 70' }, status: 'ambiguous-match', expectedUrls: [{ raw: '/legacy' }], actualUrlEvidence: [] },
+      { referenceId: 'missing', label: 'Missing', source: { sheetName: 'Sheet1' }, status: 'reference-not-observed', expectedUrls: [{ raw: '/missing' }], actualUrlEvidence: [] },
+    ],
+  })
+  const rowsById = Object.fromEntries(intent.rows.map((row) => [row.referenceId, row]))
+
+  assert.equal(rowsById.structured.sourceRowDisplay, '25')
+  assert.equal(rowsById.legacy.sourceRowDisplay, '70')
+  assert.equal(rowsById.missing.sourceRowDisplay, '-')
+  assert.deepEqual(intent.rows.map((row) => row.referenceId), ['legacy', 'missing', 'structured'])
+})
+
+test('Reference URL QA first-five visibility prioritizes mismatch review not observed normal without mutating source order', () => {
+  const sourceItems = [
+    ...Array.from({ length: 10 }, (_, index) => intentItem(`normal-${index}`, 'matched-correct')),
+    ...Array.from({ length: 3 }, (_, index) => intentItem(`not-observed-${index}`, 'reference-not-observed')),
+    ...Array.from({ length: 4 }, (_, index) => intentItem(`review-${index}`, 'ambiguous-match')),
+    ...Array.from({ length: 2 }, (_, index) => intentItem(`mismatch-${index}`, 'matched-mismatch')),
+  ]
+  const sourceIds = sourceItems.map((item) => item.referenceId)
+  const intent = createNavigationIntentDisplayModel({
+    meta: { available: true },
+    summary: { evaluated: 16, correct: 10, mismatch: 2, review: 4, notObserved: 3 },
+    items: sourceItems,
+  })
+  const visibility = getSectionVisibility(intent.rows, { maxVisible: 5, statusOrder: ['error', 'warn', 'info', 'ok'] })
+
+  assert.deepEqual(visibility.visibleItems.map((row) => row.referenceId), ['mismatch-0', 'mismatch-1', 'review-0', 'review-1', 'review-2'])
+  assert.equal(visibility.hiddenItems.length, 14)
+  assert.deepEqual(sourceItems.map((item) => item.referenceId), sourceIds)
+  assert.equal(intent.summary.correct, 10)
+  assert.equal(intent.summary.mismatch, 2)
+  assert.equal(intent.summary.review, 4)
+  assert.equal(intent.summary.notObserved, 3)
+})
+
+test('Reference URL QA first-five hides more control for five or fewer and caps normal only or legacy unobserved lists', () => {
+  const shortIntent = createNavigationIntentDisplayModel({ meta: { available: true }, items: Array.from({ length: 5 }, (_, index) => intentItem(`short-${index}`, 'matched-correct')) })
+  const normalIntent = createNavigationIntentDisplayModel({ meta: { available: true }, items: Array.from({ length: 8 }, (_, index) => intentItem(`normal-${index}`, 'matched-correct')) })
+  const legacyUnobservedIntent = createNavigationIntentDisplayModel({ meta: { available: true }, items: Array.from({ length: 85 }, (_, index) => intentItem(`legacy-${index}`, 'reference-not-observed')) })
+
+  assert.equal(getSectionVisibility(shortIntent.rows, { maxVisible: 5, statusOrder: ['error', 'warn', 'info', 'ok'] }).hiddenItems.length, 0)
+  assert.deepEqual(getSectionVisibility(normalIntent.rows, { maxVisible: 5, statusOrder: ['error', 'warn', 'info', 'ok'] }).visibleItems.map((row) => row.referenceId), ['normal-0', 'normal-1', 'normal-2', 'normal-3', 'normal-4'])
+  assert.deepEqual(getSectionVisibility(legacyUnobservedIntent.rows, { maxVisible: 5, statusOrder: ['error', 'warn', 'info', 'ok'] }).visibleItems.map((row) => row.referenceId), ['legacy-0', 'legacy-1', 'legacy-2', 'legacy-3', 'legacy-4'])
+})
+
 test('tech qa panel source renders Navigation Intent QA only when result is present', () => {
   const source = fs.readFileSync('src/components/TechQaPanel.jsx', 'utf8')
 
   assert.equal(source.includes('view.navigationIntent.visible ? <NavigationIntentSection intent={view.navigationIntent} /> : null'), true)
   assert.equal(source.includes('id="navigation-intent-qa-section"'), true)
-  assert.equal(source.includes('Reference 적용 항목과 현재 페이지에서 관찰된 링크/클릭/랜딩 URL evidence를 비교합니다.'), true)
+  assert.equal(source.includes('Reference 문서에 정의된 이동 URL과 실제 웹에서 확인된 링크·클릭·랜딩 URL을 비교합니다.'), true)
   assert.equal(source.indexOf('<TechCompletionCard completion={display.completion} />') < source.indexOf('<NavigationIntentSection'), true)
   assert.equal(source.indexOf('<NavigationIntentSection') < source.indexOf('id="tech-basic-section"'), true)
+  assert.equal(source.includes('Depth 1'), false)
+  assert.equal(source.includes('Depth 2'), false)
+  assert.equal(source.includes('Depth 3'), false)
 })
 
 test('click display fixture keeps only actual errors and actionable warnings in body counts', () => {
@@ -1674,6 +1749,16 @@ test('Tech QA phase 2 does not change API payload scan options visual QA or prog
   assert.equal(scanOptionsSource.includes('finding'), false)
   assert.equal(scanOptionsSource.includes('recommendation'), false)
 })
+
+function intentItem(referenceId, status) {
+  return {
+    referenceId,
+    label: referenceId,
+    status,
+    expectedUrls: [{ raw: `/${referenceId}` }],
+    actualUrlEvidence: [{ url: `https://example.com/${referenceId}` }],
+  }
+}
 
 function result(overrides = {}) {
   return {

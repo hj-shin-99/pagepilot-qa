@@ -1,7 +1,5 @@
+import { loadServerEnv } from './env.js'
 import express from 'express'
-import fs from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import OpenAI from 'openai'
 import { chromium, request as playwrightRequest } from 'playwright'
 import { getAiQaModel } from './aiModelConfig.js'
@@ -43,6 +41,8 @@ import { extractVisibleWebTextElements } from './webText.js'
 import { normalizeTechScanOptions } from '../shared/techScanOptions.js'
 import { createBrowserContextOptions, getDeviceProfile } from '../shared/deviceProfiles.js'
 
+loadServerEnv()
+
 const PORT = Number(process.env.PORT || 3001)
 const AI_QA_MODEL = getAiQaModel()
 const AI_QA_TIMEOUT_MS = 60000
@@ -74,7 +74,6 @@ const NAV_CTA_CONTEXT_PATTERNS = [
 ]
 const app = express()
 
-loadLocalEnv()
 console.log(`[Figma API] Token configured: ${Boolean(process.env.FIGMA_TOKEN?.trim())}`)
 
 const figmaApiClient = createFigmaApiClient({
@@ -620,27 +619,6 @@ class TextCompareError extends Error {
     this.name = 'TextCompareError'
     this.status = status
     this.code = code
-  }
-}
-
-function loadLocalEnv() {
-  try {
-    const currentFile = fileURLToPath(import.meta.url)
-    const envPath = path.resolve(path.dirname(currentFile), '..', '.env')
-    if (!fs.existsSync(envPath)) return
-
-    const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/)
-    lines.forEach((line) => {
-      const trimmed = line.trim()
-      if (!trimmed || trimmed.startsWith('#')) return
-      const separatorIndex = trimmed.indexOf('=')
-      if (separatorIndex <= 0) return
-      const key = trimmed.slice(0, separatorIndex).trim()
-      const value = trimmed.slice(separatorIndex + 1).trim().replace(/^['"]|['"]$/g, '')
-      if (key && process.env[key] === undefined) process.env[key] = value
-    })
-  } catch {
-    // Missing or unreadable local .env is handled by the API route.
   }
 }
 

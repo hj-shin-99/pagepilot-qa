@@ -60,6 +60,24 @@ test('requestQaRunStream sends optional compact navigation Reference when provid
   assert.deepEqual(JSON.parse(requests[0].options.body).navigationReference, navigationReference)
 })
 
+test('requestQaRunStream omits navigation Reference when URL Click Landing dependency is off', async () => {
+  const requests = []
+  const navigationReference = { schemaVersion: 'navigation-intent-reference-v1', items: [{ referenceId: 'ref-1' }] }
+
+  await requestQaRunStream({
+    webUrl: 'https://example.com',
+    figmaUrl: '',
+    scanOptions: { url: true, click: true, landing: false },
+    navigationReference,
+    fetchFn: async (url, options) => {
+      requests.push({ url, options })
+      return createStreamResponse(['{"type":"result","result":{"tech":{"status":"success"},"visual":{"status":"skipped"}}}\n'])
+    },
+  })
+
+  assert.equal(Object.hasOwn(JSON.parse(requests[0].options.body), 'navigationReference'), false)
+})
+
 test('requestQaRunStream marks missing stream support as json-fallback eligible', async () => {
   await assert.rejects(
     requestQaRunStream({

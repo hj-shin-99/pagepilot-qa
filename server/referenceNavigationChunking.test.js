@@ -117,6 +117,18 @@ test('length split obeys max API call guard and preserves candidates as unmapped
   assert.equal(result.meta.failedChunks[0].code, 'reference_chunk_length_limit')
 })
 
+test('AI submitted candidate telemetry counts only chunks attempted before the API guard', async () => {
+  const client = createEchoClient()
+  const service = createService(client, { maxCandidatesPerChunk: 2, maxApiCalls: 1 })
+
+  const result = await service.normalize(createReferenceWithRows(4))
+
+  assert.equal(result.meta.aiRequiredCandidateCount, 4)
+  assert.equal(result.meta.aiSubmittedCandidateCount, 2)
+  assert.equal(result.meta.chunking.apiCallCount, 1)
+  assert.deepEqual(client.requests.map((request) => request.candidateIds), [['cand-0001', 'cand-0002']])
+})
+
 test('all chunks fail returns safe zero-mapped review state instead of throwing', async () => {
   const client = createEchoClient({ failAll: true })
   const service = createService(client, { maxCandidatesPerChunk: 2 })
@@ -127,7 +139,7 @@ test('all chunks fail returns safe zero-mapped review state instead of throwing'
   assert.equal(result.meta.chunking.successfulChunkCount, 0)
   assert.equal(result.meta.chunking.failedChunkCount, 2)
   assert.equal(result.meta.warnings.includes('all_reference_chunks_failed'), true)
-  assert.equal(result.meta.failedChunks.every((chunk) => chunk.diagnostics.category === 'unknown_openai_error'), true)
+  assert.equal(result.meta.failedChunks.every((chunk) => chunk.diagnostics.category === 'unknown_openai_failure'), true)
   assert.equal(result.referenceMap.items.every((item) => item.isUnmappedCandidate === true), true)
 })
 
@@ -243,7 +255,7 @@ function createReferenceWithRows(count, options = {}) {
   const rows = Array.from({ length: count }, (_, index) => {
     const rowNumber = index + 2
     const raw = options.duplicateRaw || `/page-${index + 1}`
-    return { rowNumber, cells: { A: `Label ${index + 1}`, B: raw } }
+    return { rowNumber, cells: { A: `Label ${index + 1}`, B: raw, C: `alternate may be /legacy-${index + 1}` } }
   })
   return {
     fileName: 'reference.xlsx',

@@ -177,20 +177,31 @@ export function createNavigationIntentDisplayModel(navigationIntentQa) {
     ...createEmptyNavigationIntentSummary(),
     ...(navigationIntentQa.summary && typeof navigationIntentQa.summary === 'object' ? navigationIntentQa.summary : {}),
   }
-  const rows = arrayOfObjects(navigationIntentQa.items).map((item, index) => ({
-    rowId: `navigation-intent-${item.referenceId || index}`,
-    referenceId: item.referenceId || `intent-${index + 1}`,
-    label: item.label || item.actualLabel || 'Reference item',
-    expectedUrls: normalizeNavigationIntentExpectedUrls(item.expectedUrls),
-    actualLabel: item.actualLabel || '',
-    actualUrls: dedupeStrings(Array.isArray(item.actualUrlEvidence) ? item.actualUrlEvidence.map((entry) => entry.url).filter(Boolean) : []),
-    source: item.source || {},
-    reason: item.reason || '',
-    status: normalizeNavigationIntentDisplayStatus(item.status),
-    statusLabel: getNavigationIntentStatusLabel(item.status),
-    rawStatus: item.status || '',
-    confidence: item.confidence,
-  })).sort(compareNavigationIntentRows)
+  const rows = arrayOfObjects(navigationIntentQa.items).map((item, index) => {
+    const rowId = `navigation-intent-${safeIntentText(item.referenceId, 80) || index}`
+    const expectedUrlDetails = normalizeNavigationIntentExpectedUrlDetails(item.expectedUrls)
+    const actualUrlDetails = normalizeNavigationIntentActualUrlDetails(item.actualUrlEvidence)
+    return {
+      rowId,
+      referenceId: safeIntentText(item.referenceId, 80) || `intent-${index + 1}`,
+      sourceIndex: index,
+      label: safeIntentText(item.label || item.actualLabel, 240) || 'Reference item',
+      hierarchySegments: createNavigationIntentHierarchySegments(item),
+      expectedUrls: expectedUrlDetails.map((entry) => entry.raw),
+      expectedUrlDetails,
+      actualLabel: safeIntentText(item.actualLabel, 240),
+      actualUrls: dedupeStrings(actualUrlDetails.map((entry) => entry.url)),
+      actualUrlDetails,
+      source: normalizeNavigationIntentSource(item.source),
+      sourceRowDisplay: formatNavigationIntentSourceRow(item),
+      reason: safeIntentText(item.reason, 600),
+      matchEvidence: normalizeStringList(item.matchEvidence, 12, 240),
+      status: normalizeNavigationIntentDisplayStatus(item.status),
+      statusLabel: getNavigationIntentStatusLabel(item.status),
+      rawStatus: safeIntentText(item.status, 80),
+      confidence: item.confidence,
+    }
+  }).sort(compareNavigationIntentRows)
 
   return {
     visible: true,
@@ -201,15 +212,95 @@ export function createNavigationIntentDisplayModel(navigationIntentQa) {
   }
 }
 
-function normalizeNavigationIntentExpectedUrls(expectedUrls) {
+function normalizeNavigationIntentExpectedUrlDetails(expectedUrls) {
   if (!Array.isArray(expectedUrls)) return []
-  return expectedUrls.map(normalizeNavigationIntentExpectedUrl).filter(Boolean)
+  return expectedUrls.map((value) => {
+    const raw = safeIntentText(typeof value === 'string' ? value : value?.raw, 1000)
+    if (!raw) return null
+    return {
+      raw,
+      matchMode: safeIntentText(value?.matchMode, 80),
+      allowRedirect: value?.allowRedirect === true,
+      allowTrailingSlashVariant: value?.allowTrailingSlashVariant === true,
+    }
+  }).filter(Boolean)
 }
 
-function normalizeNavigationIntentExpectedUrl(value) {
-  if (typeof value === 'string') return value
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return ''
-  return typeof value.raw === 'string' ? value.raw : ''
+function normalizeNavigationIntentActualUrlDetails(actualUrlEvidence) {
+  if (!Array.isArray(actualUrlEvidence)) return []
+  return actualUrlEvidence.map((entry) => {
+    const url = safeIntentText(entry?.url, 1000)
+    if (!url) return null
+    return {
+      url,
+      kind: safeIntentText(entry?.kind, 80),
+      requestedUrl: safeIntentText(entry?.requestedUrl, 1000),
+      redirected: entry?.redirected === true,
+    }
+  }).filter(Boolean)
+}
+
+function createNavigationIntentHierarchySegments(item = {}) {
+  const label = safeIntentText(item.label || item.actualLabel, 240) || 'Reference item'
+  const depthPath = normalizeStringList(item.pageContext?.depthPath, 8, 160)
+  if (depthPath.length > 0) {
+    const hasLabel = depthPath.some((segment) => segment.toLowerCase() === label.toLowerCase())
+    return hasLabel ? depthPath : [...depthPath, label]
+  }
+  const displaySegments = splitHierarchyDisplayLabel(label)
+  return displaySegments.length > 0 ? displaySegments : [label]
+}
+
+function splitHierarchyDisplayLabel(label) {
+  const text = safeIntentText(label, 240)
+  if (!text || !/\s+\/\s+/.test(text)) return []
+  return text.split(/\s+\/\s+/).map((segment) => safeIntentText(segment, 160)).filter(Boolean)
+}
+
+function normalizeNavigationIntentSource(source = {}) {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return {}
+  return {
+    sheetName: safeIntentText(source.sheetName, 160),
+    rowNumber: Number.isFinite(Number(source.rowNumber)) ? Number(source.rowNumber) : null,
+    evidenceText: safeIntentText(source.evidenceText, 600),
+  }
+}
+
+function formatNavigationIntentSourceRow(item = {}) {
+  const source = item.source && typeof item.source === 'object' && !Array.isArray(item.source) ? item.source : {}
+  const candidates = [
+    source.sourceRow,
+    source.rowNumber,
+    source.row,
+    source.sourceIndex,
+    item.sourceRow,
+    item.rowNumber,
+    item.sourceIndex,
+  ]
+  for (const value of candidates) {
+    const rowNumber = normalizeSourceRowNumber(value)
+    if (rowNumber) return String(rowNumber)
+  }
+
+  const legacyText = [source.label, source.sourceLabel, source.provenance, source.evidenceText, item.sourceLabel].map((value) => safeIntentText(value, 240)).filter(Boolean).join(' ')
+  const legacyMatch = legacyText.match(/(?:^|\b)(?:row|source\s*row|행|원본\s*행)\s*#?\s*(\d{1,7})(?:\b|$)/i)
+  const rowNumber = legacyMatch ? normalizeSourceRowNumber(legacyMatch[1]) : null
+  return rowNumber ? String(rowNumber) : '-'
+}
+
+function normalizeSourceRowNumber(value) {
+  const number = Number(value)
+  return Number.isInteger(number) && number > 0 ? number : null
+}
+
+function normalizeStringList(values = [], maxItems = 12, maxLength = 240) {
+  return Array.isArray(values) ? values.map((value) => safeIntentText(value, maxLength)).filter(Boolean).slice(0, maxItems) : []
+}
+
+function safeIntentText(value, maxLength = 240) {
+  if (typeof value === 'string') return value.trim().slice(0, maxLength)
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value).trim().slice(0, maxLength)
+  return ''
 }
 
 function createEmptyNavigationIntentSummary() {
@@ -225,7 +316,7 @@ function normalizeNavigationIntentDisplayStatus(status) {
 
 function getNavigationIntentStatusLabel(status) {
   if (status === 'matched-correct') return '정상'
-  if (status === 'matched-mismatch') return '문제 확인'
+  if (status === 'matched-mismatch') return '불일치'
   if (status === 'reference-not-observed') return '미관찰'
   return '검토 필요'
 }
@@ -234,7 +325,7 @@ function compareNavigationIntentRows(left, right) {
   const order = { error: 0, warn: 1, info: 2, ok: 3 }
   const statusDiff = (order[left.status] ?? 9) - (order[right.status] ?? 9)
   if (statusDiff !== 0) return statusDiff
-  return String(left.referenceId).localeCompare(String(right.referenceId))
+  return Number(left.sourceIndex || 0) - Number(right.sourceIndex || 0)
 }
 
 function dedupeStrings(values = []) {

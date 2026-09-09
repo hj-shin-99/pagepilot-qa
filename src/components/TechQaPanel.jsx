@@ -362,42 +362,110 @@ function TechCompletionCard({ completion }) {
 
 function NavigationIntentSection({ intent }) {
   const rows = intent.rows || []
+  const depthColumnCount = Math.max(1, ...rows.map((row) => (Array.isArray(row.hierarchySegments) ? row.hierarchySegments.length : 0)))
+  const depthColumns = Array.from({ length: depthColumnCount }, (_, index) => formatNavigationDepthColumn(index))
+  const tableColumns = `70px ${Array.from({ length: depthColumnCount }, () => 'minmax(84px, 0.75fr)').join(' ')} 92px minmax(120px, 0.95fr) minmax(120px, 0.95fr) 40px`
+  const visibility = getSectionVisibility(rows, { maxVisible: 5, statusOrder: ['error', 'warn', 'info', 'ok'] })
   return (
-    <section className="detail-card tech-compact-card" id="navigation-intent-qa-section" aria-label="Navigation Intent QA">
+    <section className="detail-card tech-compact-card" id="navigation-intent-qa-section" aria-label="Reference URL QA">
       <SectionHead
-        title="Navigation Intent QA"
+        title="Reference URL QA"
         meta={`정상 ${intent.summary.correct || 0} · 불일치 ${intent.summary.mismatch || 0} · 검토 ${intent.summary.review || 0} · 미관찰 ${intent.summary.notObserved || 0}`}
-        note="Reference 적용 항목과 현재 페이지에서 관찰된 링크/클릭/랜딩 URL evidence를 비교합니다. 미관찰 항목은 오류로 보지 않습니다."
+        note="Reference 문서에 정의된 이동 URL과 실제 웹에서 확인된 링크·클릭·랜딩 URL을 비교합니다. 현재 페이지에서 확인할 수 없는 Reference 항목은 오류로 처리하지 않습니다."
       />
-      {intent.available === false ? <p className="empty-row">Navigation Intent QA를 수행할 수 없습니다: {intent.reason || 'Reference 데이터 확인 필요'}</p> : null}
+      {intent.available === false ? <p className="empty-row">Reference URL QA를 수행할 수 없습니다: {intent.reason || 'Reference 데이터 확인 필요'}</p> : null}
       {rows.length > 0 ? (
-        <div className="tech-compact-table is-navigation-intent">
-          <div className="tech-table-head">
-            <span>Reference</span>
-            <span>상태</span>
-            <span>Expected URL</span>
-            <span>실제 URL</span>
-            <span>근거</span>
-          </div>
-          {rows.map((row) => <NavigationIntentRow row={row} key={row.rowId} />)}
-        </div>
-      ) : intent.available === false ? null : <p className="empty-row">표시할 Navigation Intent QA 결과가 없습니다.</p>}
+        <>
+          <NavigationIntentTable rows={visibility.visibleItems} depthColumns={depthColumns} depthColumnCount={depthColumnCount} tableColumns={tableColumns} />
+          {visibility.hiddenItems.length > 0 ? <CollapsedNavigationIntentRows label={getCollapsedResultsLabel(visibility.hiddenItems.length)} rows={visibility.hiddenItems} depthColumns={depthColumns} depthColumnCount={depthColumnCount} tableColumns={tableColumns} /> : null}
+        </>
+      ) : intent.available === false ? null : <p className="empty-row">표시할 Reference URL QA 결과가 없습니다.</p>}
     </section>
   )
 }
 
-function NavigationIntentRow({ row }) {
+function NavigationIntentTable({ rows, depthColumns, depthColumnCount, tableColumns, className = '' }) {
   return (
-    <div className={`tech-table-row ${getStatusClass(row.status)}`}>
-      <div className="tech-table-title">
-        <span className="tech-category-chip">Intent</span>
-        <strong>{row.label}</strong>
-        <small>{formatIntentSource(row.source)}</small>
+    <div className={`tech-compact-table is-navigation-intent${className ? ` ${className}` : ''}`} style={{ '--tech-table-columns': tableColumns }}>
+      <div className="tech-table-head">
+        <span>원본 행</span>
+        {depthColumns.map((column) => <span key={column}>{column}</span>)}
+        <span>상태</span>
+        <span>Expected URL</span>
+        <span>실제 URL</span>
+        <span>상세</span>
       </div>
+      {rows.map((row) => <NavigationIntentRow row={row} depthColumnCount={depthColumnCount} key={row.rowId} />)}
+    </div>
+  )
+}
+
+function CollapsedNavigationIntentRows({ label, rows, depthColumns, depthColumnCount, tableColumns }) {
+  const [isOpen, setIsOpen] = useDeviceAccordionState(`navigation-intent:hidden:${label}`)
+  return (
+    <details className="tech-more-details navigation-intent-more" open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
+      <summary className="tech-more-summary">{isOpen ? '접기' : label}</summary>
+      <NavigationIntentTable rows={rows} depthColumns={depthColumns} depthColumnCount={depthColumnCount} tableColumns={tableColumns} className="navigation-intent-more-table" />
+    </details>
+  )
+}
+
+function NavigationIntentRow({ row, depthColumnCount }) {
+  const segments = Array.isArray(row.hierarchySegments) ? row.hierarchySegments : []
+  const cells = Array.from({ length: depthColumnCount }, (_, index) => segments[index] || '')
+  return (
+    <DetailRow
+      id={row.rowId}
+      className={`tech-table-row tech-row-details tech-row-with-details navigation-intent-row ${getStatusClass(row.status)}`}
+      detail={<NavigationIntentDetails row={row} />}
+    >
+      <span>{row.sourceRowDisplay || '-'}</span>
+      {cells.map((segment, index) => (
+        <span className="navigation-intent-depth-cell" title={segment || '-'} key={`${row.rowId}-depth-${index}`}>{segment || '-'}</span>
+      ))}
       <span className={`status-badge ${getStatusClass(row.status)}`}>{row.statusLabel}</span>
       <span className="navigation-intent-url-cell" title={formatUrlTitle(row.expectedUrls)}>{renderIntentUrls(row.expectedUrls, row.rowId, 'expected')}</span>
       <span className="navigation-intent-url-cell" title={formatUrlTitle(row.actualUrls)}>{renderIntentUrls(row.actualUrls, row.rowId, 'actual')}</span>
-      <span className="navigation-intent-reason" title={row.reason || row.rawStatus}>{row.reason || row.rawStatus}</span>
+    </DetailRow>
+  )
+}
+
+function formatNavigationDepthColumn(index) {
+  if (index === 0) return '1차 메뉴'
+  if (index === 1) return '2차 메뉴'
+  if (index === 2) return '페이지/항목'
+  return `${index + 1}차 항목`
+}
+
+function NavigationIntentDetails({ row }) {
+  const sourceText = formatIntentSource(row.source)
+  return (
+    <div className="navigation-intent-detail" aria-label="Reference URL QA 상세">
+      <section className="tech-explanation-section">
+        <h4>판정 이유 / 근거</h4>
+        <p>{row.reason || row.rawStatus || '판정 이유가 기록되지 않았습니다.'}</p>
+      </section>
+      <dl className="tech-issue-meta navigation-intent-meta">
+        <div><dt>Source</dt><dd>{sourceText}</dd></div>
+        <div><dt>Reference</dt><dd>{formatIntentHierarchy(row.hierarchySegments, row.label)}</dd></div>
+        {row.actualLabel ? <div><dt>Observed label</dt><dd>{row.actualLabel}</dd></div> : null}
+        {formatConfidence(row.confidence) ? <div><dt>Confidence</dt><dd>{formatConfidence(row.confidence)}</dd></div> : null}
+        {row.matchEvidence?.length ? <div><dt>Match evidence</dt><dd>{row.matchEvidence.join(', ')}</dd></div> : null}
+      </dl>
+      <section className="tech-explanation-section">
+        <h4>Expected URL 전체 목록</h4>
+        {renderIntentUrlDetails(row.expectedUrlDetails, row.rowId, 'expected-detail')}
+      </section>
+      <section className="tech-explanation-section">
+        <h4>실제 관찰 URL 전체 목록</h4>
+        {renderIntentActualUrlDetails(row.actualUrlDetails, row.rowId)}
+      </section>
+      {row.source?.evidenceText ? (
+        <section className="tech-explanation-section">
+          <h4>Source evidence</h4>
+          <p>{row.source.evidenceText}</p>
+        </section>
+      ) : null}
     </div>
   )
 }
@@ -868,10 +936,67 @@ function formatIntentSource(source = {}) {
   return `${sheet}${row}`
 }
 
+function formatIntentHierarchy(segments = [], fallback = '') {
+  const values = Array.isArray(segments) ? segments.filter(Boolean) : []
+  return values.length > 0 ? values.join(' / ') : fallback || '-'
+}
+
 function renderIntentUrls(urls = [], rowId, kind) {
   const values = Array.isArray(urls) ? urls.filter(Boolean) : []
   if (values.length === 0) return '-'
   return <span className="navigation-intent-url-list">{values.map((url) => <code key={`${rowId}-${kind}-${url}`}>{url}</code>)}</span>
+}
+
+function renderIntentUrlDetails(urls = [], rowId, kind) {
+  const values = Array.isArray(urls) ? urls.filter((url) => url?.raw) : []
+  if (values.length === 0) return <p>URL 없음</p>
+  return (
+    <ul className="navigation-intent-detail-url-list">
+      {values.map((url, index) => (
+        <li key={`${rowId}-${kind}-${url.raw}-${index}`}>
+          <code>{url.raw}</code>
+          {formatExpectedUrlDiagnostic(url) ? <span>{formatExpectedUrlDiagnostic(url)}</span> : null}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function renderIntentActualUrlDetails(urls = [], rowId) {
+  const values = Array.isArray(urls) ? urls.filter((url) => url?.url) : []
+  if (values.length === 0) return <p>관찰된 URL 없음</p>
+  return (
+    <ul className="navigation-intent-detail-url-list">
+      {values.map((url, index) => (
+        <li key={`${rowId}-actual-detail-${url.url}-${index}`}>
+          <code>{url.url}</code>
+          {formatActualUrlDiagnostic(url) ? <span>{formatActualUrlDiagnostic(url)}</span> : null}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function formatExpectedUrlDiagnostic(url = {}) {
+  const parts = []
+  if (url.matchMode) parts.push(`match mode ${url.matchMode}`)
+  if (url.allowRedirect) parts.push('redirect 허용')
+  if (url.allowTrailingSlashVariant) parts.push('trailing slash 허용')
+  return parts.join(' · ')
+}
+
+function formatActualUrlDiagnostic(url = {}) {
+  const parts = []
+  if (url.kind) parts.push(url.kind)
+  if (url.redirected) parts.push('redirected')
+  if (url.requestedUrl) parts.push(`requested ${url.requestedUrl}`)
+  return parts.join(' · ')
+}
+
+function formatConfidence(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return ''
+  return `${Math.round(number * 100)}%`
 }
 
 function formatUrlTitle(urls = []) {

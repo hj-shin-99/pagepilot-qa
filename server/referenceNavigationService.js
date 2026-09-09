@@ -2,6 +2,7 @@ import OpenAI from 'openai'
 import { createReferenceNavigationMessages } from './prompts/referenceNavigationPrompt.js'
 import { createCandidateKey, createCoverageSummary, createReferenceCandidateManifest } from './referenceCandidateManifest.js'
 import { getReferenceQaModel } from './referenceModelConfig.js'
+import { createReferenceNormalizationCache, createReferenceNormalizationCacheKey, createReferenceNormalizationCacheMeta } from './referenceNormalizationCache.js'
 
 export const REFERENCE_NAVIGATION_SCHEMA_VERSION = 'navigation-intent-reference-v1'
 
@@ -41,24 +42,47 @@ export function createReferenceNavigationService(options = {}) {
   const client = options.client || (apiKey ? new OpenAI({ apiKey, timeout }) : null)
   const now = typeof options.now === 'function' ? options.now : () => new Date().toISOString()
   const limits = { ...REFERENCE_NAVIGATION_LIMITS, ...(options.limits || {}) }
+  const cache = options.normalizationCache === false ? null : options.normalizationCache || createReferenceNormalizationCache(options.normalizationCacheOptions)
 
   return {
     async normalize(reference) {
       const compactInput = createReferenceNavigationInput(reference, { limits })
       const warnings = [...compactInput.warnings]
+      const cacheKey = cache ? createReferenceNormalizationCacheKey({ compactInput, model, maxCompletionTokens: MAX_COMPLETION_TOKENS }) : ''
+      let cacheMeta = createReferenceNormalizationCacheMeta(cacheKey, { status: cache ? 'miss' : 'disabled' })
+      const deterministicTriage = createReferenceDeterministicTriage(compactInput, { limits })
 
       if (compactInput.rows.length === 0) {
-        return createReferenceNavigationResult({ reference, compactInput, model, now, items: [], warnings: [...warnings, 'no_candidate_rows'], openAiCalled: false, chunking: createEmptyChunkingMeta(compactInput.chunks.length, limits) })
+        return createReferenceNavigationResult({ reference, compactInput, model, now, items: [], warnings: [...warnings, 'no_candidate_rows'], openAiCalled: false, chunking: createEmptyChunkingMeta(compactInput.chunks.length, limits), usage: createEmptyUsageMeta(), cache: cacheMeta, deterministicTriage })
       }
 
-      if (!client) throw createReferenceNavigationError('missing_api_key', 'OPENAI_API_KEY가 설정되지 않았습니다.', 400)
+      const cachedChunkResult = cache ? await readCachedReferenceChunkResult(cache, cacheKey) : null
+      if (cache) cacheMeta = createReferenceNormalizationCacheMeta(cacheKey, { status: 'miss', read: true })
+      if (cachedChunkResult) {
+        cacheMeta = createReferenceNormalizationCacheMeta(cacheKey, { status: 'hit', hit: true, read: true })
+        warnings.push(...cachedChunkResult.warnings)
+        const mappedItems = assignReferenceIds(sortItemsByManifestOrder(cachedChunkResult.items, compactInput.manifest))
+        const items = annotateFinalDuplicateTargets(appendUnmappedCandidateItems(mappedItems, compactInput.manifest))
 
-      const chunkResult = await normalizeReferenceChunks({ compactInput, client, model, limits })
-      warnings.push(...chunkResult.warnings)
-      const mappedItems = assignReferenceIds(sortItemsByManifestOrder(chunkResult.items, compactInput.manifest))
+        return createReferenceNavigationResult({ reference, compactInput, model, now, items, warnings, openAiCalled: false, chunking: createCachedChunkingMeta(compactInput.chunks.length, limits), failedChunks: [], usage: createEmptyUsageMeta(), cache: cacheMeta, deterministicTriage: { ...deterministicTriage, aiSubmittedCandidateCount: 0 } })
+      }
+
+      if (!client && deterministicTriage.aiRequiredCandidateIds.length > 0) throw createReferenceNavigationError('missing_api_key', 'OPENAI_API_KEY가 설정되지 않았습니다.', 400, createSafeDiagnostics({ category: 'missing_api_key', stage: 'configuration', model, retryable: false, fallbackUsed: false }))
+
+      const aiCompactInput = createAiRequiredCompactInput(compactInput, deterministicTriage.aiRequiredCandidateIds, limits)
+      const chunkResult = aiCompactInput.chunks.length > 0
+        ? await normalizeReferenceChunks({ compactInput: aiCompactInput, client, model, limits })
+        : createEmptyReferenceChunkResult(limits)
+      const mergedChunkResult = {
+        ...chunkResult,
+        items: [...deterministicTriage.items, ...chunkResult.items],
+      }
+      warnings.push(...mergedChunkResult.warnings)
+      const mappedItems = assignReferenceIds(sortItemsByManifestOrder(mergedChunkResult.items, compactInput.manifest))
       const items = annotateFinalDuplicateTargets(appendUnmappedCandidateItems(mappedItems, compactInput.manifest))
+      cacheMeta = await writeReferenceChunkResultToCache(cache, cacheKey, mergedChunkResult, cacheMeta)
 
-      return createReferenceNavigationResult({ reference, compactInput, model, now, items, warnings, openAiCalled: chunkResult.chunking.apiCallCount > 0, chunking: chunkResult.chunking, failedChunks: chunkResult.failedChunks })
+      return createReferenceNavigationResult({ reference, compactInput, model, now, items, warnings, openAiCalled: chunkResult.chunking.apiCallCount > 0, chunking: chunkResult.chunking, failedChunks: chunkResult.failedChunks, usage: chunkResult.usage, cache: cacheMeta, deterministicTriage: { ...deterministicTriage, aiSubmittedCandidateCount: chunkResult.aiSubmittedCandidateCount } })
     },
   }
 }
@@ -229,6 +253,133 @@ function createChunkAiInput({ reference, sourceDocument, rows, chunkId, limits }
 
 function createChunkId(chunkNumber) {
   return `chunk-${String(chunkNumber).padStart(3, '0')}`
+}
+
+export function createReferenceDeterministicTriage(compactInput) {
+  const decisions = []
+  const items = []
+  const aiRequiredCandidateIds = []
+
+  for (const candidate of Array.isArray(compactInput?.rows) ? compactInput.rows : []) {
+    const decision = classifyDeterministicCandidate(candidate, compactInput)
+    decisions.push(decision)
+    if (decision.kind === 'deterministic-safe') {
+      items.push(decision.item)
+    } else if (decision.candidateId) {
+      aiRequiredCandidateIds.push(decision.candidateId)
+    }
+  }
+
+  return {
+    items,
+    aiRequiredCandidateIds,
+    decisions: decisions.map((decision) => ({
+      candidateId: decision.candidateId,
+      kind: decision.kind,
+      reasonCode: decision.reasonCode,
+    })),
+    deterministicSafeCandidateCount: items.length,
+    aiRequiredCandidateCount: aiRequiredCandidateIds.length,
+    aiSubmittedCandidateCount: 0,
+  }
+}
+
+function classifyDeterministicCandidate(candidate, compactInput) {
+  const candidateId = normalizeText(candidate?.candidateId, 80)
+  const indexedRow = candidateId ? compactInput?.candidateIndex?.get(candidateId) : null
+  const detectedUrls = Array.isArray(indexedRow?.detectedUrls) ? indexedRow.detectedUrls : []
+  const baseDecision = { candidateId, kind: 'ai-required' }
+
+  if (!candidateId || !indexedRow) return { ...baseDecision, reasonCode: 'missing_indexed_candidate' }
+  if (detectedUrls.length === 0) return { ...baseDecision, reasonCode: 'missing_detected_url' }
+  if (candidate?.candidateConfidence !== 'high') return { ...baseDecision, reasonCode: 'low_confidence_candidate' }
+  if (detectedUrls.some((url) => !isDeterministicUrlEvidence(url))) return { ...baseDecision, reasonCode: 'non_explicit_url_evidence' }
+  if (detectedUrls.some((url) => isParameterTemplateUrl(url.raw))) return { ...baseDecision, reasonCode: 'parameter_template_url' }
+
+  const urlEvidence = classifyGroundedUrlEvidence(indexedRow, [])
+  const unsafeEvidence = urlEvidence.find((url) => !EXPECTED_URL_CLASSIFICATIONS.has(url.classification))
+  if (unsafeEvidence) return { ...baseDecision, reasonCode: `ambiguous_${unsafeEvidence.classification}` }
+
+  const expectedUrls = createExpectedUrlsFromClassifications(urlEvidence, [])
+  if (expectedUrls.length === 0) return { ...baseDecision, reasonCode: 'no_expected_url_after_classification' }
+  const sameCellUrlList = isSameCellUrlList(detectedUrls)
+  if (detectedUrls.length > 1 && !sameCellUrlList) return { ...baseDecision, reasonCode: 'ambiguous_multi_url' }
+
+  return {
+    candidateId,
+    kind: 'deterministic-safe',
+    reasonCode: expectedUrls.length > 1 ? 'same_cell_url_list' : 'single_explicit_url',
+    item: createDeterministicReferenceItem({ candidate, indexedRow, urlEvidence, expectedUrls }),
+  }
+}
+
+function isDeterministicUrlEvidence(url) {
+  const provenance = normalizeText(url?.provenance || url?.source || '', 80)
+  return STRONG_NAVIGATION_URL_SOURCES.has(provenance)
+}
+
+function isSameCellUrlList(detectedUrls) {
+  if (!Array.isArray(detectedUrls) || detectedUrls.length <= 1) return false
+  const [first] = detectedUrls
+  const sourceColumn = normalizeText(first?.sourceColumn || first?.column, 8)
+  const sourceText = normalizeText(first?.sourceText, 1000)
+  return Boolean(sourceColumn && sourceText && detectedUrls.every((url) => normalizeText(url?.sourceColumn || url?.column, 8) === sourceColumn && normalizeText(url?.sourceText, 1000) === sourceText))
+}
+
+function createDeterministicReferenceItem({ candidate, indexedRow, urlEvidence, expectedUrls }) {
+  const label = normalizeText(candidate?.labelCandidate, 240) || expectedUrls[0]?.raw || 'Reference URL'
+  return {
+    referenceId: '',
+    candidateId: indexedRow.candidateId,
+    duplicateCandidate: indexedRow.duplicateCandidate === true,
+    source: {
+      sheetName: indexedRow.sheetName,
+      rowNumber: indexedRow.rowNumber,
+      columns: indexedRow.cells,
+      evidenceText: indexedRow.evidenceText,
+    },
+    pageContext: { depthPath: [], sectionHint: '', pageUrlHint: '' },
+    element: { label, aliases: [], roleHint: 'link', actionHint: 'navigation' },
+    expected: { type: 'url', urls: expectedUrls, urlPatterns: [], notes: '' },
+    urlEvidence,
+    provenance: {
+      urlSource: expectedUrls[0]?.provenance?.urlSource || 'explicit-document-cell',
+      labelSource: candidate?.labelCandidate ? 'document-cell' : 'inferred-from-row',
+      inferenceUsed: false,
+      aiRationale: '',
+    },
+    confidence: expectedUrls.length === 1 ? 0.82 : 0.78,
+    userDecision: { status: 'pending', edited: false, excludedReason: '' },
+  }
+}
+
+function createAiRequiredCompactInput(compactInput, aiRequiredCandidateIds, limits) {
+  const allowedIds = new Set(aiRequiredCandidateIds)
+  const rows = []
+  const seen = new Set()
+  for (const chunk of Array.isArray(compactInput?.chunks) ? compactInput.chunks : []) {
+    for (const row of Array.isArray(chunk?.rows) ? chunk.rows : []) {
+      if (!allowedIds.has(row.candidateId) || seen.has(row.candidateId)) continue
+      seen.add(row.candidateId)
+      rows.push(row)
+    }
+  }
+
+  return {
+    ...compactInput,
+    chunks: createReferenceChunks({ reference: compactInput.reference, sourceDocument: compactInput.sourceDocument, rows, limits }),
+  }
+}
+
+function createEmptyReferenceChunkResult(limits) {
+  return {
+    items: [],
+    warnings: [],
+    failedChunks: [],
+    chunking: createEmptyChunkingMeta(0, limits),
+    usage: createEmptyUsageMeta(),
+    aiSubmittedCandidateCount: 0,
+  }
 }
 
 function normalizeHeaderCandidates(value, limits) {
@@ -630,15 +781,17 @@ async function normalizeReferenceChunks({ compactInput, client, model, limits })
   const failedChunks = []
   const items = []
   const chunking = createEmptyChunkingMeta(compactInput.chunks.length, limits)
+  const usage = createEmptyUsageMeta()
+  const submittedCandidateIds = new Set()
 
-  for (const chunk of compactInput.chunks) {
+  for (const [index, chunk] of compactInput.chunks.entries()) {
     if (chunking.apiCallCount >= limits.maxApiCalls) {
-      failedChunks.push(createFailedChunk(chunk, 'max_api_calls_exceeded', 'Reference normalization API call limit reached.'))
+      failedChunks.push(createFailedChunk(chunk, 'max_api_calls_exceeded', 'Reference normalization API call limit reached.', { stage: 'chunking', chunkIndex: index + 1, chunkCount: compactInput.chunks.length, retryable: false }))
       warnings.push('reference_max_api_calls_reached')
       continue
     }
 
-    const result = await normalizeReferenceChunk({ chunk, compactInput, client, model, limits, chunking, depth: 0 })
+    const result = await normalizeReferenceChunk({ chunk, compactInput, client, model, limits, chunking, usage, submittedCandidateIds, depth: 0, chunkIndex: index + 1, chunkCount: compactInput.chunks.length })
     items.push(...result.items)
     warnings.push(...result.warnings)
     failedChunks.push(...result.failedChunks)
@@ -649,16 +802,17 @@ async function normalizeReferenceChunks({ compactInput, client, model, limits })
 
   chunking.failedChunkCount = failedChunks.length
   if (chunking.chunkCount > 0 && chunking.successfulChunkCount === 0) warnings.push('all_reference_chunks_failed')
-  return { items, warnings, failedChunks, chunking }
+  return { items, warnings, failedChunks, chunking, usage, aiSubmittedCandidateCount: submittedCandidateIds.size }
 }
 
-async function normalizeReferenceChunk({ chunk, compactInput, client, model, limits, chunking, depth }) {
+async function normalizeReferenceChunk({ chunk, compactInput, client, model, limits, chunking, usage, submittedCandidateIds, depth, chunkIndex, chunkCount }) {
   if (chunking.apiCallCount >= limits.maxApiCalls) {
-    return { items: [], warnings: ['reference_max_api_calls_reached'], failedChunks: [createFailedChunk(chunk, 'max_api_calls_exceeded', 'Reference normalization API call limit reached.')], success: false }
+    return { items: [], warnings: ['reference_max_api_calls_reached'], failedChunks: [createFailedChunk(chunk, 'max_api_calls_exceeded', 'Reference normalization API call limit reached.', { stage: 'chunking', chunkIndex, chunkCount, retryable: false })], success: false }
   }
 
   let completion
   chunking.apiCallCount += 1
+  for (const candidateId of chunk.candidateIds) submittedCandidateIds.add(candidateId)
   try {
     completion = await client.chat.completions.create({
       model,
@@ -667,28 +821,41 @@ async function normalizeReferenceChunk({ chunk, compactInput, client, model, lim
       max_completion_tokens: MAX_COMPLETION_TOKENS,
     })
   } catch (error) {
-    const failure = createOpenAiFailure(error)
+    const failure = createOpenAiFailure(error, { model, stage: 'openai_request', chunkIndex, chunkCount })
     return { items: [], warnings: [failure.code], failedChunks: [createFailedChunk(chunk, failure.code, failure.message, failure.diagnostics)], success: false }
   }
 
-  const diagnostics = createCompletionDiagnostics(completion, model)
+  let diagnostics
+  try {
+    diagnostics = createCompletionDiagnostics(completion, model, { stage: 'response_parse', chunkIndex, chunkCount })
+    addCompletionUsage(usage, diagnostics)
+  } catch {
+    const safeDiagnostics = createSafeDiagnostics({ category: 'internal_error', stage: 'response_parse', model, chunkIndex, chunkCount, retryable: false })
+    return { items: [], warnings: ['reference_chunk_internal_error'], failedChunks: [createFailedChunk(chunk, 'reference_chunk_internal_error', 'Reference chunk response processing failed.', safeDiagnostics)], success: false }
+  }
   if (diagnostics.finishReason === 'length') {
-    return splitAndRetryLengthChunk({ chunk, compactInput, client, model, limits, chunking, depth, diagnostics })
+    return splitAndRetryLengthChunk({ chunk, compactInput, client, model, limits, chunking, usage, submittedCandidateIds, depth, diagnostics: { ...diagnostics, category: 'truncated_response', retryable: true }, chunkIndex, chunkCount })
   }
 
   try {
     const parsed = parseReferenceJson(extractCompletionContent(completion), diagnostics)
-    validateReferenceAiSchema(parsed)
+    validateReferenceAiSchema(parsed, { ...diagnostics, category: 'schema_validation', stage: 'schema_validation', retryable: false })
     const allowedCandidateIds = new Set(chunk.candidateIds)
     const { items, warnings } = normalizeReferenceItems(parsed.items, compactInput, allowedCandidateIds, limits)
+    if (Array.isArray(parsed.items) && parsed.items.length > 0 && items.length === 0) {
+      const diagnostics = createSafeDiagnostics({ category: 'post_validation_empty', stage: 'post_validation', model, chunkIndex, chunkCount, retryable: false })
+      return { items: [], warnings: [...warnings, 'post_validation_empty'], failedChunks: [createFailedChunk(chunk, 'post_validation_empty', 'AI 응답 항목이 post-validation 이후 남지 않았습니다.', diagnostics)], success: false }
+    }
     return { items, warnings, failedChunks: [], success: true }
   } catch (error) {
     const code = typeof error?.code === 'string' ? error.code : 'reference_chunk_parse_failed'
-    return { items: [], warnings: [code], failedChunks: [createFailedChunk(chunk, code, error instanceof Error ? error.message : 'Reference chunk normalization failed.', error?.diagnostics)], success: false }
+    const diagnostics = error?.diagnostics || createSafeDiagnostics({ category: 'internal_error', stage: 'normalization', model, chunkIndex, chunkCount, retryable: false })
+    const message = typeof error?.code === 'string' && error instanceof Error ? error.message : 'Reference chunk normalization failed.'
+    return { items: [], warnings: [code], failedChunks: [createFailedChunk(chunk, code, message, diagnostics)], success: false }
   }
 }
 
-async function splitAndRetryLengthChunk({ chunk, compactInput, client, model, limits, chunking, depth, diagnostics }) {
+async function splitAndRetryLengthChunk({ chunk, compactInput, client, model, limits, chunking, usage, submittedCandidateIds, depth, diagnostics, chunkIndex, chunkCount }) {
   const canSplit = chunk.rows.length > limits.minCandidatesPerChunk && depth < limits.maxChunkSplitDepth && chunking.apiCallCount < limits.maxApiCalls
   if (!canSplit) {
     return {
@@ -708,7 +875,7 @@ async function splitAndRetryLengthChunk({ chunk, compactInput, client, model, li
   const merged = { items: [], warnings: ['reference_chunk_length_split_retry'], failedChunks: [], success: false }
 
   for (const childChunk of childChunks) {
-    const result = await normalizeReferenceChunk({ chunk: childChunk, compactInput, client, model, limits, chunking, depth: depth + 1 })
+    const result = await normalizeReferenceChunk({ chunk: childChunk, compactInput, client, model, limits, chunking, usage, submittedCandidateIds, depth: depth + 1, chunkIndex, chunkCount })
     merged.items.push(...result.items)
     merged.warnings.push(...result.warnings)
     merged.failedChunks.push(...result.failedChunks)
@@ -744,51 +911,62 @@ function createFailedChunk(chunk, code, message, diagnostics = null) {
 function createSafeChunkDiagnostics(code, diagnostics = null) {
   const base = isSafeChunkDiagnostics(diagnostics) ? { ...diagnostics } : {}
   const category = base.category || getFailureCategoryFromCode(code)
-  return category || Object.keys(base).length > 0 ? { ...(category ? { category } : {}), ...base } : null
+  return category || Object.keys(base).length > 0 ? createSafeDiagnostics({ ...(category ? { category } : {}), fallbackUsed: true, ...base }) : null
 }
 
 function getFailureCategoryFromCode(code) {
   if (code === 'openai_reference_timeout') return 'timeout'
-  if (code === 'openai_reference_failed') return 'unknown_openai_error'
+  if (code === 'openai_reference_failed') return 'unknown_openai_failure'
   if (code === 'empty_ai_response') return 'empty_response'
-  if (code === 'reference_chunk_length_limit') return 'finish_reason_length'
+  if (code === 'reference_chunk_length_limit') return 'truncated_response'
   if (code === 'invalid_ai_json') return 'invalid_json'
-  if (code === 'invalid_ai_schema') return 'invalid_schema'
+  if (code === 'invalid_ai_schema') return 'schema_validation'
+  if (code === 'post_validation_empty') return 'post_validation_empty'
   if (code === 'max_api_calls_exceeded') return 'max_api_calls'
   return ''
 }
 
-function createOpenAiFailure(error) {
+function createOpenAiFailure(error, context = {}) {
   const status = Number(error?.status || error?.response?.status || error?.cause?.status)
-  const apiCode = normalizeText(error?.code || error?.error?.code || error?.type || error?.error?.type, 120)
-  const message = error instanceof Error && error.message ? error.message : 'Reference normalization OpenAI 호출에 실패했습니다.'
+  const providerCode = normalizeProviderCode(error?.code || error?.error?.code || error?.type || error?.error?.type)
+  const providerText = sanitizeProviderMessage(error instanceof Error && error.message ? error.message : '')
   const statusCode = Number.isInteger(status) ? status : 0
-  let category = 'unknown_openai_error'
+  let category = 'unknown_openai_failure'
   let code = 'openai_reference_failed'
+  let retryable = false
 
   if (isTimeoutError(error)) {
     category = 'timeout'
     code = 'openai_reference_timeout'
+    retryable = true
   } else if (statusCode === 401 || statusCode === 403) {
-    category = 'auth'
+    category = 'auth_failed'
   } else if (statusCode === 429) {
-    category = 'rate_limit'
+    category = isQuotaError(providerCode, providerText) ? 'quota_exhausted' : 'rate_limited'
+    retryable = category === 'rate_limited'
   } else if (statusCode >= 500) {
-    category = 'server_error'
-  } else if (/model|not[_ -]?found|does not exist|availability|unsupported/i.test(`${apiCode} ${message}`)) {
+    category = 'unknown_openai_failure'
+    retryable = true
+  } else if (/model|not[_ -]?found|does not exist|availability|unsupported|not supported/i.test(`${providerCode} ${providerText}`)) {
     category = 'model_unavailable'
-  } else if (/network|fetch|connection|ECONN|ENOTFOUND|ETIMEDOUT|ECONNRESET/i.test(`${apiCode} ${message}`)) {
-    category = 'network'
+  } else if (/network|fetch|connection|ECONN|ENOTFOUND|ETIMEDOUT|ECONNRESET/i.test(`${providerCode} ${providerText}`)) {
+    category = 'network_error'
+    retryable = true
   }
 
   return {
     code,
-    message,
-    diagnostics: {
+    message: code === 'openai_reference_timeout' ? 'Reference normalization OpenAI 호출 시간이 초과되었습니다.' : 'Reference normalization OpenAI 호출에 실패했습니다.',
+    diagnostics: createSafeDiagnostics({
       category,
-      ...(statusCode ? { status: statusCode } : {}),
-      ...(apiCode ? { errorCode: apiCode } : {}),
-    },
+      ...(statusCode ? { httpStatus: statusCode } : {}),
+      ...(providerCode ? { providerCode } : {}),
+      model: context.model,
+      stage: context.stage,
+      chunkIndex: context.chunkIndex,
+      chunkCount: context.chunkCount,
+      retryable,
+    }),
   }
 }
 
@@ -803,9 +981,64 @@ function createEmptyChunkingMeta(chunkCount, limits) {
   }
 }
 
+function createCachedChunkingMeta(chunkCount, limits) {
+  return {
+    ...createEmptyChunkingMeta(chunkCount, limits),
+    successfulChunkCount: chunkCount,
+  }
+}
+
+function createEmptyUsageMeta() {
+  return {
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    completionCount: 0,
+  }
+}
+
+function addCompletionUsage(usage, diagnostics) {
+  if (!usage || !diagnostics) return
+  usage.promptTokens += safeNumber(diagnostics.promptTokens)
+  usage.completionTokens += safeNumber(diagnostics.completionTokens)
+  usage.totalTokens += safeNumber(diagnostics.totalTokens)
+  usage.completionCount += 1
+}
+
+async function readCachedReferenceChunkResult(cache, cacheKey) {
+  if (!cache || !cacheKey || typeof cache.get !== 'function') return null
+  try {
+    const cached = await cache.get(cacheKey)
+    return isCacheableReferenceChunkResult(cached) ? cached : null
+  } catch {
+    return null
+  }
+}
+
+async function writeReferenceChunkResultToCache(cache, cacheKey, chunkResult, cacheMeta) {
+  if (!cache || !cacheKey || typeof cache.set !== 'function') return cacheMeta
+  if (!isCacheableReferenceChunkResult(chunkResult) || chunkResult.failedChunks.length > 0) return cacheMeta
+  try {
+    const written = await cache.set(cacheKey, {
+      items: chunkResult.items,
+      warnings: chunkResult.warnings,
+      failedChunks: [],
+    })
+    return createReferenceNormalizationCacheMeta(cacheKey, { status: written ? 'miss' : cacheMeta.status, read: cacheMeta.read, written: written === true })
+  } catch {
+    return cacheMeta
+  }
+}
+
+function isCacheableReferenceChunkResult(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  if (!Array.isArray(value.items) || !Array.isArray(value.warnings) || !Array.isArray(value.failedChunks)) return false
+  return value.failedChunks.length === 0
+}
+
 function isSafeChunkDiagnostics(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
-  return Object.keys(value).every((key) => ['model', 'finishReason', 'contentLength', 'contentType', 'promptTokens', 'completionTokens', 'totalTokens', 'category', 'status', 'errorCode'].includes(key))
+  return Object.keys(value).every((key) => ['model', 'finishReason', 'contentLength', 'contentType', 'promptTokens', 'completionTokens', 'totalTokens', 'category', 'httpStatus', 'providerCode', 'stage', 'chunkIndex', 'chunkCount', 'retryable', 'fallbackUsed', 'status', 'errorCode'].includes(key))
 }
 
 function sortItemsByManifestOrder(items, manifest) {
@@ -919,7 +1152,7 @@ function normalizeConfidence(value) {
   return Math.max(0, Math.min(1, Math.round(numeric * 100) / 100))
 }
 
-function createReferenceNavigationResult({ reference, compactInput, model, now, items, warnings, openAiCalled, chunking, failedChunks = [] }) {
+function createReferenceNavigationResult({ reference, compactInput, model, now, items, warnings, openAiCalled, chunking, failedChunks = [], usage, cache, deterministicTriage }) {
   const mappedItems = items.filter((item) => item.isUnmappedCandidate !== true)
   const coverage = createCoverageSummary(compactInput.manifest, mappedItems, items)
   const referenceMap = {
@@ -947,6 +1180,11 @@ function createReferenceNavigationResult({ reference, compactInput, model, now, 
       reviewItemCount: items.length,
       chunking: chunking || createEmptyChunkingMeta(0, REFERENCE_NAVIGATION_LIMITS),
       failedChunks,
+      usage: usage || createEmptyUsageMeta(),
+      cache: cache || createReferenceNormalizationCacheMeta('', { status: 'disabled' }),
+      deterministicSafeCandidateCount: safeNumber(deterministicTriage?.deterministicSafeCandidateCount),
+      aiRequiredCandidateCount: safeNumber(deterministicTriage?.aiRequiredCandidateCount),
+      aiSubmittedCandidateCount: safeNumber(deterministicTriage?.aiSubmittedCandidateCount),
       selectedSheetNames: compactInput.manifest?.selectedSheetNames || [],
       candidateManifest: {
         schemaVersion: compactInput.manifest?.schemaVersion,
@@ -966,17 +1204,17 @@ function parseReferenceJson(rawText, diagnostics = {}) {
     const message = diagnostics.finishReason === 'length'
       ? 'AI 응답 생성이 완료되지 않았습니다. (finish_reason: length)'
       : 'Reference 분석 API 응답을 처리하지 못했습니다.'
-    throw createReferenceNavigationError('empty_ai_response', message, 502, diagnostics)
+    throw createReferenceNavigationError('empty_ai_response', message, 502, createSafeDiagnostics({ ...diagnostics, category: 'empty_response', stage: 'response_parse', retryable: false }))
   }
   try {
     return JSON.parse(text)
   } catch {
     const match = text.match(/\{[\s\S]*\}/)
-    if (!match) throw createReferenceNavigationError('invalid_ai_json', 'Reference normalization 응답 JSON을 찾지 못했습니다.', 502, diagnostics)
+    if (!match) throw createReferenceNavigationError('invalid_ai_json', 'Reference normalization 응답 JSON을 찾지 못했습니다.', 502, createSafeDiagnostics({ ...diagnostics, category: 'invalid_json', stage: 'json_parse', retryable: false }))
     try {
       return JSON.parse(match[0])
     } catch {
-      throw createReferenceNavigationError('invalid_ai_json', 'Reference normalization 응답 JSON을 파싱하지 못했습니다.', 502, diagnostics)
+      throw createReferenceNavigationError('invalid_ai_json', 'Reference normalization 응답 JSON을 파싱하지 못했습니다.', 502, createSafeDiagnostics({ ...diagnostics, category: 'invalid_json', stage: 'json_parse', retryable: false }))
     }
   }
 }
@@ -995,34 +1233,37 @@ function extractCompletionContent(completion) {
   }).join('')
 }
 
-function createCompletionDiagnostics(completion, model) {
+function createCompletionDiagnostics(completion, model, context = {}) {
   const choice = completion?.choices?.[0] || {}
   const content = choice.message?.content
   const contentText = extractCompletionContent(completion)
-  return {
+  return createSafeDiagnostics({
     model,
+    stage: context.stage,
+    chunkIndex: context.chunkIndex,
+    chunkCount: context.chunkCount,
     finishReason: normalizeText(choice.finish_reason, 80),
     contentLength: contentText.length,
     contentType: Array.isArray(content) ? 'array' : typeof content,
     promptTokens: safeNumber(completion?.usage?.prompt_tokens),
     completionTokens: safeNumber(completion?.usage?.completion_tokens),
     totalTokens: safeNumber(completion?.usage?.total_tokens),
-  }
+  })
 }
 
-function validateReferenceAiSchema(value) {
+function validateReferenceAiSchema(value, diagnostics = null) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || !Array.isArray(value.items)) {
-    throw createReferenceNavigationError('invalid_ai_schema', 'Reference normalization 응답 스키마가 올바르지 않습니다.', 502)
+    throw createReferenceNavigationError('invalid_ai_schema', 'Reference normalization 응답 스키마가 올바르지 않습니다.', 502, diagnostics)
   }
 
   for (const item of value.items) {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) throw createReferenceNavigationError('invalid_ai_schema', 'Reference item 스키마가 올바르지 않습니다.', 502)
-    if (!item.source || typeof item.source !== 'object') throw createReferenceNavigationError('invalid_ai_schema', 'Reference item source가 필요합니다.', 502)
-    if (typeof item.source.sheetName !== 'string' || !Number.isInteger(Number(item.source.rowNumber))) throw createReferenceNavigationError('invalid_ai_schema', 'Reference item source provenance가 올바르지 않습니다.', 502)
-    if (!item.element || typeof item.element !== 'object') throw createReferenceNavigationError('invalid_ai_schema', 'Reference item element가 필요합니다.', 502)
-    if (!item.expected || typeof item.expected !== 'object' || !Array.isArray(item.expected.urls)) throw createReferenceNavigationError('invalid_ai_schema', 'Reference item expected.urls가 필요합니다.', 502)
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw createReferenceNavigationError('invalid_ai_schema', 'Reference item 스키마가 올바르지 않습니다.', 502, diagnostics)
+    if (!item.source || typeof item.source !== 'object') throw createReferenceNavigationError('invalid_ai_schema', 'Reference item source가 필요합니다.', 502, diagnostics)
+    if (typeof item.source.sheetName !== 'string' || !Number.isInteger(Number(item.source.rowNumber))) throw createReferenceNavigationError('invalid_ai_schema', 'Reference item source provenance가 올바르지 않습니다.', 502, diagnostics)
+    if (!item.element || typeof item.element !== 'object') throw createReferenceNavigationError('invalid_ai_schema', 'Reference item element가 필요합니다.', 502, diagnostics)
+    if (!item.expected || typeof item.expected !== 'object' || !Array.isArray(item.expected.urls)) throw createReferenceNavigationError('invalid_ai_schema', 'Reference item expected.urls가 필요합니다.', 502, diagnostics)
     for (const url of item.expected.urls) {
-      if (!url || typeof url !== 'object' || typeof url.raw !== 'string') throw createReferenceNavigationError('invalid_ai_schema', 'Reference item URL raw가 필요합니다.', 502)
+      if (!url || typeof url !== 'object' || typeof url.raw !== 'string') throw createReferenceNavigationError('invalid_ai_schema', 'Reference item URL raw가 필요합니다.', 502, diagnostics)
     }
   }
 }
@@ -1075,6 +1316,49 @@ function normalizeStringArray(value, maxItems, maxLength) {
 function normalizeText(value, maxLength) {
   const text = typeof value === 'string' ? value : value === null || value === undefined ? '' : String(value)
   return text.replace(/\s+/g, ' ').trim().slice(0, maxLength)
+}
+
+function createSafeDiagnostics(value = {}) {
+  const input = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const diagnostics = {}
+  const textFields = {
+    category: 80,
+    model: 160,
+    finishReason: 80,
+    contentType: 80,
+    providerCode: 120,
+    stage: 80,
+    errorCode: 120,
+  }
+
+  for (const [field, maxLength] of Object.entries(textFields)) {
+    const text = normalizeText(input[field], maxLength)
+    if (text) diagnostics[field] = text
+  }
+
+  const httpStatus = Number(input.httpStatus ?? input.status)
+  if (Number.isInteger(httpStatus) && httpStatus > 0) diagnostics.httpStatus = httpStatus
+
+  for (const field of ['contentLength', 'promptTokens', 'completionTokens', 'totalTokens', 'chunkIndex', 'chunkCount']) {
+    const number = Number(input[field])
+    if (Number.isFinite(number)) diagnostics[field] = number
+  }
+
+  if (typeof input.retryable === 'boolean') diagnostics.retryable = input.retryable
+  if (typeof input.fallbackUsed === 'boolean') diagnostics.fallbackUsed = input.fallbackUsed
+  return diagnostics
+}
+
+function normalizeProviderCode(value) {
+  return normalizeText(value, 120).replace(/[^A-Za-z0-9._:-]+/g, '_').slice(0, 120)
+}
+
+function sanitizeProviderMessage(value) {
+  return normalizeText(value, 240).replace(/sk-[A-Za-z0-9_-]+/g, '[redacted]')
+}
+
+function isQuotaError(providerCode, providerText) {
+  return /insufficient[_-]?quota|quota|credit|billing|exhausted|exceeded\s+your\s+current\s+quota/i.test(`${providerCode} ${providerText}`)
 }
 
 function safeNumber(value) {

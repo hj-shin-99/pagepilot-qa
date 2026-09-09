@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { createReferenceNavigationService } from './referenceNavigationService.js'
+import { createReferenceNormalizationCache } from './referenceNormalizationCache.js'
 import { getReferenceQaModel } from './referenceModelConfig.js'
 
 test('valid compact facts become a valid reference map', async () => {
@@ -9,7 +10,7 @@ test('valid compact facts become a valid reference map', async () => {
     aiItem({ label: 'Pricing', raw: '/pricing' }),
   ])
 
-  const result = await service.normalize(createReference({ cells: { A: 'Pricing', B: '/pricing' } }))
+  const result = await service.normalize(createAiRequiredReference({ cells: { A: 'Pricing', B: '/pricing', C: 'alternate may be /pricing-legacy' } }))
 
   assert.equal(result.referenceMap.schemaVersion, 'navigation-intent-reference-v1')
   assert.equal(result.referenceMap.sourceDocument.fileName, 'reference.xlsx')
@@ -18,6 +19,255 @@ test('valid compact facts become a valid reference map', async () => {
   assert.equal(result.referenceMap.items[0].referenceId, 'ref-001')
   assert.equal(result.meta.openAiCalled, true)
   assert.equal(result.meta.outputItemCount, 1)
+})
+
+test('reference normalization cache hit avoids OpenAI and exposes safe usage telemetry', async () => {
+  let calls = 0
+  const cache = createReferenceNormalizationCache()
+  const client = {
+    chat: {
+      completions: {
+        async create() {
+          calls += 1
+          return {
+            choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ items: [aiItem({ label: 'Pricing', raw: '/pricing' })] }) } }],
+            usage: { prompt_tokens: 120, completion_tokens: 40, total_tokens: 160 },
+          }
+        },
+      },
+    },
+  }
+  const reference = createAiRequiredReference({ cells: { A: 'Pricing', B: '/pricing', C: 'alternate may be /pricing-legacy' } })
+  const warmService = createReferenceNavigationService({ apiKey: 'test-key', client, now: fixedNow, normalizationCache: cache })
+  const cachedService = createReferenceNavigationService({ apiKey: '', now: fixedNow, normalizationCache: cache })
+
+  const first = await warmService.normalize(reference)
+  const second = await cachedService.normalize(reference)
+
+  assert.equal(calls, 1)
+  assert.equal(first.meta.openAiCalled, true)
+  assert.equal(first.meta.cache.status, 'miss')
+  assert.equal(first.meta.cache.hit, false)
+  assert.equal(first.meta.cache.read, true)
+  assert.equal(first.meta.cache.written, true)
+  assert.deepEqual(first.meta.usage, { promptTokens: 120, completionTokens: 40, totalTokens: 160, completionCount: 1 })
+  assert.equal(second.meta.openAiCalled, false)
+  assert.equal(second.meta.cache.status, 'hit')
+  assert.equal(second.meta.cache.hit, true)
+  assert.equal(second.meta.cache.read, true)
+  assert.equal(second.meta.cache.written, false)
+  assert.deepEqual(second.meta.usage, { promptTokens: 0, completionTokens: 0, totalTokens: 0, completionCount: 0 })
+  assert.equal(second.meta.chunking.apiCallCount, 0)
+  assert.equal(second.referenceMap.items[0].expected.urls[0].raw, '/pricing')
+  assert.equal(JSON.stringify(second.meta.cache).includes('/pricing'), false)
+})
+
+test('Phase 2-B A deterministic-safe single explicit URL skips OpenAI without API key', async () => {
+  const service = createReferenceNavigationService({ apiKey: '', now: fixedNow, normalizationCache: false })
+
+  const result = await service.normalize(createReference({ cells: { A: 'Pricing', B: '/pricing' } }))
+
+  assert.equal(result.meta.openAiCalled, false)
+  assert.equal(result.meta.chunking.apiCallCount, 0)
+  assert.equal(result.meta.deterministicSafeCandidateCount, 1)
+  assert.equal(result.meta.aiRequiredCandidateCount, 0)
+  assert.equal(result.referenceMap.items[0].expected.urls[0].raw, '/pricing')
+  assert.equal(result.referenceMap.items[0].provenance.inferenceUsed, false)
+})
+
+test('Phase 2-B B all deterministic-safe rows keep usage and submitted count at zero', async () => {
+  const service = createReferenceNavigationService({ apiKey: '', now: fixedNow, normalizationCache: false })
+  const reference = createReference({
+    rows: [
+      { rowNumber: 2, cells: { A: 'One', B: '/one' } },
+      { rowNumber: 3, cells: { A: 'Two', B: { text: 'Two', hyperlink: '/two' } } },
+    ],
+  })
+
+  const result = await service.normalize(reference)
+
+  assert.equal(result.meta.openAiCalled, false)
+  assert.deepEqual(result.meta.usage, { promptTokens: 0, completionTokens: 0, totalTokens: 0, completionCount: 0 })
+  assert.equal(result.meta.deterministicSafeCandidateCount, 2)
+  assert.equal(result.meta.aiSubmittedCandidateCount, 0)
+  assert.deepEqual(result.referenceMap.items.map((item) => item.expected.urls[0].raw), ['/one', '/two'])
+})
+
+test('Phase 2-B C mixed input submits only AI-required candidates', async () => {
+  const client = createPromptRecordingClient(() => ({ items: [aiItem({ rowNumber: 3, raw: '/search' })] }))
+  const service = createReferenceNavigationService({ apiKey: 'test-key', client, now: fixedNow, normalizationCache: false })
+  const reference = createReference({
+    rows: [
+      { rowNumber: 2, cells: { A: 'Pricing', B: '/pricing' } },
+      { rowNumber: 3, cells: { A: 'Search', B: '/search', C: 'alternate may be /search-old' } },
+    ],
+  })
+
+  const result = await service.normalize(reference)
+
+  assert.deepEqual(client.requests.map((request) => request.candidateIds), [['cand-0002']])
+  assert.equal(result.meta.deterministicSafeCandidateCount, 1)
+  assert.equal(result.meta.aiRequiredCandidateCount, 1)
+  assert.equal(result.meta.aiSubmittedCandidateCount, 1)
+  assert.equal(result.meta.openAiCalled, true)
+})
+
+test('Phase 2-B D mixed deterministic and AI items preserve manifest order', async () => {
+  const client = createPromptRecordingClient(() => ({ items: [aiItem({ rowNumber: 3, raw: '/middle' })] }))
+  const service = createReferenceNavigationService({ apiKey: 'test-key', client, now: fixedNow, normalizationCache: false })
+  const reference = createReference({
+    rows: [
+      { rowNumber: 2, cells: { A: 'First', B: '/first' } },
+      { rowNumber: 3, cells: { A: 'Middle', B: '/middle', C: 'alternate may be /middle-old' } },
+      { rowNumber: 4, cells: { A: 'Last', B: '/last' } },
+    ],
+  })
+
+  const result = await service.normalize(reference)
+
+  assert.deepEqual(result.referenceMap.items.map((item) => item.candidateId), ['cand-0001', 'cand-0002', 'cand-0003'])
+  assert.deepEqual(result.referenceMap.items.map((item) => item.referenceId), ['ref-001', 'ref-002', 'ref-003'])
+})
+
+test('Phase 2-B E same-cell URL list is deterministic-safe when classifier resolves it', async () => {
+  const service = createReferenceNavigationService({ apiKey: '', now: fixedNow, normalizationCache: false })
+
+  const result = await service.normalize(createReference({ cells: { A: 'Targets', B: '/a, /b' } }))
+
+  assert.equal(result.meta.openAiCalled, false)
+  assert.equal(result.meta.deterministicSafeCandidateCount, 1)
+  assert.deepEqual(result.referenceMap.items[0].expected.urls.map((url) => url.raw), ['/a', '/b'])
+  assert.deepEqual(result.referenceMap.items[0].urlEvidence.map((url) => url.classification), ['primary-navigation', 'additional-navigation'])
+})
+
+test('Phase 2-B F separate-column multi-URL row remains AI-required', async () => {
+  const client = createPromptRecordingClient(() => ({ items: [aiItem({ raw: '/cars' })] }))
+  const service = createReferenceNavigationService({ apiKey: 'test-key', client, now: fixedNow, normalizationCache: false })
+
+  const result = await service.normalize(createReference({ cells: { A: 'Catalog', B: '/cars', C: '/vans' } }))
+
+  assert.deepEqual(client.requests.map((request) => request.candidateIds), [['cand-0001']])
+  assert.equal(result.meta.deterministicSafeCandidateCount, 0)
+  assert.equal(result.meta.aiRequiredCandidateCount, 1)
+})
+
+test('Phase 2-B G descriptive API prose is not deterministic-safe', async () => {
+  const client = createPromptRecordingClient(() => ({ items: [] }))
+  const service = createReferenceNavigationService({ apiKey: 'test-key', client, now: fixedNow, normalizationCache: false })
+
+  const result = await service.normalize(createReference({ cells: { A: 'System', B: 'API writes /internal/result after processing' } }))
+
+  assert.equal(result.meta.deterministicSafeCandidateCount, 0)
+  assert.equal(result.meta.aiRequiredCandidateCount, 1)
+  assert.equal(result.referenceMap.items[0].urlEvidence[0].classification, 'descriptive-only')
+})
+
+test('Phase 2-B H incomplete query template requires AI instead of deterministic mapping', async () => {
+  const service = createReferenceNavigationService({ apiKey: '', now: fixedNow, normalizationCache: false })
+
+  await assert.rejects(() => service.normalize(createReference({ cells: { A: 'Details', B: '/details?idx=' } })), { code: 'missing_api_key' })
+})
+
+test('Phase 2-B I deterministic cache miss keeps current request token usage zero', async () => {
+  const cache = createReferenceNormalizationCache()
+  const service = createReferenceNavigationService({ apiKey: '', now: fixedNow, normalizationCache: cache })
+
+  const result = await service.normalize(createReference({ cells: { A: 'Pricing', B: '/pricing' } }))
+
+  assert.equal(result.meta.cache.status, 'miss')
+  assert.equal(result.meta.cache.read, true)
+  assert.equal(result.meta.openAiCalled, false)
+  assert.deepEqual(result.meta.usage, { promptTokens: 0, completionTokens: 0, totalTokens: 0, completionCount: 0 })
+})
+
+test('Phase 2-B J mixed cache hit avoids OpenAI and preserves triage counts', async () => {
+  let calls = 0
+  const cache = createReferenceNormalizationCache()
+  const client = createPromptRecordingClient(() => {
+    calls += 1
+    return { items: [aiItem({ rowNumber: 3, raw: '/search' })] }
+  })
+  const reference = createReference({
+    rows: [
+      { rowNumber: 2, cells: { A: 'Pricing', B: '/pricing' } },
+      { rowNumber: 3, cells: { A: 'Search', B: '/search', C: 'alternate may be /search-old' } },
+    ],
+  })
+
+  await createReferenceNavigationService({ apiKey: 'test-key', client, now: fixedNow, normalizationCache: cache }).normalize(reference)
+  const cached = await createReferenceNavigationService({ apiKey: '', now: fixedNow, normalizationCache: cache }).normalize(reference)
+
+  assert.equal(calls, 1)
+  assert.equal(cached.meta.cache.status, 'hit')
+  assert.equal(cached.meta.openAiCalled, false)
+  assert.equal(cached.meta.chunking.apiCallCount, 0)
+  assert.equal(cached.meta.deterministicSafeCandidateCount, 1)
+  assert.equal(cached.meta.aiRequiredCandidateCount, 1)
+  assert.equal(cached.meta.aiSubmittedCandidateCount, 0)
+  assert.deepEqual(cached.meta.usage, { promptTokens: 0, completionTokens: 0, totalTokens: 0, completionCount: 0 })
+})
+
+test('Phase 2-B K deterministic-safe rows never use AI invented replacements', async () => {
+  const client = createThrowingClient(new Error('should not call OpenAI'))
+  const service = createReferenceNavigationService({ apiKey: 'test-key', client, now: fixedNow, normalizationCache: false })
+
+  const result = await service.normalize(createReference({ cells: { A: 'Canonical', B: '/canonical' } }))
+
+  assert.equal(result.meta.openAiCalled, false)
+  assert.equal(result.referenceMap.items[0].expected.urls[0].raw, '/canonical')
+})
+
+test('Phase 2-B L documented dynamic path template can be deterministic-safe', async () => {
+  const service = createReferenceNavigationService({ apiKey: '', now: fixedNow, normalizationCache: false })
+
+  const result = await service.normalize(createReference({ cells: { A: 'Product detail template', B: '/products/{productId}' } }))
+
+  assert.equal(result.meta.openAiCalled, false)
+  assert.equal(result.referenceMap.items[0].expected.urls[0].raw, '/products/{productId}')
+  assert.equal(result.referenceMap.items[0].expected.urls[0].matchMode, 'pattern')
+  assert.deepEqual(result.referenceMap.items[0].expected.urls[0].dynamicParameters, ['productId'])
+})
+
+test('Phase 2-B M repeated same-cell duplicate URL is conservative AI-required', async () => {
+  const service = createReferenceNavigationService({ apiKey: '', now: fixedNow, normalizationCache: false })
+
+  await assert.rejects(() => service.normalize(createReference({ cells: { A: 'Duplicate', B: '/a /a' } })), { code: 'missing_api_key' })
+})
+
+test('Phase 2-B N deterministic telemetry is additive and does not expose triage internals', async () => {
+  const service = createReferenceNavigationService({ apiKey: '', now: fixedNow, normalizationCache: false })
+
+  const result = await service.normalize(createReference({ cells: { A: 'Pricing', B: '/pricing' } }))
+
+  assert.equal(Object.hasOwn(result.meta, 'deterministicSafeCandidateCount'), true)
+  assert.equal(Object.hasOwn(result.meta, 'aiRequiredCandidateCount'), true)
+  assert.equal(Object.hasOwn(result.meta, 'aiSubmittedCandidateCount'), true)
+  assert.equal(Object.hasOwn(result.meta, 'deterministicTriage'), false)
+})
+
+test('Phase 2-B O AI failure preserves deterministic-safe rows and unmapped AI rows', async () => {
+  const service = createReferenceNavigationService({
+    apiKey: 'test-key',
+    client: createThrowingClient(new Error('synthetic provider failure')),
+    now: fixedNow,
+    normalizationCache: false,
+  })
+  const reference = createReference({
+    rows: [
+      { rowNumber: 2, cells: { A: 'Stable', B: '/stable' } },
+      { rowNumber: 3, cells: { A: 'Review', B: '/review', C: 'alternate may be /review-old' } },
+    ],
+  })
+
+  const result = await service.normalize(reference)
+
+  assert.equal(result.referenceMap.items[0].candidateId, 'cand-0001')
+  assert.equal(result.referenceMap.items[0].isUnmappedCandidate, undefined)
+  assert.equal(result.referenceMap.items[0].expected.urls[0].raw, '/stable')
+  assert.equal(result.referenceMap.items[1].candidateId, 'cand-0002')
+  assert.equal(result.referenceMap.items[1].isUnmappedCandidate, true)
+  assert.equal(result.meta.coverage.mappedCandidateRows, 1)
+  assert.equal(result.meta.coverage.unmappedCandidateRows, 1)
 })
 
 test('preserves explicit absolute URL evidence', async () => {
@@ -107,7 +357,8 @@ test('same-cell parenthesized URL list creates primary and additional expected U
   const result = await service.normalize(createReference({ cells: { A: 'Target', B: '/a (/b)' } }))
   const item = result.referenceMap.items[0]
 
-  assert.equal(item.isUnmappedCandidate, true)
+  assert.equal(item.isUnmappedCandidate, undefined)
+  assert.equal(result.meta.openAiCalled, false)
   assert.deepEqual(item.expected.urls.map((url) => url.raw), ['/a', '/b'])
   assert.deepEqual(item.urlEvidence.map((url) => url.classification), ['primary-navigation', 'additional-navigation'])
   assert.equal(item.expected.urls.every((url) => item.urlEvidence.some((evidence) => evidence.raw === url.raw)), true)
@@ -307,14 +558,14 @@ test('preserves source sheet row provenance and server-side row columns', async 
   const service = createServiceWithItems([
     aiItem({ sheetName: 'Navigation', rowNumber: 4, raw: '/checkout', evidenceText: 'Checkout link' }),
   ])
-  const reference = createReference({ sheetName: 'Navigation', rowNumber: 4, cells: { A: 'Checkout', C: '/checkout' } })
+  const reference = createAiRequiredReference({ sheetName: 'Navigation', rowNumber: 4, cells: { A: 'Checkout', C: '/checkout', D: 'alternate may be /cart' } })
 
   const result = await service.normalize(reference)
   const source = result.referenceMap.items[0].source
 
   assert.equal(source.sheetName, 'Navigation')
   assert.equal(source.rowNumber, 4)
-  assert.deepEqual(source.columns, { A: 'Checkout', C: '/checkout' })
+  assert.deepEqual(source.columns, { A: 'Checkout', C: '/checkout', D: 'alternate may be /cart' })
   assert.equal(source.evidenceText, 'Checkout link')
 })
 
@@ -325,8 +576,8 @@ test('normalizes confidence into the 0 to 1 range', async () => {
   ])
   const reference = createReference({
     rows: [
-      { rowNumber: 2, cells: { A: 'High', B: '/high' } },
-      { rowNumber: 3, cells: { A: 'Low', B: '/low' } },
+      { rowNumber: 2, cells: { A: 'High', B: '/high', C: 'alternate may be /high-old' } },
+      { rowNumber: 3, cells: { A: 'Low', B: '/low', C: 'alternate may be /low-old' } },
     ],
   })
 
@@ -349,7 +600,7 @@ test('forces userDecision to pending even when AI returns another status', async
 test('drops AI-created URLs that are not present in input facts', async () => {
   const service = createServiceWithItems([aiItem({ raw: '/invented' })])
 
-  const result = await service.normalize(createReference({ cells: { A: 'Real target', B: '/real' } }))
+  const result = await service.normalize(createAiRequiredReference({ cells: { A: 'Real target', B: '/real', C: 'alternate may be /real-old' } }))
 
   assert.equal(result.referenceMap.items.length, 1)
   assert.equal(result.referenceMap.items[0].isUnmappedCandidate, true)
@@ -363,7 +614,7 @@ test('drops AI-created URLs that are not present in input facts', async () => {
 test('drops AI items that reference a missing sheet or row', async () => {
   const service = createServiceWithItems([aiItem({ sheetName: 'Missing', rowNumber: 99, raw: '/real' })])
 
-  const result = await service.normalize(createReference({ cells: { A: 'Real', B: '/real' } }))
+  const result = await service.normalize(createAiRequiredReference({ cells: { A: 'Real', B: '/real', C: 'alternate may be /real-old' } }))
 
   assert.equal(result.referenceMap.items.length, 1)
   assert.equal(result.referenceMap.items[0].isUnmappedCandidate, true)
@@ -373,7 +624,7 @@ test('drops AI items that reference a missing sheet or row', async () => {
 test('malformed AI JSON fails safely', async () => {
   const service = createServiceWithRaw('not json')
 
-  const result = await service.normalize(createReference({ cells: { A: 'Target', B: '/target' } }))
+  const result = await service.normalize(createAiRequiredReference({ cells: { A: 'Target', B: '/target', C: 'alternate may be /target-old' } }))
 
   assert.equal(result.meta.outputItemCount, 0)
   assert.equal(result.meta.failedChunks[0].code, 'invalid_ai_json')
@@ -386,18 +637,23 @@ test('empty AI message content fails safely with diagnostics', async () => {
     usage: { prompt_tokens: 120, completion_tokens: 0, total_tokens: 120 },
   })
 
-  const result = await service.normalize(createReference({ cells: { A: 'Target', B: '/target' } }))
+  const result = await service.normalize(createAiRequiredReference({ cells: { A: 'Target', B: '/target', C: 'alternate may be /target-old' } }))
 
   assert.equal(result.meta.failedChunks[0].code, 'empty_ai_response')
   assert.deepEqual(result.meta.failedChunks[0].diagnostics, {
     category: 'empty_response',
+    fallbackUsed: true,
     model: 'gpt-5.6-terra',
+    stage: 'response_parse',
+    chunkIndex: 1,
+    chunkCount: 1,
     finishReason: 'stop',
     contentLength: 0,
     contentType: 'string',
     promptTokens: 120,
     completionTokens: 0,
     totalTokens: 120,
+    retryable: false,
   })
   assert.equal(result.referenceMap.items[0].isUnmappedCandidate, true)
 })
@@ -408,9 +664,10 @@ test('finish_reason length with empty content returns precise safe error', async
     usage: { prompt_tokens: 3000, completion_tokens: 6000, total_tokens: 9000 },
   })
 
-  const result = await service.normalize(createReference({ cells: { A: 'Target', B: '/target' } }))
+  const result = await service.normalize(createAiRequiredReference({ cells: { A: 'Target', B: '/target', C: 'alternate may be /target-old' } }))
 
   assert.equal(result.meta.failedChunks[0].code, 'reference_chunk_length_limit')
+  assert.equal(result.meta.failedChunks[0].diagnostics.category, 'truncated_response')
   assert.equal(result.meta.failedChunks[0].diagnostics.finishReason, 'length')
   assert.equal(result.meta.failedChunks[0].diagnostics.contentLength, 0)
   assert.equal(result.meta.failedChunks[0].diagnostics.completionTokens, 6000)
@@ -426,7 +683,7 @@ test('array-shaped AI message content is parsed when it contains JSON text', asy
     usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
   })
 
-  const result = await service.normalize(createReference({ cells: { A: 'Target', B: '/target' } }))
+  const result = await service.normalize(createAiRequiredReference({ cells: { A: 'Target', B: '/target', C: 'alternate may be /target-old' } }))
 
   assert.equal(result.referenceMap.items.length, 1)
   assert.equal(result.referenceMap.items[0].expected.urls[0].raw, '/target')
@@ -435,7 +692,7 @@ test('array-shaped AI message content is parsed when it contains JSON text', asy
 test('schema-invalid AI JSON fails safely', async () => {
   const service = createServiceWithRaw(JSON.stringify({ items: [{ source: { sheetName: 'Sheet1', rowNumber: 2 } }] }))
 
-  const result = await service.normalize(createReference({ cells: { A: 'Target', B: '/target' } }))
+  const result = await service.normalize(createAiRequiredReference({ cells: { A: 'Target', B: '/target', C: 'alternate may be /target-old' } }))
 
   assert.equal(result.meta.outputItemCount, 0)
   assert.equal(result.meta.failedChunks[0].code, 'invalid_ai_schema')
@@ -445,10 +702,18 @@ test('schema-invalid AI JSON fails safely', async () => {
 test('missing OPENAI_API_KEY fails safely when OpenAI would be needed', async () => {
   const service = createReferenceNavigationService({ apiKey: '', now: fixedNow })
 
-  await assert.rejects(
-    () => service.normalize(createReference({ cells: { A: 'Target', B: '/target' } })),
-    { code: 'missing_api_key', status: 400 },
-  )
+  await assert.rejects(async () => {
+    try {
+      await service.normalize(createAiRequiredReference({ cells: { A: 'Target', B: '/target', C: 'alternate may be /target-old' } }))
+    } catch (error) {
+      assert.equal(error.code, 'missing_api_key')
+      assert.equal(error.status, 400)
+      assert.equal(error.diagnostics.category, 'missing_api_key')
+      assert.equal(error.diagnostics.stage, 'configuration')
+      assert.equal(error.diagnostics.retryable, false)
+      throw error
+    }
+  })
 })
 
 test('OpenAI timeout or request error fails safely', async () => {
@@ -456,36 +721,63 @@ test('OpenAI timeout or request error fails safely', async () => {
   timeoutError.name = 'TimeoutError'
   const service = createReferenceNavigationService({ apiKey: 'test-key', client: createThrowingClient(timeoutError), now: fixedNow })
 
-  const result = await service.normalize(createReference({ cells: { A: 'Target', B: '/target' } }))
+  const result = await service.normalize(createAiRequiredReference({ cells: { A: 'Target', B: '/target', C: 'alternate may be /target-old' } }))
 
   assert.equal(result.meta.outputItemCount, 0)
   assert.equal(result.meta.failedChunks[0].code, 'openai_reference_timeout')
   assert.equal(result.meta.failedChunks[0].diagnostics.category, 'timeout')
+  assert.equal(result.meta.failedChunks[0].diagnostics.stage, 'openai_request')
+  assert.equal(result.meta.failedChunks[0].diagnostics.retryable, true)
   assert.equal(result.referenceMap.items[0].isUnmappedCandidate, true)
 })
 
-test('OpenAI quota and model availability failures expose only safe diagnostics and keep fallback', async () => {
-  const quotaError = new Error('Rate limit reached for this request')
+test('OpenAI failure classification exposes only safe diagnostics and keeps fallback', async () => {
+  const authError = new Error('Incorrect API key provided')
+  authError.status = 401
+  authError.code = 'invalid_api_key'
+  const rateLimitError = new Error('Rate limit reached for this request')
+  rateLimitError.status = 429
+  rateLimitError.code = 'rate_limit_exceeded'
+  const quotaError = new Error('You exceeded your current quota, please check your plan and billing details')
   quotaError.status = 429
-  quotaError.code = 'rate_limit_exceeded'
+  quotaError.code = 'insufficient_quota'
   const modelError = new Error('The model does not exist or you do not have access to it')
   modelError.status = 404
   modelError.code = 'model_not_found'
+  const networkError = new Error('fetch failed ECONNRESET')
+  const unknownError = new Error('unexpected provider failure')
+  const cases = [
+    { error: authError, expected: { category: 'auth_failed', httpStatus: 401, providerCode: 'invalid_api_key', retryable: false } },
+    { error: rateLimitError, expected: { category: 'rate_limited', httpStatus: 429, providerCode: 'rate_limit_exceeded', retryable: true } },
+    { error: quotaError, expected: { category: 'quota_exhausted', httpStatus: 429, providerCode: 'insufficient_quota', retryable: false } },
+    { error: modelError, expected: { category: 'model_unavailable', httpStatus: 404, providerCode: 'model_not_found', retryable: false } },
+    { error: networkError, expected: { category: 'network_error', retryable: true } },
+    { error: unknownError, expected: { category: 'unknown_openai_failure', retryable: false } },
+  ]
 
-  const quotaResult = await createReferenceNavigationService({ apiKey: 'test-key', client: createThrowingClient(quotaError), now: fixedNow }).normalize(createReference({ cells: { A: 'Quota', B: '/quota' } }))
-  const modelResult = await createReferenceNavigationService({ apiKey: 'test-key', client: createThrowingClient(modelError), now: fixedNow }).normalize(createReference({ cells: { A: 'Model', B: '/model' } }))
+  for (const { error, expected } of cases) {
+    const result = await createReferenceNavigationService({ apiKey: 'test-key', client: createThrowingClient(error), now: fixedNow }).normalize(createAiRequiredReference({ cells: { A: 'Target', B: '/target', C: 'alternate may be /target-old' } }))
+    const diagnostics = result.meta.failedChunks[0].diagnostics
 
-  assert.equal(quotaResult.meta.failedChunks[0].code, 'openai_reference_failed')
-  assert.deepEqual(quotaResult.meta.failedChunks[0].diagnostics, { category: 'rate_limit', status: 429, errorCode: 'rate_limit_exceeded' })
-  assert.equal(quotaResult.meta.warnings.includes('all_reference_chunks_failed'), true)
-  assert.equal(quotaResult.referenceMap.items[0].isUnmappedCandidate, true)
-  assert.equal(modelResult.meta.failedChunks[0].diagnostics.category, 'model_unavailable')
-  assert.equal(modelResult.meta.failedChunks[0].diagnostics.status, 404)
+    assert.equal(result.meta.failedChunks[0].code, 'openai_reference_failed')
+    assert.equal(diagnostics.category, expected.category)
+    assert.equal(diagnostics.stage, 'openai_request')
+    assert.equal(diagnostics.fallbackUsed, true)
+    assert.equal(diagnostics.model, 'gpt-5.6-terra')
+    assert.equal(diagnostics.chunkIndex, 1)
+    assert.equal(diagnostics.chunkCount, 1)
+    assert.equal(diagnostics.retryable, expected.retryable)
+    if (expected.httpStatus) assert.equal(diagnostics.httpStatus, expected.httpStatus)
+    if (expected.providerCode) assert.equal(diagnostics.providerCode, expected.providerCode)
+    assert.equal(result.meta.failedChunks[0].message.includes(error.message), false)
+    assert.equal(result.meta.warnings.includes('all_reference_chunks_failed'), true)
+    assert.equal(result.referenceMap.items[0].isUnmappedCandidate, true)
+  }
 })
 
 test('failed chunk metadata never exposes prompt api key or raw AI response', async () => {
   const rawResponse = 'RAW_AI_RESPONSE_WITH_SECRET_KEY sk-test prompt body not json'
-  const result = await createServiceWithRaw(rawResponse).normalize(createReference({ cells: { A: 'Target', B: '/target' } }))
+  const result = await createServiceWithRaw(rawResponse).normalize(createAiRequiredReference({ cells: { A: 'Target', B: '/target', C: 'alternate may be /target-old' } }))
   const serializedMeta = JSON.stringify(result.meta)
 
   assert.equal(result.meta.failedChunks[0].code, 'invalid_ai_json')
@@ -497,21 +789,53 @@ test('failed chunk metadata never exposes prompt api key or raw AI response', as
 test('post-validation with zero surviving items returns 200-style empty map result', async () => {
   const service = createServiceWithItems([aiItem({ raw: '/invented' })])
 
-  const result = await service.normalize(createReference({ cells: { A: 'Real', B: '/real' } }))
+  const result = await service.normalize(createAiRequiredReference({ cells: { A: 'Real', B: '/real', C: 'alternate may be /real-old' } }))
 
   assert.equal(result.referenceMap.items.length, 1)
   assert.equal(result.referenceMap.items[0].isUnmappedCandidate, true)
   assert.equal(result.meta.outputItemCount, 0)
   assert.equal(result.meta.reviewItemCount, 1)
   assert.equal(result.meta.warnings.includes('dropped_item_without_traceable_url'), true)
+  assert.equal(result.meta.failedChunks[0].diagnostics.category, 'post_validation_empty')
+  assert.equal(result.meta.failedChunks[0].diagnostics.stage, 'post_validation')
+})
+
+test('schema invalid and malformed JSON include precise safe failure categories', async () => {
+  const malformed = await createServiceWithRaw('not json').normalize(createAiRequiredReference({ cells: { A: 'Target', B: '/target', C: 'alternate may be /target-old' } }))
+  const invalidSchema = await createServiceWithRaw(JSON.stringify({ items: [{ source: { sheetName: 'Sheet1', rowNumber: 2 } }] })).normalize(createAiRequiredReference({ cells: { A: 'Target', B: '/target', C: 'alternate may be /target-old' } }))
+
+  assert.equal(malformed.meta.failedChunks[0].diagnostics.category, 'invalid_json')
+  assert.equal(malformed.meta.failedChunks[0].diagnostics.stage, 'json_parse')
+  assert.equal(invalidSchema.meta.failedChunks[0].diagnostics.category, 'schema_validation')
+  assert.equal(invalidSchema.meta.failedChunks[0].diagnostics.stage, 'schema_validation')
+})
+
+test('unexpected implementation errors are classified as internal without raw object exposure', async () => {
+  const client = {
+    chat: {
+      completions: {
+        async create() {
+          return Object.defineProperty({}, 'choices', { get() { throw new Error('internal synthetic failure with prompt secret') } })
+        },
+      },
+    },
+  }
+  const service = createReferenceNavigationService({ apiKey: 'test-key', client, now: fixedNow })
+
+  const result = await service.normalize(createAiRequiredReference({ cells: { A: 'Target', B: '/target', C: 'alternate may be /target-old' } }))
+
+  assert.equal(result.meta.failedChunks[0].code, 'reference_chunk_internal_error')
+  assert.equal(result.meta.failedChunks[0].diagnostics.category, 'internal_error')
+  assert.equal(JSON.stringify(result.meta).includes('stack'), false)
+  assert.equal(JSON.stringify(result.meta).includes('prompt secret'), false)
 })
 
 test('explicit URL row omitted by AI is preserved as unmapped with correct coverage', async () => {
   const service = createServiceWithItems([aiItem({ raw: '/mapped' })])
   const reference = createReference({
     rows: [
-      { rowNumber: 2, cells: { A: 'Mapped', B: '/mapped' } },
-      { rowNumber: 3, cells: { A: 'Omitted', B: '/omitted' } },
+      { rowNumber: 2, cells: { A: 'Mapped', B: '/mapped', C: 'alternate may be /mapped-old' } },
+      { rowNumber: 3, cells: { A: 'Omitted', B: '/omitted', C: 'alternate may be /omitted-old' } },
     ],
   })
 
@@ -522,11 +846,11 @@ test('explicit URL row omitted by AI is preserved as unmapped with correct cover
   assert.equal(result.referenceMap.items[1].isUnmappedCandidate, true)
   assert.equal(result.referenceMap.items[1].expected.urls[0].raw, '/omitted')
   assert.equal(result.meta.coverage.totalCandidateRows, 2)
-  assert.equal(result.meta.coverage.totalGroundedUrls, 2)
+  assert.equal(result.meta.coverage.totalGroundedUrls, 4)
   assert.equal(result.meta.coverage.mappedCandidateRows, 1)
   assert.equal(result.meta.coverage.mappedGroundedUrls, 1)
   assert.equal(result.meta.coverage.unmappedCandidateRows, 1)
-  assert.equal(result.meta.coverage.unmappedGroundedUrls, 1)
+  assert.equal(result.meta.coverage.unmappedGroundedUrls, 3)
   assert.equal(result.meta.coverage.coverageRatio, 0.5)
   assert.deepEqual(result.meta.coverage.rowCoverage, {
     totalCandidateRows: 2,
@@ -534,8 +858,8 @@ test('explicit URL row omitted by AI is preserved as unmapped with correct cover
     unmappedCandidateRows: 1,
     ratio: 0.5,
   })
-  assert.equal(result.meta.coverage.urlEvidenceCoverage.totalGroundedUrls, 2)
-  assert.equal(result.meta.coverage.urlEvidenceCoverage.classifiedGroundedUrls, 2)
+  assert.equal(result.meta.coverage.urlEvidenceCoverage.totalGroundedUrls, 4)
+  assert.equal(result.meta.coverage.urlEvidenceCoverage.classifiedGroundedUrls, 4)
   assert.equal(result.meta.coverage.urlEvidenceCoverage.expectedGroundedUrls, 2)
 })
 
@@ -645,6 +969,29 @@ function createMockClientFromCompletion(completion) {
   }
 }
 
+function createPromptRecordingClient(handler) {
+  const requests = []
+  return {
+    requests,
+    chat: {
+      completions: {
+        async create(request) {
+          assert.equal(request.response_format.type, 'json_object')
+          assert.equal(request.max_completion_tokens, 6000)
+          const payload = parsePromptPayload(request)
+          requests.push({ chunkId: payload.chunkId, candidateIds: payload.sheets.flatMap((sheet) => sheet.rows.map((row) => row.candidateId)) })
+          const result = await handler(payload)
+          return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(result) } }] }
+        },
+      },
+    },
+  }
+}
+
+function parsePromptPayload(request) {
+  return JSON.parse(request.messages[1].content.split('\n').at(-1))
+}
+
 function createThrowingClient(error) {
   return {
     chat: {
@@ -696,6 +1043,10 @@ function createReference(options = {}) {
     totalRowCount: sheets.reduce((count, sheet) => count + sheet.rowCount, 0),
     sheets,
   }
+}
+
+function createAiRequiredReference(options = {}) {
+  return createReference(options)
 }
 
 function createSheet({ sheetName, rows }) {

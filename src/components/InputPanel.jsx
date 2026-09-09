@@ -24,7 +24,7 @@ function InputPanel({
       <div className="sidebar-topbar">
         {isCollapsed ? null : (
           <div className="brand-mark">
-            <span className="brand-version">v1.0</span>
+            <span className="brand-version">v1.1.0</span>
           </div>
         )}
         <button

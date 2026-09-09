@@ -41,6 +41,8 @@ test('POST /api/reference/normalize exposes only safe diagnostics for empty Open
   error.status = 502
   error.diagnostics = {
     model: 'test-model',
+    category: 'truncated_response',
+    stage: 'response_parse',
     finishReason: 'length',
     contentLength: 0,
     contentType: 'string',
@@ -63,7 +65,7 @@ test('POST /api/reference/normalize exposes safe OpenAI failure category diagnos
   const error = new Error('OpenAI service unavailable')
   error.code = 'openai_reference_failed'
   error.status = 502
-  error.diagnostics = { category: 'server_error', status: 503, errorCode: 'server_error' }
+  error.diagnostics = { category: 'unknown_openai_failure', httpStatus: 503, providerCode: 'server_error', stage: 'openai_request', retryable: true, fallbackUsed: true }
   error.rawPrompt = 'do not expose prompt'
   error.apiKey = 'sk-do-not-expose'
   error.rawResponse = 'do not expose response'
@@ -71,7 +73,7 @@ test('POST /api/reference/normalize exposes safe OpenAI failure category diagnos
 
   assert.equal(response.status, 502)
   assert.equal(response.body.code, 'openai_reference_failed')
-  assert.deepEqual(response.body.diagnostics, { category: 'server_error', status: 503, errorCode: 'server_error' })
+  assert.deepEqual(response.body.diagnostics, { category: 'unknown_openai_failure', httpStatus: 503, providerCode: 'server_error', stage: 'openai_request', retryable: true, fallbackUsed: true })
   assert.equal(/rawPrompt|apiKey|rawResponse|sk-do-not-expose|do not expose/i.test(JSON.stringify(response.body)), false)
 })
 

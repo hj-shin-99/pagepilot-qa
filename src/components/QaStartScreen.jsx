@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import DeviceScanSelector from './DeviceScanSelector'
 import ReferenceQaModal from './ReferenceQaModal'
 import TechScanOptions from './TechScanOptions'
+import { isReferenceQaDependencySatisfied } from '../../shared/techScanOptions.js'
 import { isValidFigmaUrl } from '../utils/scanSession'
 
 function QaStartScreen({
@@ -13,6 +14,7 @@ function QaStartScreen({
   isScanning,
   isWebUrlReady,
   techScanOptions,
+  isReferenceRunEnabled,
   devices,
   onUrlChange,
   onFigmaUrlChange,
@@ -31,6 +33,8 @@ function QaStartScreen({
   const [isSubmitVisible, setIsSubmitVisible] = useState(false)
   const shouldShowProgressive = isWebUrlReady || shouldRenderProgressive
   const isProgressiveOpen = isWebUrlReady && isProgressiveVisible
+  const isReferenceQaDependencyEnabled = isReferenceQaDependencySatisfied(techScanOptions)
+  const referenceQaDisabledReason = isReferenceQaDependencyEnabled ? '' : 'URL·Click·Landing 검사를 모두 선택하면 Reference URL QA를 사용할 수 있습니다.'
 
   useEffect(() => {
     let frameId = 0
@@ -77,7 +81,7 @@ function QaStartScreen({
       <header className="start-header" aria-label="PagePilot QA">
         <span className="start-brand">
           <strong>PagePilot QA</strong>
-          <span className="start-version">v1.0</span>
+          <span className="start-version">v1.1.0</span>
         </span>
         <button className="start-history-button" type="button" onClick={onOpenHistory}>History</button>
       </header>
@@ -149,7 +153,12 @@ function QaStartScreen({
                   </div>
 
                   <div className="start-step start-step-reference">
-                    <ReferenceQaModal isDisabled={!isWebUrlReady || isScanning} onReferenceApply={onReferenceApply} />
+                    <ReferenceQaModal
+                      isDisabled={!isWebUrlReady || isScanning || !isReferenceQaDependencyEnabled}
+                      isReferenceRunEnabled={isReferenceRunEnabled}
+                      disabledReason={referenceQaDisabledReason}
+                      onReferenceApply={onReferenceApply}
+                    />
                   </div>
 
                   <div className="start-submit-slot">

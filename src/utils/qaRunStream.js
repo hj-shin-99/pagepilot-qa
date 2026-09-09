@@ -14,9 +14,11 @@ export function appendNdjsonChunk(buffer, chunk) {
 }
 
 import { normalizeDeviceIds } from '../../shared/deviceProfiles.js'
+import { isReferenceQaDependencySatisfied } from '../../shared/techScanOptions.js'
 
 export async function requestQaRunStream({ webUrl, figmaUrl, scanOptions, devices, navigationReference = null, onProgress, fetchFn = fetch }) {
-  const body = navigationReference
+  const shouldIncludeNavigationReference = navigationReference && isReferenceQaDependencySatisfied(scanOptions)
+  const body = shouldIncludeNavigationReference
     ? { webUrl, figmaUrl, scanOptions, devices: normalizeDeviceIds(devices), navigationReference }
     : { webUrl, figmaUrl, scanOptions, devices: normalizeDeviceIds(devices) }
   let response

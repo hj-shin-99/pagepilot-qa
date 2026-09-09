@@ -230,6 +230,31 @@ export function createReferenceReviewSummary(items = []) {
   }, { confirmed: 0, edited: 0, excluded: 0, pending: 0 })
 }
 
+export function createReferenceTelemetryRows(meta = {}) {
+  const safeMeta = meta && typeof meta === 'object' && !Array.isArray(meta) ? meta : {}
+  const isPreset = safeMeta.importedPreset === true
+  const cacheStatus = normalizeText(safeMeta.cache?.status, 40).toLowerCase()
+  const isCacheHit = safeMeta.cache?.hit === true || cacheStatus === 'hit'
+  const hasFallback = hasReferenceFallback(safeMeta)
+  const callCount = isPreset || isCacheHit ? 0 : getCurrentAiCallCount(safeMeta)
+  const tokenUsage = createCurrentTokenUsage(safeMeta, { forceZero: isPreset || isCacheHit })
+  const model = normalizeText(safeMeta.model, 120)
+
+  return [
+    { label: 'AI 분석', value: isPreset ? '저장된 Reference 사용' : isCacheHit ? '캐시 사용' : hasFallback ? '실패 / fallback' : callCount > 0 || safeMeta.openAiCalled === true ? '사용됨' : '사용 안 함' },
+    { label: 'Cache', value: isPreset ? '-' : isCacheHit ? 'HIT' : cacheStatus === 'miss' ? 'MISS' : cacheStatus ? cacheStatus.toUpperCase() : '-' },
+    { label: '이번 분석 AI Calls', value: String(callCount) },
+    { label: '이번 분석 Input Tokens', value: tokenUsage.input },
+    { label: '이번 분석 Output Tokens', value: tokenUsage.output },
+    { label: '이번 분석 Total Tokens', value: tokenUsage.total },
+    { label: 'Model', value: isPreset && model ? `원본 분석 모델: ${model}` : model || '확인 불가' },
+  ]
+}
+
+export function shouldShowReferenceSheetSelection(referenceState = {}) {
+  return Boolean(referenceState?.analyzedReference && !referenceState?.referenceMap)
+}
+
 export function resetReferenceReviewState() {
   return {
     selectedFile: null,
@@ -298,6 +323,35 @@ function sanitizePresetMeta(meta = {}) {
     chunking: safeMeta.chunking && typeof safeMeta.chunking === 'object' && !Array.isArray(safeMeta.chunking) ? cloneItem(safeMeta.chunking) : {},
     warnings: normalizeStringArray(safeMeta.warnings, 10, 300),
   }
+}
+
+function hasReferenceFallback(meta) {
+  const warnings = Array.isArray(meta.warnings) ? meta.warnings : []
+  return Number(meta.chunking?.failedChunkCount || 0) > 0 || (Array.isArray(meta.failedChunks) && meta.failedChunks.length > 0) || warnings.includes('all_reference_chunks_failed')
+}
+
+function getCurrentAiCallCount(meta) {
+  const count = Number(meta.chunking?.providerCallCount ?? meta.chunking?.apiCallCount ?? meta.providerCallCount ?? meta.apiCallCount)
+  return Number.isFinite(count) && count >= 0 ? count : 0
+}
+
+function createCurrentTokenUsage(meta, options = {}) {
+  if (options.forceZero) return { input: '0', output: '0', total: '0' }
+  const usage = meta.usage && typeof meta.usage === 'object' && !Array.isArray(meta.usage) ? meta.usage : null
+  const total = Number(usage?.totalTokens)
+  const hasCurrentUsage = Number.isFinite(total) && total > 0
+  if (!hasCurrentUsage) return { input: '확인 불가', output: '확인 불가', total: '확인 불가' }
+
+  return {
+    input: formatTokenCount(usage.promptTokens),
+    output: formatTokenCount(usage.completionTokens),
+    total: formatTokenCount(usage.totalTokens),
+  }
+}
+
+function formatTokenCount(value) {
+  const number = Number(value)
+  return Number.isFinite(number) && number >= 0 ? String(Math.round(number)) : '확인 불가'
 }
 
 function normalizeSheetNames(value) {

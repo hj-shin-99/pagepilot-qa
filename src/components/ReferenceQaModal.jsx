@@ -11,10 +11,11 @@ import {
   importReferencePresetFromText,
   MAX_REFERENCE_PRESET_BYTES,
   resetReferenceReviewState,
+  shouldShowReferenceSheetSelection,
   updateReferenceSheetDraftSelection,
 } from '../utils/referenceReview'
 
-function ReferenceQaModal({ isDisabled, onReferenceApply }) {
+function ReferenceQaModal({ isDisabled, isReferenceRunEnabled = false, disabledReason = '', onReferenceApply }) {
   const [isOpen, setIsOpen] = useState(false)
   const [referenceState, setReferenceState] = useState(() => resetReferenceReviewState())
   const [selectedSheetNames, setSelectedSheetNames] = useState([])
@@ -27,8 +28,11 @@ function ReferenceQaModal({ isDisabled, onReferenceApply }) {
   const titleId = 'reference-qa-dialog-title'
   const descriptionId = 'reference-qa-dialog-description'
   const confirmedCount = referenceState.confirmedReferenceMap?.items?.length || 0
-  const triggerLabel = confirmedCount > 0 ? `Reference QA 적용 중 · ${confirmedCount}개` : 'Reference QA 선택 사항'
+  const triggerLabel = confirmedCount > 0
+    ? isReferenceRunEnabled ? `Reference URL QA 적용 중 · ${confirmedCount}개` : `Reference URL QA 설정 보존됨 · ${confirmedCount}개`
+    : 'Reference URL QA 선택 사항'
   const sheetSummaries = referenceState.analyzedReference?.sheetSummaries || []
+  const disabledHelperText = disabledReason
 
   useEffect(() => {
     if (!isOpen && shouldRestoreFocusRef.current) {
@@ -190,7 +194,7 @@ function ReferenceQaModal({ isDisabled, onReferenceApply }) {
   }
 
   return (
-    <div className="reference-qa-modal" aria-label="Reference QA">
+    <div className={`reference-qa-modal ${isDisabled ? 'is-disabled' : ''}`} aria-label="Reference QA">
       <span className="tech-scan-options-secondary-row reference-qa-trigger-row">
         <span className="tech-scan-options-status-check" aria-hidden="true">✓</span>
         <button
@@ -201,6 +205,7 @@ function ReferenceQaModal({ isDisabled, onReferenceApply }) {
           aria-haspopup="dialog"
           aria-expanded={isOpen}
           aria-controls="reference-qa-dialog"
+          aria-describedby={disabledHelperText ? 'reference-qa-disabled-reason' : undefined}
           onClick={openModal}
         >
           <span className="tech-scan-options-link">
@@ -209,6 +214,7 @@ function ReferenceQaModal({ isDisabled, onReferenceApply }) {
           </span>
         </button>
       </span>
+      {disabledHelperText ? <p id="reference-qa-disabled-reason" className="reference-qa-disabled-reason">{disabledHelperText}</p> : null}
 
       {isOpen ? createPortal((
         <div className="tech-scan-options-backdrop reference-qa-backdrop" onMouseDown={handleBackdropMouseDown}>
@@ -263,7 +269,7 @@ function ReferenceQaModal({ isDisabled, onReferenceApply }) {
                 {referenceState.referenceError ? <p className="start-error reference-error">{referenceState.referenceError}</p> : null}
               </section>
 
-              {referenceState.analyzedReference ? (
+              {shouldShowReferenceSheetSelection(referenceState) ? (
                 <SheetSelection
                   sheetSummaries={sheetSummaries}
                   selectedSheetNames={selectedSheetNames}
@@ -295,42 +301,47 @@ function ReferenceQaModal({ isDisabled, onReferenceApply }) {
 }
 
 function SheetSelection({ sheetSummaries, selectedSheetNames, isDisabled, isNormalizing, onSheetToggle, onNormalize }) {
+  const selectedCount = selectedSheetNames.length
   return (
     <section className="reference-upload-card reference-sheet-selection" aria-label="Reference sheet 선택">
       <div className="reference-upload-copy">
         <h3>sheet 선택</h3>
-        <p>모든 sheet는 자동 병합하지 않습니다. 실제 normalization에 사용할 sheet를 직접 선택하세요.</p>
+        <p>실제 분석에 사용할 sheet를 직접 선택하세요.</p>
       </div>
-      <div className="reference-sheet-list">
-        {sheetSummaries.map((sheet, index) => {
-          const isEmptyNavigation = Number(sheet.navigationCandidateRowCount) === 0 && Number(sheet.urlLikeTargetCount) === 0
-          const checked = selectedSheetNames.includes(sheet.sheetName)
-          const sheetInputId = `reference-sheet-${index}`
-          return (
-            <label className={`reference-sheet-row ${checked ? 'is-selected' : ''} ${isEmptyNavigation ? 'is-low-priority' : ''}`} htmlFor={sheetInputId} key={sheet.sheetName}>
-              <input
-                id={sheetInputId}
-                type="checkbox"
-                checked={checked}
-                disabled={isDisabled || isEmptyNavigation}
-                onChange={(event) => onSheetToggle(sheet.sheetName, event.target.checked)}
-              />
-              <span className="reference-sheet-main">
-                <strong>{sheet.sheetName}</strong>
-                <span>{formatSheetSummary(sheet)}</span>
-                <span>{formatHeaderSummary(sheet.headerCandidatesSummary)}</span>
-              </span>
-              {sheet.recommendationRank === 1 && !isEmptyNavigation ? <span className="reference-sheet-badge">추천 후보</span> : null}
-              {isEmptyNavigation ? <span className="reference-sheet-badge is-muted">navigation 후보 없음</span> : null}
-            </label>
-          )
-        })}
-      </div>
-      <div className="reference-apply-row">
-        <button className="reference-analyze-button" type="button" disabled={selectedSheetNames.length === 0 || isDisabled || isNormalizing} onClick={onNormalize}>
-          {isNormalizing ? 'normalization 중...' : '선택 sheet normalization'}
-        </button>
-        <p>{isNormalizing ? 'Reference 분석 중 · 여러 후보를 chunk 단위로 처리합니다.' : '선택되지 않은 sheet row는 normalization 요청에 포함되지 않습니다.'}</p>
+      <div className="reference-sheet-selection-shell">
+        <div className="reference-sheet-list" aria-label="분석할 sheet 목록">
+          {sheetSummaries.map((sheet, index) => {
+            const isEmptyNavigation = Number(sheet.navigationCandidateRowCount) === 0 && Number(sheet.urlLikeTargetCount) === 0
+            const checked = selectedSheetNames.includes(sheet.sheetName)
+            const sheetInputId = `reference-sheet-${index}`
+            return (
+              <label className={`reference-sheet-row ${checked ? 'is-selected' : ''} ${isEmptyNavigation ? 'is-low-priority' : ''}`} htmlFor={sheetInputId} key={sheet.sheetName}>
+                <input
+                  id={sheetInputId}
+                  type="checkbox"
+                  checked={checked}
+                  disabled={isDisabled || isEmptyNavigation}
+                  onChange={(event) => onSheetToggle(sheet.sheetName, event.target.checked)}
+                />
+                <span className="reference-sheet-main">
+                  <strong>{sheet.sheetName}</strong>
+                  <span>{formatSheetSummary(sheet)}</span>
+                  <span>{formatHeaderSummary(sheet.headerCandidatesSummary)}</span>
+                </span>
+                {sheet.recommendationRank === 1 && !isEmptyNavigation ? <span className="reference-sheet-badge">추천 후보</span> : null}
+                {isEmptyNavigation ? <span className="reference-sheet-badge is-muted">navigation 후보 없음</span> : null}
+              </label>
+            )
+          })}
+        </div>
+        {selectedCount > 0 ? (
+          <div className="reference-sheet-action-footer" aria-label="선택한 sheet 분석 실행">
+            <button className="reference-analyze-button" type="button" disabled={isDisabled || isNormalizing} onClick={onNormalize}>
+              {isNormalizing ? '분석 중...' : '선택한 시트 분석하기'}
+            </button>
+            <p>{isNormalizing ? 'Reference 분석 중입니다.' : `선택한 ${selectedCount}개 시트를 분석합니다.`}</p>
+          </div>
+        ) : null}
       </div>
     </section>
   )

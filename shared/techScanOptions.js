@@ -17,6 +17,8 @@ export const TECH_SCAN_OPTION_DEFINITIONS = Object.freeze([
 
 export const TECH_SCAN_OPTION_KEYS = Object.freeze(TECH_SCAN_OPTION_DEFINITIONS.map((definition) => definition.key))
 
+export const REFERENCE_QA_REQUIRED_OPTION_KEYS = Object.freeze(['url', 'click', 'landing'])
+
 export const DEFAULT_TECH_SCAN_OPTIONS = Object.freeze({
   url: true,
   click: true,
@@ -96,6 +98,11 @@ export function normalizeStoredTechScanOptions(value, result = {}) {
 export function areAllTechScanOptionsSelected(value) {
   const normalized = normalizeTechScanOptions(value)
   return TECH_SCAN_OPTION_KEYS.every((key) => normalized[key] === true)
+}
+
+export function isReferenceQaDependencySatisfied(value) {
+  const normalized = normalizeTechScanOptions(value)
+  return REFERENCE_QA_REQUIRED_OPTION_KEYS.every((key) => normalized[key] === true)
 }
 
 export function getTechScanOptionKeyForCheck(checkId = '') {

@@ -8,7 +8,7 @@ import { confirmWebUrlInput, createDebouncedWebUrlConfirmScheduler, createPublic
 import { countIssueCards, createCompactVisualResult, createVisualIssueCards, createVisualSummary } from './utils/visualQa'
 import { createTechQaViewModel } from './utils/techQa'
 import { createCompactNavigationReferenceMap } from './utils/referenceReview'
-import { createDefaultTechScanOptions, normalizeStoredTechScanOptions, normalizeTechScanOptions } from '../shared/techScanOptions.js'
+import { createDefaultTechScanOptions, isReferenceQaDependencySatisfied, normalizeStoredTechScanOptions, normalizeTechScanOptions } from '../shared/techScanOptions.js'
 import { getScanStageFromQaProgressEvent, getScanningResultReadyTransitionMs, SCAN_RESULT_READY_TRANSITION_MS } from './utils/scanningStages'
 import { requestQaRunStream } from './utils/qaRunStream'
 import { DEFAULT_DEVICE_IDS, normalizeDeviceIds } from '../shared/deviceProfiles.js'
@@ -46,6 +46,7 @@ function App() {
   const [techScanOptions, setTechScanOptions] = useState(initialAppState.techScanOptions)
   const [devices, setDevices] = useState(initialAppState.devices)
   const [confirmedReferenceMap, setConfirmedReferenceMap] = useState(null)
+  const [isReferenceRunEnabled, setIsReferenceRunEnabled] = useState(false)
   const minimumScanningTimerRef = useRef(null)
 
   const isScanning = visualScanState === 'loading' || techScanState === 'loading' || aiReviewState === 'loading'
@@ -56,7 +57,6 @@ function App() {
   const isTechTabEnabled = Boolean(techResult) || techScanState === 'loading' || techScanState === 'success' || techScanState === 'error'
   const isIdleStartView = !isScanning && activeTab === 'overview' && !visualResult && !techResult && visualScanState === 'idle' && techScanState === 'idle'
   const isEmptyResultView = activeTab !== 'history' && ((activeTab === 'tech' && !techResult) || (activeTab === 'visual' && !visualResult) || activeTab === 'overview')
-
   useEffect(() => {
     if (isScanning || isWebUrlConfirmed || !url.trim()) return undefined
 
@@ -160,7 +160,7 @@ function App() {
       session = await requestQaRun(webUrl, frameUrl, techScanOptions, selectedDevices, (progressEvent) => {
         setScanProgressEvent(progressEvent)
         setScanStage(getScanStageFromQaProgressEvent(progressEvent, { combined: Boolean(frameUrl) }))
-      }, confirmedReferenceMap)
+      }, isReferenceRunEnabled ? confirmedReferenceMap : null)
     } catch (error) {
       const message = error instanceof Error ? error.message : '통합 검사 요청에 실패했습니다.'
       session = {
@@ -304,6 +304,17 @@ function App() {
     setScanStage('idle')
     setScanProgressEvent(null)
     setConfirmedReferenceMap(null)
+    setIsReferenceRunEnabled(false)
+  }
+
+  const handleReferenceApply = (nextReferenceMap) => {
+    setConfirmedReferenceMap(nextReferenceMap)
+    setIsReferenceRunEnabled(Boolean(nextReferenceMap?.items?.length))
+  }
+
+  const handleTechScanOptionsChange = (nextOptions) => {
+    setTechScanOptions(nextOptions)
+    if (!isReferenceQaDependencySatisfied(nextOptions)) setIsReferenceRunEnabled(false)
   }
 
   const resetToNewScan = () => {
@@ -410,6 +421,7 @@ function App() {
         isScanning={isScanning}
         isWebUrlReady={isWebUrlReady}
         techScanOptions={techScanOptions}
+        isReferenceRunEnabled={isReferenceRunEnabled}
         devices={devices}
         url={url}
         onFigmaUrlChange={(value) => {
@@ -418,9 +430,9 @@ function App() {
         }}
         onOpenHistory={() => setActiveTab('history')}
         onStartScan={handleStartScan}
-        onTechScanOptionsChange={setTechScanOptions}
+        onTechScanOptionsChange={handleTechScanOptionsChange}
         onDevicesChange={(nextDevices) => setDevices(normalizeDeviceIds(nextDevices))}
-        onReferenceApply={setConfirmedReferenceMap}
+        onReferenceApply={handleReferenceApply}
         onUrlBlur={handleUrlBlur}
         onUrlConfirm={handleUrlConfirm}
         onUrlChange={(value) => {
@@ -520,7 +532,7 @@ function waitForResultReadyTransition({
 }
 
 async function requestQaRun(webUrl, figmaUrl, scanOptions, devices, onProgress, confirmedReferenceMap = null) {
-  const navigationReference = createCompactNavigationReferenceMap(confirmedReferenceMap)
+  const navigationReference = isReferenceQaDependencySatisfied(scanOptions) ? createCompactNavigationReferenceMap(confirmedReferenceMap) : null
   try {
     return await requestQaRunStream({ webUrl, figmaUrl, scanOptions, devices, navigationReference, onProgress })
   } catch (error) {

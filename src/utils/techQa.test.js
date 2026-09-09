@@ -680,6 +680,28 @@ test('Reference URL QA display model creates hierarchy segments without splittin
   assert.equal(intent.summary.mismatch, 1)
 })
 
+test('Reference URL QA display model preserves depth gaps and full hierarchy beyond four table columns', () => {
+  const intent = createNavigationIntentDisplayModel({
+    meta: { available: true },
+    items: [
+      { referenceId: 'intent-1', label: 'CTA', pageContext: { depthPath: ['Products', '', 'Calculator', '', 'Eligibility'] }, status: 'matched-correct', expectedUrls: [{ raw: '/tools/calc' }], actualUrlEvidence: [] },
+      { referenceId: 'intent-2', label: '/not/split/path', pageContext: { depthPath: [] }, status: 'reference-not-observed', expectedUrls: [{ raw: '/not/split/path' }], actualUrlEvidence: [] },
+    ],
+  })
+
+  const rowsById = Object.fromEntries(intent.rows.map((row) => [row.referenceId, row]))
+  assert.deepEqual(rowsById['intent-1'].hierarchySegments, ['Products', '', 'Calculator', '', 'Eligibility', 'CTA'])
+  assert.deepEqual(rowsById['intent-2'].hierarchySegments, ['/not/split/path'])
+})
+
+test('Reference URL QA panel source fixes table headers to 1-4 Depth while details keep hierarchySegments', () => {
+  const source = fs.readFileSync('src/components/TechQaPanel.jsx', 'utf8')
+
+  assert.equal(source.includes('const depthColumnCount = 4'), true)
+  assert.equal(source.includes('`${index + 1} Depth`'), true)
+  assert.equal(source.includes('formatIntentHierarchy(row.hierarchySegments, row.label)'), true)
+})
+
 test('Reference URL QA display model derives original source row without using sorted display index', () => {
   const intent = createNavigationIntentDisplayModel({
     meta: { available: true },

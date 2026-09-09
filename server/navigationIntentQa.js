@@ -362,7 +362,7 @@ function normalizeReferenceItem(item) {
     actionHint: normalizeText(item.element?.actionHint, 80),
     pageContext: {
       sectionHint: normalizeText(item.pageContext?.sectionHint, 160),
-      depthPath: normalizeStringArray(item.pageContext?.depthPath, 8, 160),
+      depthPath: normalizeDepthPath(item.pageContext?.depthPath, 8, 160),
     },
     expectedUrls,
     source: {
@@ -721,6 +721,14 @@ function normalizeLabel(value) {
 function normalizeStringArray(value, maxItems, maxLength) {
   if (!Array.isArray(value)) return []
   return value.map((item) => normalizeText(item, maxLength)).filter(Boolean).slice(0, maxItems)
+}
+
+function normalizeDepthPath(value, maxItems, maxLength) {
+  if (!Array.isArray(value)) return []
+  const normalized = value.slice(0, maxItems).map((item) => normalizeText(item, maxLength))
+  let end = normalized.length
+  while (end > 0 && !normalized[end - 1]) end -= 1
+  return normalized.slice(0, end)
 }
 
 function arrayOfObjects(value) {

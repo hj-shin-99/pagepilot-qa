@@ -153,6 +153,19 @@ test('compact navigation Reference map keeps only confirmed compact intent data'
   assert.equal(Object.hasOwn(compact.items[0].source, 'columns'), false)
 })
 
+test('Reference preset and compact map preserve hierarchy depth gaps without raw workbook columns', () => {
+  const hierarchyItem = { ...createItem('ref-101', 'CTA', '/cta', 0.9), pageContext: { depthPath: ['Products', '', 'Calculator', '', 'Eligibility'], sectionHint: '', pageUrlHint: '' } }
+  const state = createReferenceReviewState({ ...createReferenceMap(), items: [hierarchyItem] })
+  const confirmedMap = createConfirmedReferenceMap(state.referenceMap, confirmReferenceItem(state.items, 'ref-101'))
+  const preset = createReferencePreset({ referenceMap: state.referenceMap, items: confirmedMap.items, meta: { selectedSheetNames: ['Sheet1'] }, normalizedSheetNames: ['Sheet1'] })
+  const imported = importReferencePresetFromText(JSON.stringify(preset))
+  const compact = createCompactNavigationReferenceMap(confirmedMap)
+
+  assert.deepEqual(imported.reviewItems[0].pageContext.depthPath, ['Products', '', 'Calculator', '', 'Eligibility'])
+  assert.deepEqual(compact.items[0].pageContext.depthPath, ['Products', '', 'Calculator', '', 'Eligibility'])
+  assert.equal(Object.hasOwn(compact.items[0].source, 'columns'), false)
+})
+
 test('Reference preset export excludes raw workbook data and restores review decisions', () => {
   const state = createReferenceReviewState(createReferenceMap())
   let items = editReferenceItem(state.items, 'ref-001', { label: 'Pricing edited', aliases: 'Plans', urls: ['/pricing-edited'] })

@@ -362,7 +362,7 @@ function TechCompletionCard({ completion }) {
 
 function NavigationIntentSection({ intent }) {
   const rows = intent.rows || []
-  const depthColumnCount = Math.max(1, ...rows.map((row) => (Array.isArray(row.hierarchySegments) ? row.hierarchySegments.length : 0)))
+  const depthColumnCount = 4
   const depthColumns = Array.from({ length: depthColumnCount }, (_, index) => formatNavigationDepthColumn(index))
   const tableColumns = `70px ${Array.from({ length: depthColumnCount }, () => 'minmax(84px, 0.75fr)').join(' ')} 92px minmax(120px, 0.95fr) minmax(120px, 0.95fr) 40px`
   const visibility = getSectionVisibility(rows, { maxVisible: 5, statusOrder: ['error', 'warn', 'info', 'ok'] })
@@ -431,10 +431,7 @@ function NavigationIntentRow({ row, depthColumnCount }) {
 }
 
 function formatNavigationDepthColumn(index) {
-  if (index === 0) return '1차 메뉴'
-  if (index === 1) return '2차 메뉴'
-  if (index === 2) return '페이지/항목'
-  return `${index + 1}차 항목`
+  return `${index + 1} Depth`
 }
 
 function NavigationIntentDetails({ row }) {
@@ -937,8 +934,8 @@ function formatIntentSource(source = {}) {
 }
 
 function formatIntentHierarchy(segments = [], fallback = '') {
-  const values = Array.isArray(segments) ? segments.filter(Boolean) : []
-  return values.length > 0 ? values.join(' / ') : fallback || '-'
+  const values = Array.isArray(segments) ? segments.map((segment) => segment || '-') : []
+  return values.some((segment) => segment !== '-') ? values.join(' / ') : fallback || '-'
 }
 
 function renderIntentUrls(urls = [], rowId, kind) {

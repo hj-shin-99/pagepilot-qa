@@ -62,7 +62,7 @@ export function createReferenceNavigationService(options = {}) {
         cacheMeta = createReferenceNormalizationCacheMeta(cacheKey, { status: 'hit', hit: true, read: true })
         warnings.push(...cachedChunkResult.warnings)
         const mappedItems = assignReferenceIds(sortItemsByManifestOrder(cachedChunkResult.items, compactInput.manifest))
-        const items = annotateFinalDuplicateTargets(appendUnmappedCandidateItems(mappedItems, compactInput.manifest))
+        const items = annotateFinalDuplicateTargets(appendUnmappedCandidateItems(enrichItemsWithSourcePageContext(mappedItems, compactInput), compactInput))
 
         return createReferenceNavigationResult({ reference, compactInput, model, now, items, warnings, openAiCalled: false, chunking: createCachedChunkingMeta(compactInput.chunks.length, limits), failedChunks: [], usage: createEmptyUsageMeta(), cache: cacheMeta, deterministicTriage: { ...deterministicTriage, aiSubmittedCandidateCount: 0 } })
       }
@@ -79,7 +79,7 @@ export function createReferenceNavigationService(options = {}) {
       }
       warnings.push(...mergedChunkResult.warnings)
       const mappedItems = assignReferenceIds(sortItemsByManifestOrder(mergedChunkResult.items, compactInput.manifest))
-      const items = annotateFinalDuplicateTargets(appendUnmappedCandidateItems(mappedItems, compactInput.manifest))
+      const items = annotateFinalDuplicateTargets(appendUnmappedCandidateItems(enrichItemsWithSourcePageContext(mappedItems, compactInput), compactInput))
       cacheMeta = await writeReferenceChunkResultToCache(cache, cacheKey, mergedChunkResult, cacheMeta)
 
       return createReferenceNavigationResult({ reference, compactInput, model, now, items, warnings, openAiCalled: chunkResult.chunking.apiCallCount > 0, chunking: chunkResult.chunking, failedChunks: chunkResult.failedChunks, usage: chunkResult.usage, cache: cacheMeta, deterministicTriage: { ...deterministicTriage, aiSubmittedCandidateCount: chunkResult.aiSubmittedCandidateCount } })
@@ -128,6 +128,7 @@ export function createReferenceNavigationInput(reference, options = {}) {
         detectedUrls: manifestCandidate?.detectedUrls || [],
         candidateId: manifestCandidate?.candidateId || '',
         labelCandidate: manifestCandidate?.labelCandidate || '',
+        hierarchyDepthPath: createSourceHierarchyDepthPath(sheet, rowNumber, cells, limits),
         duplicateCandidate: manifestCandidate?.duplicateCandidate === true,
       }
       rowIndex.set(key, indexedRow)
@@ -184,6 +185,111 @@ function normalizeCellValue(value, maxLength) {
     if (text || hyperlink) return { ...(text ? { text } : {}), ...(hyperlink ? { hyperlink } : {}) }
   }
   return normalizeText(String(value), maxLength)
+}
+
+function createSourcePageContext(indexedRow) {
+  return { depthPath: createSourceHierarchyDepthPathFromIndexedRow(indexedRow), sectionHint: '', pageUrlHint: '' }
+}
+
+function createSourceHierarchyDepthPathFromIndexedRow(indexedRow) {
+  return normalizeDepthPath(indexedRow?.hierarchyDepthPath, 8, 160)
+}
+
+function createSourceHierarchyDepthPath(sheet, rowNumber, cells, limits) {
+  const header = selectSourceHierarchyHeader(sheet, rowNumber, limits)
+  if (!header) return []
+
+  const columns = inferSourceHierarchyColumns(header.cells)
+  if (columns.length === 0) return []
+
+  const depthPath = Array.from({ length: Math.min(8, Math.max(...columns.map((entry) => entry.depthIndex))) }, () => '')
+  for (const { column, depthIndex } of columns) {
+    if (depthIndex < 1 || depthIndex > depthPath.length) continue
+    depthPath[depthIndex - 1] = normalizeHierarchyCellText(cells[column])
+  }
+  return trimTrailingEmptyDepths(depthPath)
+}
+
+function selectSourceHierarchyHeader(sheet, rowNumber, limits) {
+  let best = null
+  for (const header of normalizeHeaderCandidates(sheet?.headerCandidates, limits)) {
+    const columns = inferSourceHierarchyColumns(header.cells)
+    if (columns.length === 0) continue
+    const beforeRow = header.rowNumber < rowNumber
+    if (!best || (beforeRow && !best.beforeRow) || (beforeRow === best.beforeRow && columns.length > best.columns.length) || (beforeRow && best.beforeRow && header.rowNumber > best.header.rowNumber)) {
+      best = { header, columns, beforeRow }
+    }
+  }
+  return best?.header || null
+}
+
+function inferSourceHierarchyColumns(cells = {}) {
+  const numbered = []
+  const unnumbered = []
+  for (const [column, value] of Object.entries(cells).sort(([left], [right]) => compareColumnNames(left, right))) {
+    const headerText = normalizeHeaderCellText(value)
+    const role = inferHierarchyHeaderRole(headerText)
+    if (role.depthIndex) numbered.push({ column, depthIndex: role.depthIndex })
+    else if (role.isHierarchy) unnumbered.push({ column })
+  }
+
+  const used = new Set()
+  const columns = []
+  for (const entry of numbered) {
+    if (entry.depthIndex < 1 || entry.depthIndex > 8 || used.has(entry.depthIndex)) continue
+    used.add(entry.depthIndex)
+    columns.push(entry)
+  }
+
+  let nextDepthIndex = 1
+  for (const entry of unnumbered) {
+    while (used.has(nextDepthIndex)) nextDepthIndex += 1
+    if (nextDepthIndex > 8) break
+    used.add(nextDepthIndex)
+    columns.push({ ...entry, depthIndex: nextDepthIndex })
+  }
+
+  return columns.sort((left, right) => left.depthIndex - right.depthIndex)
+}
+
+function inferHierarchyHeaderRole(value) {
+  const text = normalizeText(value, 120).toLowerCase()
+  if (!text || /\b(url|uri|href|link|target|destination|path|route|address|redirect)\b|주소|링크|경로/i.test(text)) return { isHierarchy: false, depthIndex: 0 }
+
+  const numberedPatterns = [
+    /(?:^|\b)(\d{1,2})(?:st|nd|rd|th)?\s*(?:depth|level|lvl|menu|navigation|nav|차|단계)(?:\b|\s|$)/i,
+    /(?:^|\b)(?:depth|level|lvl|menu|navigation|nav|차|단계)\s*(\d{1,2})(?:st|nd|rd|th)?(?:\b|\s|$)/i,
+  ]
+  for (const pattern of numberedPatterns) {
+    const match = text.match(pattern)
+    const depthIndex = Number(match?.[1])
+    if (Number.isInteger(depthIndex) && depthIndex >= 1 && depthIndex <= 8) return { isHierarchy: true, depthIndex }
+  }
+
+  if (/^(depth|level|lvl|menu|navigation|nav|section|category)(\s*(name|label|title))?$/.test(text) || /^(대|중|소)?메뉴$|^분류$|^카테고리$/i.test(text)) return { isHierarchy: true, depthIndex: 0 }
+  return { isHierarchy: false, depthIndex: 0 }
+}
+
+function normalizeHeaderCellText(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return normalizeText(value.text || value.hyperlink, 120)
+  return normalizeText(value, 120)
+}
+
+function normalizeHierarchyCellText(value) {
+  const text = value && typeof value === 'object' && !Array.isArray(value) ? normalizeText(value.text, 160) : normalizeText(value, 160)
+  return isNavigationUrlLike(text) ? '' : text
+}
+
+function isNavigationUrlLike(value) {
+  return /^https?:\/\//i.test(value) || /^\/[A-Za-z0-9._~:/?#[\]@!$&'*+;=%{}-]+/.test(value)
+}
+
+function compareColumnNames(left, right) {
+  return columnNameToNumber(left) - columnNameToNumber(right)
+}
+
+function columnNameToNumber(column) {
+  return normalizeText(column, 8).split('').reduce((number, char) => (number * 26) + char.charCodeAt(0) - 64, 0)
 }
 
 function buildAiInputSheets(sourceSheets, selectedRows, limits) {
@@ -338,7 +444,7 @@ function createDeterministicReferenceItem({ candidate, indexedRow, urlEvidence, 
       columns: indexedRow.cells,
       evidenceText: indexedRow.evidenceText,
     },
-    pageContext: { depthPath: [], sectionHint: '', pageUrlHint: '' },
+    pageContext: createSourcePageContext(indexedRow),
     element: { label, aliases: [], roleHint: 'link', actionHint: 'navigation' },
     expected: { type: 'url', urls: expectedUrls, urlPatterns: [], notes: '' },
     urlEvidence,
@@ -448,7 +554,7 @@ function normalizeReferenceItems(items, compactInput, allowedCandidateIds, limit
         columns: indexedRow.cells,
         evidenceText: createConnectedEvidenceText(item.source.evidenceText, indexedRow.evidenceText),
       },
-      pageContext: normalizePageContext(item.pageContext),
+      pageContext: normalizePageContext(item.pageContext, indexedRow),
       element: normalizeElement(item.element),
       expected: {
         type: 'url',
@@ -746,10 +852,11 @@ function normalizeDynamicParameters(value, raw) {
   return [...new Set([...fromAi, ...fromRaw])]
 }
 
-function normalizePageContext(value = {}) {
+function normalizePageContext(value = {}, indexedRow = null) {
   const input = value && typeof value === 'object' ? value : {}
+  const depthPath = normalizeDepthPath(input.depthPath, 8, 160)
   return {
-    depthPath: normalizeStringArray(input.depthPath, 8, 160),
+    depthPath: hasDepthPathValue(depthPath) ? depthPath : createSourceHierarchyDepthPathFromIndexedRow(indexedRow),
     sectionHint: normalizeText(input.sectionHint, 240),
     pageUrlHint: normalizeText(input.pageUrlHint, 500),
   }
@@ -1100,8 +1207,20 @@ function assignReferenceIds(items) {
   return items.map((item, index) => ({ ...item, referenceId: `ref-${String(index + 1).padStart(3, '0')}` }))
 }
 
-function appendUnmappedCandidateItems(mappedItems, manifest) {
+function enrichItemsWithSourcePageContext(items, compactInput) {
+  return items.map((item) => {
+    const pageContext = normalizePageContext(item.pageContext)
+    if (hasDepthPathValue(pageContext.depthPath)) return item
+
+    const indexedRow = item.candidateId ? compactInput?.candidateIndex?.get(item.candidateId) : compactInput?.rowIndex?.get(createRowKey(item.source?.sheetName, item.source?.rowNumber))
+    const sourceDepthPath = createSourceHierarchyDepthPathFromIndexedRow(indexedRow)
+    return hasDepthPathValue(sourceDepthPath) ? { ...item, pageContext: { ...pageContext, depthPath: sourceDepthPath } } : item
+  })
+}
+
+function appendUnmappedCandidateItems(mappedItems, compactInput) {
   const mappedKeys = new Set(mappedItems.map((item) => createCandidateKey(item.source?.sheetName, item.source?.rowNumber)))
+  const manifest = compactInput?.manifest
   const candidates = Array.isArray(manifest?.candidates) ? manifest.candidates : []
   const unmappedItems = []
 
@@ -1109,6 +1228,7 @@ function appendUnmappedCandidateItems(mappedItems, manifest) {
     if (mappedKeys.has(createCandidateKey(candidate.sheetName, candidate.rowNumber))) continue
 
     const referenceNumber = mappedItems.length + unmappedItems.length + 1
+    const indexedRow = compactInput?.candidateIndex?.get(candidate.candidateId)
     const candidateRow = {
       cells: {},
       evidenceText: candidate.evidenceText || '',
@@ -1128,7 +1248,7 @@ function appendUnmappedCandidateItems(mappedItems, manifest) {
         sourceColumns: candidate.sourceColumns || [],
         evidenceText: candidate.evidenceText || '',
       },
-      pageContext: { depthPath: [], sectionHint: '', pageUrlHint: '' },
+      pageContext: createSourcePageContext(indexedRow),
       element: { label: candidate.labelCandidate || 'AI 미매핑 / 검토 필요', aliases: [], roleHint: 'unknown', actionHint: 'navigation' },
       expected: { type: 'url', urls: expectedUrls, urlPatterns: [], notes: 'AI가 정규화하지 못한 문서 후보입니다. 확인 후 Confirm, Edit 또는 Exclude 하세요.' },
       urlEvidence,
@@ -1311,6 +1431,22 @@ function createConnectedEvidenceText(aiEvidenceText, rowEvidenceText) {
 function normalizeStringArray(value, maxItems, maxLength) {
   if (!Array.isArray(value)) return []
   return [...new Set(value.map((item) => normalizeText(item, maxLength)).filter(Boolean))].slice(0, maxItems)
+}
+
+function normalizeDepthPath(value, maxItems, maxLength) {
+  if (!Array.isArray(value)) return []
+  return trimTrailingEmptyDepths(value.slice(0, maxItems).map((item) => normalizeText(item, maxLength)))
+}
+
+function trimTrailingEmptyDepths(value) {
+  const items = Array.isArray(value) ? value : []
+  let end = items.length
+  while (end > 0 && !items[end - 1]) end -= 1
+  return items.slice(0, end)
+}
+
+function hasDepthPathValue(value) {
+  return Array.isArray(value) && value.some(Boolean)
 }
 
 function normalizeText(value, maxLength) {

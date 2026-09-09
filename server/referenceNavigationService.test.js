@@ -75,6 +75,44 @@ test('Phase 2-B A deterministic-safe single explicit URL skips OpenAI without AP
   assert.equal(result.referenceMap.items[0].provenance.inferenceUsed, false)
 })
 
+test('Reference hierarchy is inferred from generic numbered depth headers without fixed column positions', async () => {
+  const service = createReferenceNavigationService({ apiKey: '', now: fixedNow, normalizationCache: false })
+  const reference = createReference({
+    sheets: [createSheet({
+      sheetName: 'Generic Navigation',
+      headerCandidates: [{ rowNumber: 1, cells: { A: '3 Depth', B: 'Target URL', C: '1 Depth', D: '5 Depth', E: 'Label' } }],
+      rows: [{ rowNumber: 2, cells: { A: 'Calculator', B: { text: 'Open calculator', hyperlink: '/tools/calc' }, C: 'Products', D: 'Eligibility', E: 'CTA' } }],
+    })],
+  })
+
+  const result = await service.normalize(reference)
+
+  assert.equal(result.meta.openAiCalled, false)
+  assert.deepEqual(result.referenceMap.items[0].pageContext.depthPath, ['Products', '', 'Calculator', '', 'Eligibility'])
+  assert.equal(result.referenceMap.items[0].expected.urls[0].raw, '/tools/calc')
+})
+
+test('Reference hierarchy supports two-depth documents and does not treat Page or URL-like values as depth', async () => {
+  const client = createPromptRecordingClient(() => ({ items: [{ ...aiItem({ rowNumber: 3, raw: '/details' }), pageContext: { depthPath: [], sectionHint: '', pageUrlHint: '' } }] }))
+  const service = createReferenceNavigationService({ apiKey: 'test-key', client, now: fixedNow, normalizationCache: false })
+  const reference = createReference({
+    sheets: [createSheet({
+      sheetName: 'Mixed',
+      headerCandidates: [{ rowNumber: 1, cells: { A: 'Depth 1', B: 'Page', C: 'Depth 2', D: 'Target URL' } }],
+      rows: [
+        { rowNumber: 2, cells: { A: 'Shop', B: 'Overview', C: 'Offers', D: '/offers' } },
+        { rowNumber: 3, cells: { A: '/not/a/hierarchy', B: 'Details', C: '', D: '/details' } },
+      ],
+    })],
+  })
+
+  const result = await service.normalize(reference)
+
+  assert.deepEqual(client.requests.map((request) => request.candidateIds), [['cand-0002']])
+  assert.deepEqual(result.referenceMap.items.map((item) => item.pageContext.depthPath), [['Shop', 'Offers'], []])
+  assert.equal(result.referenceMap.items[0].expected.urls[0].raw, '/offers')
+})
+
 test('Phase 2-B B all deterministic-safe rows keep usage and submitted count at zero', async () => {
   const service = createReferenceNavigationService({ apiKey: '', now: fixedNow, normalizationCache: false })
   const reference = createReference({
@@ -1049,12 +1087,12 @@ function createAiRequiredReference(options = {}) {
   return createReference(options)
 }
 
-function createSheet({ sheetName, rows }) {
+function createSheet({ sheetName, rows, headerCandidates }) {
   return {
     sheetName,
     rowCount: rows.length,
     usedRange: { startRow: rows[0].rowNumber, endRow: rows.at(-1).rowNumber },
-    headerCandidates: [{ rowNumber: 1, cells: { A: 'Label', B: 'Target URL' } }],
+    headerCandidates: headerCandidates || [{ rowNumber: 1, cells: { A: 'Label', B: 'Target URL' } }],
     rows,
     rowsTruncated: false,
   }

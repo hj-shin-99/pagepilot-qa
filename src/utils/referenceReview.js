@@ -283,7 +283,7 @@ function createPresetItem(item) {
     },
     pageContext: {
       sectionHint: normalizeText(item.pageContext?.sectionHint, 160),
-      depthPath: normalizeStringArray(item.pageContext?.depthPath, 8, 160),
+      depthPath: normalizeDepthPath(item.pageContext?.depthPath, 8, 160),
       pageUrlHint: normalizeText(item.pageContext?.pageUrlHint, 500),
     },
     element: {
@@ -386,7 +386,7 @@ function createCompactNavigationReferenceItem(item) {
     },
     pageContext: {
       sectionHint: normalizeText(item.pageContext?.sectionHint, 160),
-      depthPath: normalizeStringArray(item.pageContext?.depthPath, 8, 160),
+      depthPath: normalizeDepthPath(item.pageContext?.depthPath, 8, 160),
     },
     element: {
       label,
@@ -479,6 +479,14 @@ function normalizeAliases(value) {
 
 function normalizeStringArray(value, maxItems, maxLength) {
   return Array.isArray(value) ? value.map((item) => normalizeText(item, maxLength)).filter(Boolean).slice(0, maxItems) : []
+}
+
+function normalizeDepthPath(value, maxItems, maxLength) {
+  if (!Array.isArray(value)) return []
+  const normalized = value.slice(0, maxItems).map((item) => normalizeText(item, maxLength))
+  let end = normalized.length
+  while (end > 0 && !normalized[end - 1]) end -= 1
+  return normalized.slice(0, end)
 }
 
 function normalizeText(value, maxLength) {

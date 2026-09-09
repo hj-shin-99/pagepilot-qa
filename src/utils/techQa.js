@@ -242,8 +242,8 @@ function normalizeNavigationIntentActualUrlDetails(actualUrlEvidence) {
 
 function createNavigationIntentHierarchySegments(item = {}) {
   const label = safeIntentText(item.label || item.actualLabel, 240) || 'Reference item'
-  const depthPath = normalizeStringList(item.pageContext?.depthPath, 8, 160)
-  if (depthPath.length > 0) {
+  const depthPath = normalizeHierarchySegmentList(item.pageContext?.depthPath, 8, 160)
+  if (depthPath.some(Boolean)) {
     const hasLabel = depthPath.some((segment) => segment.toLowerCase() === label.toLowerCase())
     return hasLabel ? depthPath : [...depthPath, label]
   }
@@ -295,6 +295,14 @@ function normalizeSourceRowNumber(value) {
 
 function normalizeStringList(values = [], maxItems = 12, maxLength = 240) {
   return Array.isArray(values) ? values.map((value) => safeIntentText(value, maxLength)).filter(Boolean).slice(0, maxItems) : []
+}
+
+function normalizeHierarchySegmentList(values = [], maxItems = 8, maxLength = 160) {
+  if (!Array.isArray(values)) return []
+  const normalized = values.slice(0, maxItems).map((value) => safeIntentText(value, maxLength))
+  let end = normalized.length
+  while (end > 0 && !normalized[end - 1]) end -= 1
+  return normalized.slice(0, end)
 }
 
 function safeIntentText(value, maxLength = 240) {

@@ -407,8 +407,8 @@ test('Tech QA history preserves Navigation Intent QA result through compact roun
     meta: { available: true },
     summary: { evaluated: 2, correct: 1, mismatch: 1, review: 0, notObserved: 0 },
     items: [
-      { referenceId: 'intent-1', label: 'Apply', pageContext: { depthPath: ['Main', 'Apply'] }, status: 'matched-correct', expectedUrls: [{ raw: '/apply' }], actualUrlEvidence: [{ url: 'https://intent-desktop.example/apply' }] },
-      { referenceId: 'intent-2', label: 'Offer', pageContext: { depthPath: ['Products', '', 'Offers', '', 'Eligibility'] }, status: 'matched-mismatch', expectedUrls: [{ raw: '/offer' }], actualUrlEvidence: [{ url: 'https://intent-desktop.example/promo' }], reason: 'Expected URL differs' },
+      { referenceId: 'intent-1', label: 'Apply', source: { rowNumber: 10 }, pageContext: { depthPath: ['Main', 'Apply'] }, status: 'matched-correct', expectedUrls: [{ raw: '/apply' }], actualUrlEvidence: [{ url: 'https://intent-desktop.example/apply' }] },
+      { referenceId: 'intent-2', label: 'Offer', source: { rowNumber: 6 }, pageContext: { depthPath: ['Products', '', 'Offers', '', 'Eligibility'] }, status: 'matched-mismatch', expectedUrls: [{ raw: '/offer' }], actualUrlEvidence: [{ url: 'https://intent-desktop.example/promo' }], reason: 'Expected URL differs' },
     ],
   }
 
@@ -424,7 +424,7 @@ test('Tech QA history preserves Navigation Intent QA result through compact roun
   assert.deepEqual(view.navigationIntent.rows[1].expectedUrls, ['/apply'])
   assert.equal(view.navigationIntent.visible, true)
   assert.deepEqual(view.navigationIntent.rows.map((row) => row.referenceId), ['intent-2', 'intent-1'])
-  assert.deepEqual(view.navigationIntent.rows[0].hierarchySegments, ['Products', '', 'Offers', '', 'Eligibility', 'Offer'])
+  assert.deepEqual(view.navigationIntent.rows[0].hierarchySegments, ['Products', '', 'Offers', '', 'Eligibility'])
 })
 
 test('runtime-like frontend History save path preserves Landing and Form after App precompact and storage load', async () => {

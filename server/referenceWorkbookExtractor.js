@@ -59,6 +59,7 @@ function extractSheetFacts(worksheet, limits, getTotalRows, addTotalRows) {
     sheetName: worksheet.name,
     rowCount: rows.length,
     usedRange: startRow === null ? null : { startRow, endRow },
+    mergedRanges: extractMergedRanges(worksheet, limits),
     headerCandidates: rows.slice(0, limits.maxHeaderCandidateRows).map((row) => ({
       rowNumber: row.rowNumber,
       cells: row.cells,
@@ -90,6 +91,46 @@ function extractRowCells(row, limits) {
   })
 
   return { cells, cellsTruncated }
+}
+
+function extractMergedRanges(worksheet, limits) {
+  const mergeRefs = getMergeRefs(worksheet)
+  return mergeRefs.map((ref) => {
+    const range = parseMergeRange(ref)
+    if (!range) return null
+    const master = worksheet.getCell(range.top, range.left)
+    const value = normalizeCellValue(master.value, master, limits)
+    if (isEmptyValue(value)) return null
+    return {
+      top: range.top,
+      left: columnNumberToName(range.left),
+      bottom: range.bottom,
+      right: columnNumberToName(range.right),
+      value,
+    }
+  }).filter(Boolean)
+}
+
+function getMergeRefs(worksheet) {
+  const modelMerges = Array.isArray(worksheet?.model?.merges) ? worksheet.model.merges : []
+  const internalMerges = worksheet?._merges && typeof worksheet._merges === 'object' ? Object.values(worksheet._merges).map((range) => range?.range || range?.model?.range || String(range || '')) : []
+  return [...new Set([...modelMerges, ...internalMerges].map((ref) => String(ref || '').trim()).filter(Boolean))]
+}
+
+function parseMergeRange(ref) {
+  const match = String(ref || '').match(/^([A-Z]{1,3})(\d+):([A-Z]{1,3})(\d+)$/i)
+  if (!match) return null
+  const startColumn = columnNameToNumber(match[1])
+  const endColumn = columnNameToNumber(match[3])
+  const startRow = Number(match[2])
+  const endRow = Number(match[4])
+  if (![startColumn, endColumn, startRow, endRow].every((value) => Number.isInteger(value) && value > 0)) return null
+  return {
+    top: Math.min(startRow, endRow),
+    left: Math.min(startColumn, endColumn),
+    bottom: Math.max(startRow, endRow),
+    right: Math.max(startColumn, endColumn),
+  }
 }
 
 function normalizeCellValue(value, cell, limits) {
@@ -165,4 +206,8 @@ function columnNumberToName(columnNumber) {
   }
 
   return name
+}
+
+function columnNameToNumber(column) {
+  return String(column || '').toUpperCase().split('').reduce((number, char) => (number * 26) + char.charCodeAt(0) - 64, 0)
 }

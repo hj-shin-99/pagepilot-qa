@@ -365,7 +365,7 @@ function NavigationIntentSection({ intent }) {
   const depthColumnCount = 4
   const depthColumns = Array.from({ length: depthColumnCount }, (_, index) => formatNavigationDepthColumn(index))
   const tableColumns = `70px ${Array.from({ length: depthColumnCount }, () => 'minmax(84px, 0.75fr)').join(' ')} 92px minmax(120px, 0.95fr) minmax(120px, 0.95fr) 40px`
-  const visibility = getSectionVisibility(rows, { maxVisible: 5, statusOrder: ['error', 'warn', 'info', 'ok'] })
+  const visibility = getSectionVisibility(rows, { maxVisible: 5, preserveOrder: true })
   return (
     <section className="detail-card tech-compact-card" id="navigation-intent-qa-section" aria-label="Reference URL QA">
       <SectionHead

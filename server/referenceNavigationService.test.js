@@ -21,6 +21,17 @@ test('valid compact facts become a valid reference map', async () => {
   assert.equal(result.meta.outputItemCount, 1)
 })
 
+test('reference normalization preserves Unicode sourceDocument filename', async () => {
+  const service = createServiceWithItems([
+    aiItem({ label: 'Pricing', raw: '/pricing' }),
+  ])
+  const reference = { ...createAiRequiredReference({ cells: { A: 'Pricing', B: '/pricing', C: 'alternate may be /pricing-legacy' } }), fileName: 'Reference 기능정의서 (최종).xlsx' }
+
+  const result = await service.normalize(reference)
+
+  assert.equal(result.referenceMap.sourceDocument.fileName, 'Reference 기능정의서 (최종).xlsx')
+})
+
 test('reference normalization cache hit avoids OpenAI and exposes safe usage telemetry', async () => {
   let calls = 0
   const cache = createReferenceNormalizationCache()
@@ -111,6 +122,242 @@ test('Reference hierarchy supports two-depth documents and does not treat Page o
   assert.deepEqual(client.requests.map((request) => request.candidateIds), [['cand-0002']])
   assert.deepEqual(result.referenceMap.items.map((item) => item.pageContext.depthPath), [['Shop', 'Offers'], []])
   assert.equal(result.referenceMap.items[0].expected.urls[0].raw, '/offers')
+})
+
+test('Reference hierarchy supports common numbered and semantic alias header layouts', async () => {
+  const service = createReferenceNavigationService({ apiKey: '', now: fixedNow, normalizationCache: false })
+  const reference = createReference({
+    sheets: [
+      createSheet({
+        sheetName: 'A numbered',
+        headerCandidates: [{ rowNumber: 1, cells: { A: '1Depth', B: '2Depth', C: '3Depth', D: '4Depth', E: 'URL' } }],
+        rows: [{ rowNumber: 2, cells: { A: 'A1', B: 'A2', C: 'A3', D: 'A4', E: '/a' } }],
+      }),
+      createSheet({
+        sheetName: 'B metadata first',
+        headerCandidates: [{ rowNumber: 1, cells: { A: 'ID', B: 'URL', C: '1Depth', D: '비고', E: '2Depth', F: '3Depth' } }],
+        rows: [{ rowNumber: 2, cells: { A: '100', B: '/b', C: 'B1', D: 'note', E: 'B2', F: 'B3' } }],
+      }),
+      createSheet({
+        sheetName: 'C reordered',
+        headerCandidates: [{ rowNumber: 1, cells: { A: 'Depth 1', B: 'Type', C: 'Depth 3', D: 'Link', E: 'Depth 2' } }],
+        rows: [{ rowNumber: 2, cells: { A: 'C1', B: 'Page', C: 'C3', D: '/c', E: 'C2' } }],
+      }),
+      createSheet({
+        sheetName: 'D aliases',
+        headerCandidates: [{ rowNumber: 1, cells: { A: '대분류', B: '기능설명', C: '중분류', D: 'Path', E: '소분류' } }],
+        rows: [{ rowNumber: 2, cells: { A: 'D1', B: 'description', C: 'D2', D: '/d', E: 'D3' } }],
+      }),
+    ],
+  })
+
+  const result = await service.normalize(reference)
+
+  assert.equal(result.meta.openAiCalled, false)
+  assert.deepEqual(result.referenceMap.items.map((item) => item.pageContext.depthPath), [
+    ['A1', 'A2', 'A3', 'A4'],
+    ['B1', 'B2', 'B3'],
+    ['C1', 'C2', 'C3'],
+    ['D1', 'D2', 'D3'],
+  ])
+  assert.deepEqual(result.referenceMap.items.map((item) => item.expected.urls[0].raw), ['/a', '/b', '/c', '/d'])
+})
+
+test('Reference hierarchy removes AI false depth values and prefers source semantic depth', async () => {
+  const client = createPromptRecordingClient(() => ({
+    items: [
+      { ...aiItem({ raw: '/privacy' }), pageContext: { depthPath: ['Notice', 'Privacy notice', 'Page', 'O'], sectionHint: '', pageUrlHint: '' } },
+    ],
+  }))
+  const service = createReferenceNavigationService({ apiKey: 'test-key', client, now: fixedNow, normalizationCache: false })
+  const result = await service.normalize(createAiRequiredReference({
+    headerCandidates: [{ rowNumber: 1, cells: { A: '1Depth', B: '2Depth', C: 'Page', D: '사용여부', E: 'URL', F: '비고' } }],
+    rows: [{ rowNumber: 2, cells: { A: 'Notice', B: 'Privacy notice', C: 'Page', D: 'O', E: '/privacy', F: 'memo /not/depth' } }],
+  }))
+
+  assert.deepEqual(result.referenceMap.items[0].pageContext.depthPath, ['Notice', 'Privacy notice'])
+  assert.equal(result.referenceMap.items[0].pageContext.depthPath.includes('Page'), false)
+  assert.equal(result.referenceMap.items[0].pageContext.depthPath.includes('O'), false)
+})
+
+test('Explicit numbered depth headers are authoritative when AI returns false hierarchy metadata', async () => {
+  const client = createPromptRecordingClient(() => ({
+    items: [
+      {
+        ...aiItem({ raw: '/target' }),
+        pageContext: { depthPath: ['C', 'O', 'Page'], sectionHint: '', pageUrlHint: '' },
+        element: { label: 'C / O / Page', aliases: ['C', 'O', 'Page', 'Type', '/not-depth', 'Clean alias'], roleHint: 'link', actionHint: 'navigation' },
+      },
+    ],
+  }))
+  const service = createReferenceNavigationService({ apiKey: 'test-key', client, now: fixedNow, normalizationCache: false })
+  const result = await service.normalize(createReference({
+    headerCandidates: [{ rowNumber: 1, cells: { A: 'Depth1', B: 'Depth2', C: 'Depth3', D: 'URL', E: 'Note' } }],
+    rows: [{ rowNumber: 2, cells: { A: 'A', B: 'B', C: 'C', D: '/target', E: 'alternate /legacy' } }],
+  }))
+
+  assert.deepEqual(client.requests.map((request) => request.candidateIds), [['cand-0001']])
+  assert.deepEqual(result.referenceMap.items[0].pageContext.depthPath, ['A', 'B', 'C'])
+  assert.equal(result.referenceMap.items[0].element.label, 'C')
+  assert.deepEqual(result.referenceMap.items[0].element.aliases, ['Clean alias'])
+})
+
+test('Authoritative source hierarchy derives clean element labels from deepest semantic depth', async () => {
+  const client = createPromptRecordingClient(() => ({
+    items: [
+      { ...aiItem({ rowNumber: 2, raw: '/mini' }), element: { label: 'MINI / O / Page', aliases: ['MINI', 'O', 'Page'], roleHint: 'link', actionHint: 'navigation' } },
+      { ...aiItem({ rowNumber: 3, raw: '/refinance' }), element: { label: '재금융 / O', aliases: ['재금융 / O', '재금융'], roleHint: 'link', actionHint: 'navigation' } },
+      { ...aiItem({ rowNumber: 4, raw: '/credit' }), element: { label: 'Footer / 법률 약관 정보 / 신용정보활용체제 / Page', aliases: ['신용정보활용체제 / Page / O', 'Clean alias'], roleHint: 'link', actionHint: 'navigation' } },
+    ],
+  }))
+  const service = createReferenceNavigationService({ apiKey: 'test-key', client, now: fixedNow, normalizationCache: false })
+  const result = await service.normalize(createReference({
+    headerCandidates: [{ rowNumber: 1, cells: { A: '1Depth', B: '2Depth', C: '3Depth', D: 'URL', E: 'Note' } }],
+    rows: [
+      { rowNumber: 2, cells: { A: '온라인견적', B: '월 납입금 계산기', C: 'MINI', D: '/mini', E: 'alternate /mini-old' } },
+      { rowNumber: 3, cells: { A: '상품 및 서비스', B: '만기옵션', C: '재금융', D: '/refinance', E: 'alternate /refinance-old' } },
+      { rowNumber: 4, cells: { A: 'Footer', B: '법률 약관 정보', C: '신용정보활용체제', D: '/credit', E: 'alternate /credit-old' } },
+    ],
+  }))
+
+  assert.deepEqual(result.referenceMap.items.map((item) => item.element.label), ['MINI', '재금융', '신용정보활용체제'])
+  assert.deepEqual(result.referenceMap.items.map((item) => item.element.aliases), [[], [], ['Clean alias']])
+})
+
+test('Explicit merged source hierarchy is authoritative when AI returns short hierarchy', async () => {
+  const client = createPromptRecordingClient(() => ({
+    items: [
+      { ...aiItem({ rowNumber: 3, raw: '/target' }), pageContext: { depthPath: ['C'], sectionHint: '', pageUrlHint: '' } },
+    ],
+  }))
+  const service = createReferenceNavigationService({ apiKey: 'test-key', client, now: fixedNow, normalizationCache: false })
+  const result = await service.normalize(createReference({
+    headerCandidates: [{ rowNumber: 1, cells: { A: 'Depth1', B: 'Depth2', C: 'Depth3', D: 'URL', E: 'Note' } }],
+    mergedRanges: [{ top: 2, left: 'B', bottom: 3, right: 'B', value: 'B' }],
+    rows: [
+      { rowNumber: 2, cells: { A: 'A', B: 'B' } },
+      { rowNumber: 3, cells: { C: 'C', D: '/target', E: 'alternate /legacy' } },
+    ],
+  }))
+
+  assert.deepEqual(client.requests.map((request) => request.candidateIds), [['cand-0001']])
+  assert.deepEqual(result.referenceMap.items[0].pageContext.depthPath, ['A', 'B', 'C'])
+  assert.equal(result.referenceMap.items[0].element.label, 'C')
+})
+
+test('Semantic alias depth headers are authoritative over AI false hierarchy', async () => {
+  const client = createPromptRecordingClient(() => ({
+    items: [
+      { ...aiItem({ raw: '/semantic' }), pageContext: { depthPath: ['Leaf', 'Type', 'O'], sectionHint: '', pageUrlHint: '' } },
+    ],
+  }))
+  const service = createReferenceNavigationService({ apiKey: 'test-key', client, now: fixedNow, normalizationCache: false })
+  const result = await service.normalize(createReference({
+    headerCandidates: [{ rowNumber: 1, cells: { A: '대분류', B: '중분류', C: '소분류', D: 'Target URL', E: 'Memo' } }],
+    rows: [{ rowNumber: 2, cells: { A: 'Top', B: 'Middle', C: 'Leaf', D: '/semantic', E: 'also /other' } }],
+  }))
+
+  assert.deepEqual(result.referenceMap.items[0].pageContext.depthPath, ['Top', 'Middle', 'Leaf'])
+  assert.equal(result.referenceMap.items[0].element.label, 'Leaf')
+})
+
+test('Explicit source hierarchy with empty row values does not fall back to AI depthPath', async () => {
+  const client = createPromptRecordingClient(() => ({
+    items: [
+      { ...aiItem({ raw: '/empty' }), pageContext: { depthPath: ['Invented', 'Page', 'O'], sectionHint: '', pageUrlHint: '' } },
+    ],
+  }))
+  const service = createReferenceNavigationService({ apiKey: 'test-key', client, now: fixedNow, normalizationCache: false })
+  const result = await service.normalize(createReference({
+    headerCandidates: [{ rowNumber: 1, cells: { A: '1Depth', B: '2Depth', C: 'URL', D: 'Note' } }],
+    rows: [{ rowNumber: 2, cells: { A: 'Page', B: 'O', C: '/empty', D: 'alternate /other' } }],
+  }))
+
+  assert.deepEqual(result.referenceMap.items[0].pageContext.depthPath, [])
+})
+
+test('Source hierarchy absent sheet allows sanitized AI fallback only', async () => {
+  const client = createPromptRecordingClient(() => ({
+    items: [
+      { ...aiItem({ raw: '/fallback' }), pageContext: { depthPath: ['Fallback', 'Page', 'O', '/not-depth'], sectionHint: '', pageUrlHint: '' } },
+    ],
+  }))
+  const service = createReferenceNavigationService({ apiKey: 'test-key', client, now: fixedNow, normalizationCache: false })
+  const result = await service.normalize(createReference({
+    headerCandidates: [{ rowNumber: 1, cells: { A: 'Label', B: 'Target URL', C: 'Note' } }],
+    rows: [{ rowNumber: 2, cells: { A: 'Fallback', B: '/fallback', C: 'alternate /other' } }],
+  }))
+
+  assert.deepEqual(result.referenceMap.items[0].pageContext.depthPath, ['Fallback'])
+  assert.equal(result.referenceMap.items[0].element.label, 'Target')
+})
+
+test('Source hierarchy absent keeps conservative AI label fallback', async () => {
+  const client = createPromptRecordingClient(() => ({
+    items: [
+      { ...aiItem({ raw: '/legacy' }), element: { label: 'Legacy / Page', aliases: ['O'], roleHint: 'link', actionHint: 'navigation' } },
+    ],
+  }))
+  const service = createReferenceNavigationService({ apiKey: 'test-key', client, now: fixedNow, normalizationCache: false })
+  const result = await service.normalize(createReference({
+    headerCandidates: [{ rowNumber: 1, cells: { A: 'Label', B: 'Target URL', C: 'Note' } }],
+    rows: [{ rowNumber: 2, cells: { A: 'Legacy', B: '/legacy', C: 'alternate /other' } }],
+  }))
+
+  assert.equal(result.referenceMap.items[0].element.label, 'Legacy / Page')
+  assert.deepEqual(result.referenceMap.items[0].element.aliases, ['O'])
+})
+
+test('Ambiguous hierarchy schema does not invent source depth', async () => {
+  const service = createReferenceNavigationService({ apiKey: '', now: fixedNow, normalizationCache: false })
+  const result = await service.normalize(createReference({
+    headerCandidates: [{ rowNumber: 1, cells: { A: 'Menu', B: 'Target URL' } }],
+    rows: [{ rowNumber: 2, cells: { A: 'Possible menu', B: '/possible' } }],
+  }))
+
+  assert.equal(result.meta.openAiCalled, false)
+  assert.deepEqual(result.referenceMap.items[0].pageContext.depthPath, [])
+})
+
+test('Source hierarchy preserves five or more explicit depth levels internally', async () => {
+  const service = createReferenceNavigationService({ apiKey: '', now: fixedNow, normalizationCache: false })
+  const result = await service.normalize(createReference({
+    headerCandidates: [{ rowNumber: 1, cells: { A: '1Depth', B: '2Depth', C: '3Depth', D: '4Depth', E: '5Depth', F: '6Depth', G: 'URL' } }],
+    rows: [{ rowNumber: 2, cells: { A: 'A', B: 'B', C: 'C', D: 'D', E: 'E', F: 'F', G: '/six' } }],
+  }))
+
+  assert.deepEqual(result.referenceMap.items[0].pageContext.depthPath, ['A', 'B', 'C', 'D', 'E', 'F'])
+})
+
+test('Reference hierarchy inherits merged and adjacent blank depth cells only across identified depth columns', async () => {
+  const service = createReferenceNavigationService({ apiKey: '', now: fixedNow, normalizationCache: false })
+  const reference = createReference({
+    sheets: [createSheet({
+      sheetName: 'Merged generic IA',
+      headerCandidates: [{ rowNumber: 1, cells: { A: '1Depth', B: '2Depth', C: '비고', D: '3Depth', E: 'URL' } }],
+      mergedRanges: [
+        { top: 2, left: 'A', bottom: 4, right: 'A', value: 'Products' },
+        { top: 2, left: 'B', bottom: 3, right: 'B', value: 'Loans' },
+      ],
+      rows: [
+        { rowNumber: 2, cells: { A: 'Products', B: 'Loans', C: 'O', D: 'Apply', E: '/apply' } },
+        { rowNumber: 3, cells: { C: 'X', D: 'Rates', E: '/rates' } },
+        { rowNumber: 4, cells: { B: 'Cards', C: '', D: 'Benefits', E: '/benefits' } },
+        { rowNumber: 5, cells: { A: 'Support', C: 'O', D: 'FAQ', E: '/faq' } },
+        { rowNumber: 7, cells: { C: 'O', D: 'Standalone', E: '/standalone' } },
+      ],
+    })],
+  })
+
+  const result = await service.normalize(reference)
+
+  assert.deepEqual(result.referenceMap.items.map((item) => item.pageContext.depthPath), [
+    ['Products', 'Loans', 'Apply'],
+    ['Products', 'Loans', 'Rates'],
+    ['Products', 'Cards', 'Benefits'],
+    ['Support', '', 'FAQ'],
+    ['', '', 'Standalone'],
+  ])
 })
 
 test('Phase 2-B B all deterministic-safe rows keep usage and submitted count at zero', async () => {
@@ -1071,7 +1318,7 @@ function aiItem(options = {}) {
 function createReference(options = {}) {
   const sheetName = options.sheetName || 'Sheet1'
   const rows = options.rows || [{ rowNumber: options.rowNumber || 2, cells: options.cells || { A: 'Target', B: '/target' } }]
-  const sheets = options.sheets || [createSheet({ sheetName, rows })]
+  const sheets = options.sheets || [createSheet({ sheetName, rows, headerCandidates: options.headerCandidates, mergedRanges: options.mergedRanges })]
   return {
     fileName: 'reference.xlsx',
     mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -1087,11 +1334,12 @@ function createAiRequiredReference(options = {}) {
   return createReference(options)
 }
 
-function createSheet({ sheetName, rows, headerCandidates }) {
+function createSheet({ sheetName, rows, headerCandidates, mergedRanges }) {
   return {
     sheetName,
     rowCount: rows.length,
     usedRange: { startRow: rows[0].rowNumber, endRow: rows.at(-1).rowNumber },
+    mergedRanges: mergedRanges || [],
     headerCandidates: headerCandidates || [{ rowNumber: 1, cells: { A: 'Label', B: 'Target URL' } }],
     rows,
     rowsTruncated: false,

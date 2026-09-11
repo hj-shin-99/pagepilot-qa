@@ -4,6 +4,7 @@ import {
   confirmAllReferenceItems,
   createConfirmedReferenceMap,
   createExpectedUrlDisplayRows,
+  createReferencePreviewTitle,
   createReferenceReviewSummary,
   createReferenceTelemetryRows,
   countBulkConfirmEligibleItems,
@@ -125,7 +126,7 @@ function ReferenceReviewPanel({ referenceMap, items, meta, confirmedReferenceMap
                   {isLowConfidence ? <span className="reference-confidence-badge">검토 필요</span> : null}
                   {item.duplicateCandidate ? <span className="reference-confidence-badge">중복 후보</span> : null}
                 </div>
-                <h4>{item.element?.label || '이름 없는 항목'}</h4>
+                <h4>{createReferencePreviewTitle(item)}</h4>
                 <dl className="reference-review-facts">
                   <div>
                     <dt>Expected URL</dt>
@@ -138,6 +139,10 @@ function ReferenceReviewPanel({ referenceMap, items, meta, confirmedReferenceMap
                   <div>
                     <dt>Source</dt>
                     <dd>{item.source?.sheetName || 'Unknown'} · Row {item.source?.rowNumber || '-'}</dd>
+                  </div>
+                  <div>
+                    <dt>Hierarchy</dt>
+                    <dd>{formatReviewHierarchy(item.pageContext?.depthPath)}</dd>
                   </div>
                   <div>
                     <dt>Evidence</dt>
@@ -230,6 +235,11 @@ function formatReferenceWarning(meta, allChunksFailed) {
     return '문서의 URL 근거를 기준으로 미리보기를 구성했습니다. 적용 전 항목을 확인해 주세요.'
   }
   return ''
+}
+
+function formatReviewHierarchy(depthPath = []) {
+  const segments = Array.isArray(depthPath) ? depthPath.map((segment) => sanitizeDiagnosticText(segment, 160) || '-').filter(Boolean) : []
+  return segments.some((segment) => segment !== '-') ? segments.join(' / ') : '-'
 }
 
 function formatSafeList(values = []) {

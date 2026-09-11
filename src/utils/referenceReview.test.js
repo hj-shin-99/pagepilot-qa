@@ -8,6 +8,7 @@ import {
   createConfirmedReferenceMap,
   createExpectedUrlDisplayRows,
   createExpectedUrlExportText,
+  createReferencePreviewTitle,
   createReferencePreset,
   createReferencePresetFilename,
   createReferenceFileSelectionState,
@@ -30,6 +31,34 @@ test('Preview state is created from normalized reference map', () => {
   assert.equal(state.items.length, 3)
   assert.equal(state.reviewSummary.pending, 3)
   assert.equal(state.confirmedReferenceMap, null)
+})
+
+test('Reference Preview card title uses authoritative hierarchy depthPath', () => {
+  const item = { ...createItem('ref-101', 'List', '/list', 0.9), pageContext: { depthPath: ['프로모션', 'List'], sectionHint: '', pageUrlHint: '' } }
+
+  assert.equal(createReferencePreviewTitle(item), '프로모션 / List')
+})
+
+test('Reference Preview card title does not duplicate label matching last hierarchy segment', () => {
+  const item = { ...createItem('ref-102', 'MINI', '/mini', 0.9), pageContext: { depthPath: ['온라인견적', '월 납입금 계산기', 'MINI'], sectionHint: '', pageUrlHint: '' } }
+
+  assert.equal(createReferencePreviewTitle(item), '온라인견적 / 월 납입금 계산기 / MINI')
+  assert.equal(createReferencePreviewTitle(item).endsWith('MINI / MINI'), false)
+})
+
+test('Reference Preview card title ignores stale label and metadata depth contamination', () => {
+  const item = { ...createItem('ref-103', '프로모션 / List / O', '/promo', 0.9), pageContext: { depthPath: ['프로모션', 'List', 'O', 'Page', 'Type', '/not-depth'], sectionHint: '', pageUrlHint: '' } }
+
+  assert.equal(createReferencePreviewTitle(item), '프로모션 / List')
+  assert.equal(createReferencePreviewTitle(item).includes('Page'), false)
+  assert.equal(createReferencePreviewTitle(item).includes('Type'), false)
+  assert.equal(createReferencePreviewTitle(item).includes(' / O'), false)
+})
+
+test('Reference Preview card title keeps legacy label fallback when hierarchy is empty', () => {
+  const item = { ...createItem('ref-104', 'View', '/view', 0.9), pageContext: { depthPath: [], sectionHint: '', pageUrlHint: '' } }
+
+  assert.equal(createReferencePreviewTitle(item), 'View')
 })
 
 test('Confirm marks item confirmed without changing source provenance or confidence', () => {
@@ -154,13 +183,17 @@ test('compact navigation Reference map keeps only confirmed compact intent data'
 })
 
 test('Reference preset and compact map preserve hierarchy depth gaps without raw workbook columns', () => {
-  const hierarchyItem = { ...createItem('ref-101', 'CTA', '/cta', 0.9), pageContext: { depthPath: ['Products', '', 'Calculator', '', 'Eligibility'], sectionHint: '', pageUrlHint: '' } }
+  const hierarchyItem = { ...createItem('ref-101', 'Eligibility', '/cta', 0.9), pageContext: { depthPath: ['Products', '', 'Calculator', '', 'Eligibility'], sectionHint: '', pageUrlHint: '' } }
   const state = createReferenceReviewState({ ...createReferenceMap(), items: [hierarchyItem] })
   const confirmedMap = createConfirmedReferenceMap(state.referenceMap, confirmReferenceItem(state.items, 'ref-101'))
   const preset = createReferencePreset({ referenceMap: state.referenceMap, items: confirmedMap.items, meta: { selectedSheetNames: ['Sheet1'] }, normalizedSheetNames: ['Sheet1'] })
   const imported = importReferencePresetFromText(JSON.stringify(preset))
   const compact = createCompactNavigationReferenceMap(confirmedMap)
 
+  assert.deepEqual(confirmedMap.items[0].pageContext.depthPath, ['Products', '', 'Calculator', '', 'Eligibility'])
+  assert.equal(confirmedMap.items[0].element.label, 'Eligibility')
+  assert.equal(imported.reviewItems[0].element.label, 'Eligibility')
+  assert.equal(compact.items[0].element.label, 'Eligibility')
   assert.deepEqual(imported.reviewItems[0].pageContext.depthPath, ['Products', '', 'Calculator', '', 'Eligibility'])
   assert.deepEqual(compact.items[0].pageContext.depthPath, ['Products', '', 'Calculator', '', 'Eligibility'])
   assert.equal(Object.hasOwn(compact.items[0].source, 'columns'), false)
@@ -186,6 +219,18 @@ test('Reference preset export excludes raw workbook data and restores review dec
   assert.equal(imported.reviewItems[1].userDecision.excludedReason, 'not needed')
   assert.deepEqual(imported.normalizedSheetNames, ['Sheet1'])
   assert.equal(imported.analyzedReference, null)
+})
+
+test('Reference preset preserves Unicode sourceDocument filename in top-level and referenceMap', () => {
+  const fileName = 'Reference 기능정의서 (최종).xlsx'
+  const state = createReferenceReviewState({ ...createReferenceMap(), sourceDocument: { fileName, analyzedAt: '2026-08-21T00:00:00.000Z', mimeType: 'xlsx' } })
+  const preset = createReferencePreset({ referenceMap: state.referenceMap, items: state.items, meta: { selectedSheetNames: ['Sheet1'] }, normalizedSheetNames: ['Sheet1'] })
+  const imported = importReferencePresetFromText(JSON.stringify(preset))
+
+  assert.equal(preset.sourceDocument.fileName, fileName)
+  assert.equal(preset.referenceMap.sourceDocument.fileName, fileName)
+  assert.equal(imported.referenceMap.sourceDocument.fileName, fileName)
+  assert.equal(imported.referenceMeta.sourceFileName, fileName)
 })
 
 test('Reference telemetry rows show live AI cache miss with current request tokens', () => {

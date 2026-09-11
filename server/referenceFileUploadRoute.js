@@ -45,7 +45,7 @@ export function createReferenceFileUploadRoute(options = {}) {
         res.json({
           ok: true,
           reference: {
-            fileName: req.file.originalname,
+            fileName: normalizeReferenceUploadFileName(req.file.originalname),
             mimeType: req.file.mimetype,
             size: req.file.size,
             ...extracted,
@@ -64,12 +64,43 @@ export function createReferenceFileUploadRoute(options = {}) {
 }
 
 function validateReferenceFile(file) {
-  const extension = path.extname(file.originalname || '').toLowerCase()
+  const extension = path.extname(normalizeReferenceUploadFileName(file.originalname)).toLowerCase()
   if (extension !== '.xlsx' || !ALLOWED_XLSX_MIME_TYPES.has(file.mimetype)) {
     return new ReferenceUploadError(400, 'reference_file_type_not_allowed', 'xlsx Excel 파일만 업로드할 수 있습니다.')
   }
 
   return null
+}
+
+function normalizeReferenceUploadFileName(value) {
+  const raw = typeof value === 'string' ? value : ''
+  const basename = stripControlCharacters(path.basename(raw.replace(/\\/g, '/'))).trim()
+  const decoded = decodeLatin1Utf8Filename(basename)
+  return decoded || basename || 'reference.xlsx'
+}
+
+function decodeLatin1Utf8Filename(value) {
+  if (!value || hasCodePointAbove(value, 0xff)) return ''
+  if (!hasCodePointAtLeast(value, 0x80)) return ''
+
+  const decoded = Buffer.from(value, 'latin1').toString('utf8')
+  if (!decoded || decoded.includes('\uFFFD') || decoded === value) return ''
+  return hasCodePointAtLeast(decoded, 0x80) ? decoded : ''
+}
+
+function stripControlCharacters(value) {
+  return [...value].filter((char) => {
+    const code = char.codePointAt(0)
+    return code > 0x1f && code !== 0x7f
+  }).join('')
+}
+
+function hasCodePointAbove(value, maxCodePoint) {
+  return [...value].some((char) => char.codePointAt(0) > maxCodePoint)
+}
+
+function hasCodePointAtLeast(value, minCodePoint) {
+  return [...value].some((char) => char.codePointAt(0) >= minCodePoint)
 }
 
 function mapUploadError(error, limits) {

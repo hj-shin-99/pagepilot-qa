@@ -193,6 +193,7 @@ export function createNavigationIntentDisplayModel(navigationIntentQa) {
       actualUrls: dedupeStrings(actualUrlDetails.map((entry) => entry.url)),
       actualUrlDetails,
       source: normalizeNavigationIntentSource(item.source),
+      sourceRowNumber: getNavigationIntentSourceRowNumber(item),
       sourceRowDisplay: formatNavigationIntentSourceRow(item),
       reason: safeIntentText(item.reason, 600),
       matchEvidence: normalizeStringList(item.matchEvidence, 12, 240),
@@ -243,10 +244,7 @@ function normalizeNavigationIntentActualUrlDetails(actualUrlEvidence) {
 function createNavigationIntentHierarchySegments(item = {}) {
   const label = safeIntentText(item.label || item.actualLabel, 240) || 'Reference item'
   const depthPath = normalizeHierarchySegmentList(item.pageContext?.depthPath, 8, 160)
-  if (depthPath.some(Boolean)) {
-    const hasLabel = depthPath.some((segment) => segment.toLowerCase() === label.toLowerCase())
-    return hasLabel ? depthPath : [...depthPath, label]
-  }
+  if (depthPath.some(Boolean)) return depthPath
   const displaySegments = splitHierarchyDisplayLabel(label)
   return displaySegments.length > 0 ? displaySegments : [label]
 }
@@ -267,6 +265,11 @@ function normalizeNavigationIntentSource(source = {}) {
 }
 
 function formatNavigationIntentSourceRow(item = {}) {
+  const rowNumber = getNavigationIntentSourceRowNumber(item)
+  return rowNumber ? String(rowNumber) : '-'
+}
+
+function getNavigationIntentSourceRowNumber(item = {}) {
   const source = item.source && typeof item.source === 'object' && !Array.isArray(item.source) ? item.source : {}
   const candidates = [
     source.sourceRow,
@@ -279,13 +282,13 @@ function formatNavigationIntentSourceRow(item = {}) {
   ]
   for (const value of candidates) {
     const rowNumber = normalizeSourceRowNumber(value)
-    if (rowNumber) return String(rowNumber)
+    if (rowNumber) return rowNumber
   }
 
   const legacyText = [source.label, source.sourceLabel, source.provenance, source.evidenceText, item.sourceLabel].map((value) => safeIntentText(value, 240)).filter(Boolean).join(' ')
   const legacyMatch = legacyText.match(/(?:^|\b)(?:row|source\s*row|행|원본\s*행)\s*#?\s*(\d{1,7})(?:\b|$)/i)
   const rowNumber = legacyMatch ? normalizeSourceRowNumber(legacyMatch[1]) : null
-  return rowNumber ? String(rowNumber) : '-'
+  return rowNumber || null
 }
 
 function normalizeSourceRowNumber(value) {
@@ -330,9 +333,11 @@ function getNavigationIntentStatusLabel(status) {
 }
 
 function compareNavigationIntentRows(left, right) {
-  const order = { error: 0, warn: 1, info: 2, ok: 3 }
-  const statusDiff = (order[left.status] ?? 9) - (order[right.status] ?? 9)
-  if (statusDiff !== 0) return statusDiff
+  const leftRow = normalizeSourceRowNumber(left.sourceRowNumber)
+  const rightRow = normalizeSourceRowNumber(right.sourceRowNumber)
+  if (leftRow && rightRow && leftRow !== rightRow) return leftRow - rightRow
+  if (leftRow && !rightRow) return -1
+  if (!leftRow && rightRow) return 1
   return Number(left.sourceIndex || 0) - Number(right.sourceIndex || 0)
 }
 
@@ -383,6 +388,15 @@ export function getVisibleLinkGroups(links = [], normalLimit = 5, warnLimit = 5)
 
 export function getSectionVisibility(items = [], options = {}) {
   const maxVisible = Number(options.maxVisible || 5)
+  if (options.preserveOrder === true) {
+    return {
+      visibleByStatus: {},
+      hiddenByStatus: {},
+      visibleItems: items.slice(0, Math.max(0, maxVisible)),
+      hiddenItems: items.slice(Math.max(0, maxVisible)),
+      totalCount: items.length,
+    }
+  }
   const getStatus = typeof options.getStatus === 'function' ? options.getStatus : (item) => item?.status
   const statusOrder = Array.isArray(options.statusOrder) && options.statusOrder.length > 0 ? options.statusOrder : ['error', 'warn', 'ok']
   const visibleByStatus = Object.fromEntries(statusOrder.map((status) => [status, []]))

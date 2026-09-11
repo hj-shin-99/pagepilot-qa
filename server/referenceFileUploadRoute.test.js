@@ -25,6 +25,32 @@ test('POST /api/reference/analyze accepts a valid xlsx upload', async () => {
   assert.deepEqual(body.reference.sheets[0].rows[1].cells, { A: 'Navigation', B: 'Intent' })
 })
 
+test('POST /api/reference/analyze preserves generic Unicode filenames', async () => {
+  const buffer = await createWorkbookBuffer((workbook) => {
+    workbook.addWorksheet('Reference').addRow(['Header'])
+  })
+
+  for (const fileName of ['reference.xlsx', '기능정의서.xlsx', '機能定義書.xlsx', 'résumé.xlsx', 'Reference 기능정의서 (최종).xlsx']) {
+    const { status, body } = await postReferenceFile({ buffer, fileName, mimeType: XLSX_MIME_TYPE })
+
+    assert.equal(status, 200)
+    assert.equal(body.reference.fileName, fileName)
+  }
+})
+
+test('POST /api/reference/analyze sanitizes uploaded filename basename without damaging Unicode', async () => {
+  const buffer = await createWorkbookBuffer((workbook) => {
+    workbook.addWorksheet('Reference').addRow(['Header'])
+  })
+
+  const { status, body } = await postReferenceFile({ buffer, fileName: '../Reference 기능정의서.xlsx', mimeType: XLSX_MIME_TYPE })
+
+  assert.equal(status, 200)
+  assert.equal(body.reference.fileName, 'Reference 기능정의서.xlsx')
+  assert.equal(body.reference.fileName.includes('..'), false)
+  assert.equal(body.reference.fileName.includes('/'), false)
+})
+
 test('POST /api/reference/analyze rejects unsupported extension and MIME type', async () => {
   const { status, body } = await postReferenceFile({
     buffer: Buffer.from('not excel'),

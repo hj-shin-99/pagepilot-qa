@@ -671,7 +671,7 @@ test('Reference URL QA display model creates hierarchy segments without splittin
   })
 
   const rowsById = Object.fromEntries(intent.rows.map((row) => [row.referenceId, row]))
-  assert.deepEqual(rowsById['intent-1'].hierarchySegments, ['Products', 'Calculator', 'CTA'])
+  assert.deepEqual(rowsById['intent-1'].hierarchySegments, ['Products', 'Calculator'])
   assert.deepEqual(rowsById['intent-2'].hierarchySegments, ['A', 'B', 'C'])
   assert.deepEqual(rowsById['intent-3'].hierarchySegments, ['https://example.com/a/b'])
   assert.deepEqual(rowsById['intent-3'].actualUrls, [])
@@ -690,8 +690,24 @@ test('Reference URL QA display model preserves depth gaps and full hierarchy bey
   })
 
   const rowsById = Object.fromEntries(intent.rows.map((row) => [row.referenceId, row]))
-  assert.deepEqual(rowsById['intent-1'].hierarchySegments, ['Products', '', 'Calculator', '', 'Eligibility', 'CTA'])
+  assert.deepEqual(rowsById['intent-1'].hierarchySegments, ['Products', '', 'Calculator', '', 'Eligibility'])
   assert.deepEqual(rowsById['intent-2'].hierarchySegments, ['/not/split/path'])
+})
+
+test('Reference URL QA display model keeps label out of hierarchy when depthPath exists', () => {
+  const intent = createNavigationIntentDisplayModel({
+    meta: { available: true },
+    items: [
+      { referenceId: 'row-6', label: '프로모션 / List / O', source: { rowNumber: 6 }, pageContext: { depthPath: ['프로모션', 'List'] }, status: 'ambiguous-match', expectedUrls: [{ raw: '/promo' }], actualUrlEvidence: [] },
+      { referenceId: 'row-85', label: '신용정보활용체제 / Page / O', source: { rowNumber: 85 }, pageContext: { depthPath: ['Footer', '법률 약관 정보', '신용정보활용체제'] }, status: 'matched-correct', expectedUrls: [{ raw: '/credit' }], actualUrlEvidence: [] },
+    ],
+  })
+  const rowsById = Object.fromEntries(intent.rows.map((row) => [row.referenceId, row]))
+
+  assert.deepEqual(rowsById['row-6'].hierarchySegments, ['프로모션', 'List'])
+  assert.deepEqual(rowsById['row-85'].hierarchySegments, ['Footer', '법률 약관 정보', '신용정보활용체제'])
+  assert.equal(rowsById['row-85'].hierarchySegments.join(' / ').includes('Page'), false)
+  assert.equal(rowsById['row-85'].hierarchySegments.join(' / ').endsWith('신용정보활용체제 / Page / O'), false)
 })
 
 test('Reference URL QA panel source fixes table headers to 1-4 Depth while details keep hierarchySegments', () => {
@@ -716,31 +732,34 @@ test('Reference URL QA display model derives original source row without using s
   assert.equal(rowsById.structured.sourceRowDisplay, '25')
   assert.equal(rowsById.legacy.sourceRowDisplay, '70')
   assert.equal(rowsById.missing.sourceRowDisplay, '-')
-  assert.deepEqual(intent.rows.map((row) => row.referenceId), ['legacy', 'missing', 'structured'])
+  assert.deepEqual(intent.rows.map((row) => row.referenceId), ['structured', 'legacy', 'missing'])
 })
 
-test('Reference URL QA first-five visibility prioritizes mismatch review not observed normal without mutating source order', () => {
+test('Reference URL QA display model sorts by source row instead of status priority', () => {
   const sourceItems = [
-    ...Array.from({ length: 10 }, (_, index) => intentItem(`normal-${index}`, 'matched-correct')),
-    ...Array.from({ length: 3 }, (_, index) => intentItem(`not-observed-${index}`, 'reference-not-observed')),
-    ...Array.from({ length: 4 }, (_, index) => intentItem(`review-${index}`, 'ambiguous-match')),
-    ...Array.from({ length: 2 }, (_, index) => intentItem(`mismatch-${index}`, 'matched-mismatch')),
+    { ...intentItem('row-10-normal', 'matched-correct'), source: { rowNumber: 10 } },
+    { ...intentItem('row-6-mismatch', 'matched-mismatch'), source: { rowNumber: 6 } },
+    { ...intentItem('row-8-review', 'ambiguous-match'), source: { rowNumber: 8 } },
+    { ...intentItem('row-7-not-observed', 'reference-not-observed'), source: { rowNumber: 7 } },
+    { ...intentItem('legacy-a', 'matched-mismatch'), source: {} },
+    { ...intentItem('legacy-b', 'matched-correct'), source: {} },
   ]
   const sourceIds = sourceItems.map((item) => item.referenceId)
   const intent = createNavigationIntentDisplayModel({
     meta: { available: true },
-    summary: { evaluated: 16, correct: 10, mismatch: 2, review: 4, notObserved: 3 },
+    summary: { evaluated: 4, correct: 2, mismatch: 2, review: 1, notObserved: 1 },
     items: sourceItems,
   })
-  const visibility = getSectionVisibility(intent.rows, { maxVisible: 5, statusOrder: ['error', 'warn', 'info', 'ok'] })
+  const visibility = getSectionVisibility(intent.rows, { maxVisible: 5, preserveOrder: true })
 
-  assert.deepEqual(visibility.visibleItems.map((row) => row.referenceId), ['mismatch-0', 'mismatch-1', 'review-0', 'review-1', 'review-2'])
-  assert.equal(visibility.hiddenItems.length, 14)
+  assert.deepEqual(intent.rows.map((row) => row.referenceId), ['row-6-mismatch', 'row-7-not-observed', 'row-8-review', 'row-10-normal', 'legacy-a', 'legacy-b'])
+  assert.deepEqual(visibility.visibleItems.map((row) => row.referenceId), ['row-6-mismatch', 'row-7-not-observed', 'row-8-review', 'row-10-normal', 'legacy-a'])
+  assert.deepEqual(visibility.hiddenItems.map((row) => row.referenceId), ['legacy-b'])
   assert.deepEqual(sourceItems.map((item) => item.referenceId), sourceIds)
-  assert.equal(intent.summary.correct, 10)
+  assert.equal(intent.summary.correct, 2)
   assert.equal(intent.summary.mismatch, 2)
-  assert.equal(intent.summary.review, 4)
-  assert.equal(intent.summary.notObserved, 3)
+  assert.equal(intent.summary.review, 1)
+  assert.equal(intent.summary.notObserved, 1)
 })
 
 test('Reference URL QA first-five hides more control for five or fewer and caps normal only or legacy unobserved lists', () => {
@@ -751,6 +770,7 @@ test('Reference URL QA first-five hides more control for five or fewer and caps 
   assert.equal(getSectionVisibility(shortIntent.rows, { maxVisible: 5, statusOrder: ['error', 'warn', 'info', 'ok'] }).hiddenItems.length, 0)
   assert.deepEqual(getSectionVisibility(normalIntent.rows, { maxVisible: 5, statusOrder: ['error', 'warn', 'info', 'ok'] }).visibleItems.map((row) => row.referenceId), ['normal-0', 'normal-1', 'normal-2', 'normal-3', 'normal-4'])
   assert.deepEqual(getSectionVisibility(legacyUnobservedIntent.rows, { maxVisible: 5, statusOrder: ['error', 'warn', 'info', 'ok'] }).visibleItems.map((row) => row.referenceId), ['legacy-0', 'legacy-1', 'legacy-2', 'legacy-3', 'legacy-4'])
+  assert.deepEqual(getSectionVisibility(legacyUnobservedIntent.rows, { maxVisible: 5, preserveOrder: true }).visibleItems.map((row) => row.referenceId), ['legacy-0', 'legacy-1', 'legacy-2', 'legacy-3', 'legacy-4'])
 })
 
 test('tech qa panel source renders Navigation Intent QA only when result is present', () => {

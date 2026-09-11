@@ -78,6 +78,26 @@ test('preserves hyperlink text and target', async () => {
   })
 })
 
+test('preserves generic merged range metadata with top-left value', async () => {
+  const buffer = await createWorkbookBuffer((workbook) => {
+    const sheet = workbook.addWorksheet('Merged IA')
+    sheet.getCell('A1').value = '1Depth'
+    sheet.getCell('B1').value = '2Depth'
+    sheet.getCell('C1').value = 'URL'
+    sheet.getCell('A2').value = 'Products'
+    sheet.getCell('B2').value = 'Overview'
+    sheet.getCell('C2').value = '/products'
+    sheet.getCell('B3').value = 'Detail'
+    sheet.getCell('C3').value = '/products/detail'
+    sheet.mergeCells('A2:A3')
+  })
+
+  const result = await extractReferenceWorkbook(buffer)
+
+  assert.deepEqual(result.sheets[0].mergedRanges, [{ top: 2, left: 'A', bottom: 3, right: 'A', value: 'Products' }])
+  assert.deepEqual(result.sheets[0].rows.find((row) => row.rowNumber === 3).cells, { B: 'Detail', C: '/products/detail' })
+})
+
 test('adds generic sheet summaries with navigation candidate counts', async () => {
   const buffer = await createWorkbookBuffer((workbook) => {
     const first = workbook.addWorksheet('Navigation A')

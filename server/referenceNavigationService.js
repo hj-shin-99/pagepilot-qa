@@ -108,8 +108,9 @@ export function createReferenceNavigationInput(reference, options = {}) {
   for (const sheet of reference.sheets.slice(0, limits.maxSheets)) {
     const sheetName = normalizeText(sheet?.sheetName, 160)
     if (!sheetName) continue
+    const hierarchyContext = createSheetHierarchyContext(sheet, limits)
 
-    for (const row of Array.isArray(sheet.rows) ? sheet.rows : []) {
+    for (const row of [...(Array.isArray(sheet.rows) ? sheet.rows : [])].sort((left, right) => Number(left?.rowNumber || 0) - Number(right?.rowNumber || 0))) {
       const rowNumber = Number(row?.rowNumber)
       if (!Number.isInteger(rowNumber) || rowNumber <= 0) continue
 
@@ -128,7 +129,8 @@ export function createReferenceNavigationInput(reference, options = {}) {
         detectedUrls: manifestCandidate?.detectedUrls || [],
         candidateId: manifestCandidate?.candidateId || '',
         labelCandidate: manifestCandidate?.labelCandidate || '',
-        hierarchyDepthPath: createSourceHierarchyDepthPath(sheet, rowNumber, cells, limits),
+        sourceHierarchyAuthoritative: hierarchyContext.sourceHierarchyAuthoritative === true,
+        hierarchyDepthPath: createSourceHierarchyDepthPath(hierarchyContext, rowNumber, cells),
         duplicateCandidate: manifestCandidate?.duplicateCandidate === true,
       }
       rowIndex.set(key, indexedRow)
@@ -195,29 +197,80 @@ function createSourceHierarchyDepthPathFromIndexedRow(indexedRow) {
   return normalizeDepthPath(indexedRow?.hierarchyDepthPath, 8, 160)
 }
 
-function createSourceHierarchyDepthPath(sheet, rowNumber, cells, limits) {
-  const header = selectSourceHierarchyHeader(sheet, rowNumber, limits)
-  if (!header) return []
-
-  const columns = inferSourceHierarchyColumns(header.cells)
-  if (columns.length === 0) return []
-
-  const depthPath = Array.from({ length: Math.min(8, Math.max(...columns.map((entry) => entry.depthIndex))) }, () => '')
-  for (const { column, depthIndex } of columns) {
-    if (depthIndex < 1 || depthIndex > depthPath.length) continue
-    depthPath[depthIndex - 1] = normalizeHierarchyCellText(cells[column])
+function createSheetHierarchyContext(sheet, limits) {
+  const header = selectSourceHierarchyHeader(sheet, limits)
+  const columns = inferSourceHierarchyColumns(header?.cells)
+  return {
+    headerRowNumber: header?.rowNumber || 0,
+    columns,
+    sourceHierarchyAuthoritative: columns.length > 0,
+    depthCount: columns.length > 0 ? Math.min(8, Math.max(...columns.map((entry) => entry.depthIndex))) : 0,
+    mergedRanges: normalizeSourceMergedRanges(sheet?.mergedRanges),
+    inheritedDepthValues: [],
+    previousRowNumber: null,
   }
+}
+
+function createSourceHierarchyDepthPath(context, rowNumber, cells) {
+  if (!context || context.columns.length === 0 || rowNumber <= context.headerRowNumber) {
+    resetHierarchyInheritance(context, rowNumber)
+    return []
+  }
+
+  if (context.previousRowNumber !== null && rowNumber > context.previousRowNumber + 1) context.inheritedDepthValues = []
+  context.previousRowNumber = rowNumber
+
+  const depthPath = Array.from({ length: context.depthCount }, () => '')
+  for (const { column, depthIndex } of context.columns) {
+    if (depthIndex < 1 || depthIndex > depthPath.length) continue
+    const hasCellValue = Object.hasOwn(cells, column)
+    const cellValue = normalizeHierarchyCellText(cells[column])
+    if (hasCellValue && !cellValue) {
+      context.inheritedDepthValues[depthIndex - 1] = ''
+      clearDeeperHierarchyInheritance(context, depthIndex)
+      continue
+    }
+
+    const value = cellValue || getMergedHierarchyCellText(context, rowNumber, column)
+    if (value) {
+      if (context.inheritedDepthValues[depthIndex - 1] && context.inheritedDepthValues[depthIndex - 1] !== value) {
+        clearDeeperHierarchyInheritance(context, depthIndex)
+      }
+      context.inheritedDepthValues[depthIndex - 1] = value
+      depthPath[depthIndex - 1] = value
+    } else if (context.inheritedDepthValues[depthIndex - 1]) {
+      depthPath[depthIndex - 1] = context.inheritedDepthValues[depthIndex - 1]
+    }
+  }
+
   return trimTrailingEmptyDepths(depthPath)
 }
 
-function selectSourceHierarchyHeader(sheet, rowNumber, limits) {
+function resetHierarchyInheritance(context, rowNumber) {
+  if (!context) return
+  context.inheritedDepthValues = []
+  context.previousRowNumber = Number.isInteger(Number(rowNumber)) ? Number(rowNumber) : null
+}
+
+function clearDeeperHierarchyInheritance(context, depthIndex) {
+  for (let index = depthIndex; index < context.inheritedDepthValues.length; index += 1) {
+    context.inheritedDepthValues[index] = ''
+  }
+}
+
+function getMergedHierarchyCellText(context, rowNumber, column) {
+  const columnNumber = columnNameToNumber(column)
+  const range = context.mergedRanges.find((entry) => rowNumber >= entry.top && rowNumber <= entry.bottom && columnNumber >= entry.left && columnNumber <= entry.right)
+  return range ? normalizeHierarchyCellText(range.value) : ''
+}
+
+function selectSourceHierarchyHeader(sheet, limits) {
   let best = null
   for (const header of normalizeHeaderCandidates(sheet?.headerCandidates, limits)) {
     const columns = inferSourceHierarchyColumns(header.cells)
     if (columns.length === 0) continue
-    const beforeRow = header.rowNumber < rowNumber
-    if (!best || (beforeRow && !best.beforeRow) || (beforeRow === best.beforeRow && columns.length > best.columns.length) || (beforeRow && best.beforeRow && header.rowNumber > best.header.rowNumber)) {
-      best = { header, columns, beforeRow }
+    if (!best || columns.length > best.columns.length || (columns.length === best.columns.length && header.rowNumber < best.header.rowNumber)) {
+      best = { header, columns }
     }
   }
   return best?.header || null
@@ -225,12 +278,10 @@ function selectSourceHierarchyHeader(sheet, rowNumber, limits) {
 
 function inferSourceHierarchyColumns(cells = {}) {
   const numbered = []
-  const unnumbered = []
   for (const [column, value] of Object.entries(cells).sort(([left], [right]) => compareColumnNames(left, right))) {
     const headerText = normalizeHeaderCellText(value)
     const role = inferHierarchyHeaderRole(headerText)
     if (role.depthIndex) numbered.push({ column, depthIndex: role.depthIndex })
-    else if (role.isHierarchy) unnumbered.push({ column })
   }
 
   const used = new Set()
@@ -241,24 +292,16 @@ function inferSourceHierarchyColumns(cells = {}) {
     columns.push(entry)
   }
 
-  let nextDepthIndex = 1
-  for (const entry of unnumbered) {
-    while (used.has(nextDepthIndex)) nextDepthIndex += 1
-    if (nextDepthIndex > 8) break
-    used.add(nextDepthIndex)
-    columns.push({ ...entry, depthIndex: nextDepthIndex })
-  }
-
   return columns.sort((left, right) => left.depthIndex - right.depthIndex)
 }
 
 function inferHierarchyHeaderRole(value) {
   const text = normalizeText(value, 120).toLowerCase()
-  if (!text || /\b(url|uri|href|link|target|destination|path|route|address|redirect)\b|주소|링크|경로/i.test(text)) return { isHierarchy: false, depthIndex: 0 }
+  if (!text || isFalseHierarchyHeaderText(text)) return { isHierarchy: false, depthIndex: 0 }
 
   const numberedPatterns = [
-    /(?:^|\b)(\d{1,2})(?:st|nd|rd|th)?\s*(?:depth|level|lvl|menu|navigation|nav|차|단계)(?:\b|\s|$)/i,
-    /(?:^|\b)(?:depth|level|lvl|menu|navigation|nav|차|단계)\s*(\d{1,2})(?:st|nd|rd|th)?(?:\b|\s|$)/i,
+    /(?:^|\b)(\d{1,2})(?:st|nd|rd|th)?\s*(?:depth|level|lvl|menu|navigation|nav|차|단계|메뉴)(?:\b|\s|$)/i,
+    /(?:^|\b)(?:depth|level|lvl|menu|navigation|nav|메뉴|차|단계)\s*(\d{1,2})(?:st|nd|rd|th)?(?:\b|\s|$)/i,
   ]
   for (const pattern of numberedPatterns) {
     const match = text.match(pattern)
@@ -266,8 +309,16 @@ function inferHierarchyHeaderRole(value) {
     if (Number.isInteger(depthIndex) && depthIndex >= 1 && depthIndex <= 8) return { isHierarchy: true, depthIndex }
   }
 
-  if (/^(depth|level|lvl|menu|navigation|nav|section|category)(\s*(name|label|title))?$/.test(text) || /^(대|중|소)?메뉴$|^분류$|^카테고리$/i.test(text)) return { isHierarchy: true, depthIndex: 0 }
+  if (/^(대분류|대메뉴)$/.test(text)) return { isHierarchy: true, depthIndex: 1 }
+  if (/^(중분류|중메뉴)$/.test(text)) return { isHierarchy: true, depthIndex: 2 }
+  if (/^(소분류|소메뉴)$/.test(text)) return { isHierarchy: true, depthIndex: 3 }
   return { isHierarchy: false, depthIndex: 0 }
+}
+
+function isFalseHierarchyHeaderText(text) {
+  return /^(page|type|id|no|number|index|url|uri|href|link|target|destination|path|route|address|redirect|status|state|flag|enabled|visible|display|mobile|desktop|admin|manager|owner|role|action|note|notes|description|desc|remark|memo|comment|function|feature)$/i.test(text)
+    || /^(o|x|y|n)$/i.test(text)
+    || /주소|링크|경로|사용\s*여부|노출\s*여부|모바일|관리자|비고|설명|기능\s*설명|상태|유형|타입|아이디|페이지/i.test(text)
 }
 
 function normalizeHeaderCellText(value) {
@@ -276,12 +327,31 @@ function normalizeHeaderCellText(value) {
 }
 
 function normalizeHierarchyCellText(value) {
+  if (typeof value === 'boolean') return ''
   const text = value && typeof value === 'object' && !Array.isArray(value) ? normalizeText(value.text, 160) : normalizeText(value, 160)
-  return isNavigationUrlLike(text) ? '' : text
+  return isFalseHierarchyValue(text) ? '' : text
 }
 
 function isNavigationUrlLike(value) {
   return /^https?:\/\//i.test(value) || /^\/[A-Za-z0-9._~:/?#[\]@!$&'*+;=%{}-]+/.test(value)
+}
+
+function isFalseHierarchyValue(value) {
+  const text = normalizeText(value, 160)
+  if (!text || isNavigationUrlLike(text)) return true
+  return /^(page|type|id|url|uri|href|link|path|route|o|x|y|n|yes|no|true|false|on|off|사용|미사용|노출|비노출|모바일|pc|desktop|admin|관리자|비고|설명)$/i.test(text)
+}
+
+function normalizeSourceMergedRanges(value) {
+  if (!Array.isArray(value)) return []
+  return value.map((range) => {
+    const top = Number(range?.top)
+    const bottom = Number(range?.bottom)
+    const left = columnNameToNumber(range?.left)
+    const right = columnNameToNumber(range?.right)
+    if (![top, bottom, left, right].every((number) => Number.isInteger(number) && number > 0)) return null
+    return { top: Math.min(top, bottom), bottom: Math.max(top, bottom), left: Math.min(left, right), right: Math.max(left, right), value: range.value }
+  }).filter(Boolean)
 }
 
 function compareColumnNames(left, right) {
@@ -434,6 +504,8 @@ function isSameCellUrlList(detectedUrls) {
 
 function createDeterministicReferenceItem({ candidate, indexedRow, urlEvidence, expectedUrls }) {
   const label = normalizeText(candidate?.labelCandidate, 240) || expectedUrls[0]?.raw || 'Reference URL'
+  const pageContext = createSourcePageContext(indexedRow)
+  const element = normalizeElement({ label, aliases: [], roleHint: 'link', actionHint: 'navigation' }, indexedRow, pageContext)
   return {
     referenceId: '',
     candidateId: indexedRow.candidateId,
@@ -444,8 +516,8 @@ function createDeterministicReferenceItem({ candidate, indexedRow, urlEvidence, 
       columns: indexedRow.cells,
       evidenceText: indexedRow.evidenceText,
     },
-    pageContext: createSourcePageContext(indexedRow),
-    element: { label, aliases: [], roleHint: 'link', actionHint: 'navigation' },
+    pageContext,
+    element,
     expected: { type: 'url', urls: expectedUrls, urlPatterns: [], notes: '' },
     urlEvidence,
     provenance: {
@@ -544,6 +616,8 @@ function normalizeReferenceItems(items, compactInput, allowedCandidateIds, limit
     const expectedUrls = createExpectedUrlsFromClassifications(urlEvidence, aiExpectedUrls)
 
     const referenceNumber = normalizedItems.length + 1
+    const pageContext = normalizePageContext(item.pageContext, indexedRow)
+    const element = normalizeElement(item.element, indexedRow, pageContext)
     normalizedItems.push({
       referenceId: `ref-${String(referenceNumber).padStart(3, '0')}`,
       candidateId: indexedRow.candidateId,
@@ -554,8 +628,8 @@ function normalizeReferenceItems(items, compactInput, allowedCandidateIds, limit
         columns: indexedRow.cells,
         evidenceText: createConnectedEvidenceText(item.source.evidenceText, indexedRow.evidenceText),
       },
-      pageContext: normalizePageContext(item.pageContext, indexedRow),
-      element: normalizeElement(item.element),
+      pageContext,
+      element,
       expected: {
         type: 'url',
         urls: expectedUrls,
@@ -854,22 +928,58 @@ function normalizeDynamicParameters(value, raw) {
 
 function normalizePageContext(value = {}, indexedRow = null) {
   const input = value && typeof value === 'object' ? value : {}
-  const depthPath = normalizeDepthPath(input.depthPath, 8, 160)
+  const sourceDepthPath = createSourceHierarchyDepthPathFromIndexedRow(indexedRow)
+  const depthPath = sanitizeHierarchyDepthPath(normalizeDepthPath(input.depthPath, 8, 160))
   return {
-    depthPath: hasDepthPathValue(depthPath) ? depthPath : createSourceHierarchyDepthPathFromIndexedRow(indexedRow),
+    depthPath: indexedRow?.sourceHierarchyAuthoritative === true || hasDepthPathValue(sourceDepthPath) ? sourceDepthPath : depthPath,
     sectionHint: normalizeText(input.sectionHint, 240),
     pageUrlHint: normalizeText(input.pageUrlHint, 500),
   }
 }
 
-function normalizeElement(value = {}) {
+function normalizeElement(value = {}, indexedRow = null, pageContext = null) {
   const input = value && typeof value === 'object' ? value : {}
-  return {
+  const element = {
     label: normalizeText(input.label, 240),
     aliases: normalizeStringArray(input.aliases, 10, 160),
     roleHint: VALID_ROLE_HINTS.has(input.roleHint) ? input.roleHint : 'unknown',
     actionHint: VALID_ACTION_HINTS.has(input.actionHint) ? input.actionHint : 'unknown',
   }
+  return indexedRow?.sourceHierarchyAuthoritative === true ? deriveAuthoritativeElementIdentity(element, pageContext) : element
+}
+
+function deriveAuthoritativeElementIdentity(element, pageContext = {}) {
+  const hierarchySegments = sanitizeSourceHierarchyIdentity(pageContext?.depthPath)
+  const label = hierarchySegments.at(-1) || sanitizeReferenceIdentityText(element.label) || 'Reference URL'
+  return {
+    ...element,
+    label,
+    aliases: sanitizeReferenceIdentityAliases(element.aliases, label),
+  }
+}
+
+function sanitizeSourceHierarchyIdentity(depthPath = []) {
+  return normalizeDepthPath(depthPath, 8, 160).filter((segment) => sanitizeReferenceIdentityText(segment))
+}
+
+function sanitizeReferenceIdentityAliases(aliases = [], label = '') {
+  const normalizedLabel = normalizeText(label, 240).toLowerCase()
+  const seen = new Set()
+  const clean = []
+  for (const alias of aliases) {
+    const value = sanitizeReferenceIdentityText(alias)
+    const key = value.toLowerCase()
+    if (!value || key === normalizedLabel || seen.has(key)) continue
+    seen.add(key)
+    clean.push(value)
+  }
+  return clean.slice(0, 10)
+}
+
+function sanitizeReferenceIdentityText(value) {
+  const text = normalizeText(value, 160)
+  if (!text || isFalseHierarchyValue(text) || /\s+\/\s+/.test(text)) return ''
+  return text
 }
 
 function normalizeProvenance(value = {}, expectedUrls = []) {
@@ -1209,12 +1319,10 @@ function assignReferenceIds(items) {
 
 function enrichItemsWithSourcePageContext(items, compactInput) {
   return items.map((item) => {
-    const pageContext = normalizePageContext(item.pageContext)
-    if (hasDepthPathValue(pageContext.depthPath)) return item
-
     const indexedRow = item.candidateId ? compactInput?.candidateIndex?.get(item.candidateId) : compactInput?.rowIndex?.get(createRowKey(item.source?.sheetName, item.source?.rowNumber))
-    const sourceDepthPath = createSourceHierarchyDepthPathFromIndexedRow(indexedRow)
-    return hasDepthPathValue(sourceDepthPath) ? { ...item, pageContext: { ...pageContext, depthPath: sourceDepthPath } } : item
+    const pageContext = normalizePageContext(item.pageContext, indexedRow)
+    const element = normalizeElement(item.element, indexedRow, pageContext)
+    return { ...item, pageContext, element }
   })
 }
 
@@ -1236,6 +1344,8 @@ function appendUnmappedCandidateItems(mappedItems, compactInput) {
     }
     const urlEvidence = classifyGroundedUrlEvidence(candidateRow, [])
     const expectedUrls = createExpectedUrlsFromClassifications(urlEvidence, [])
+    const pageContext = createSourcePageContext(indexedRow)
+    const element = normalizeElement({ label: candidate.labelCandidate || 'AI 미매핑 / 검토 필요', aliases: [], roleHint: 'unknown', actionHint: 'navigation' }, indexedRow, pageContext)
 
     unmappedItems.push({
       referenceId: `ref-${String(referenceNumber).padStart(3, '0')}`,
@@ -1248,8 +1358,8 @@ function appendUnmappedCandidateItems(mappedItems, compactInput) {
         sourceColumns: candidate.sourceColumns || [],
         evidenceText: candidate.evidenceText || '',
       },
-      pageContext: createSourcePageContext(indexedRow),
-      element: { label: candidate.labelCandidate || 'AI 미매핑 / 검토 필요', aliases: [], roleHint: 'unknown', actionHint: 'navigation' },
+      pageContext,
+      element,
       expected: { type: 'url', urls: expectedUrls, urlPatterns: [], notes: 'AI가 정규화하지 못한 문서 후보입니다. 확인 후 Confirm, Edit 또는 Exclude 하세요.' },
       urlEvidence,
       provenance: {
@@ -1436,6 +1546,11 @@ function normalizeStringArray(value, maxItems, maxLength) {
 function normalizeDepthPath(value, maxItems, maxLength) {
   if (!Array.isArray(value)) return []
   return trimTrailingEmptyDepths(value.slice(0, maxItems).map((item) => normalizeText(item, maxLength)))
+}
+
+function sanitizeHierarchyDepthPath(value) {
+  if (!Array.isArray(value)) return []
+  return trimTrailingEmptyDepths(value.map((segment) => (isFalseHierarchyValue(segment) ? '' : segment)))
 }
 
 function trimTrailingEmptyDepths(value) {

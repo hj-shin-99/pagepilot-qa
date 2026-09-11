@@ -215,6 +215,12 @@ export function createExpectedUrlExportText(item) {
   return createExpectedUrlDisplayRows(item).join('\n')
 }
 
+export function createReferencePreviewTitle(item = {}) {
+  const hierarchySegments = sanitizePreviewHierarchyDepthPath(item?.pageContext?.depthPath)
+  if (hierarchySegments.length > 0) return hierarchySegments.join(' / ')
+  return normalizeText(item?.element?.label, 240) || '이름 없는 항목'
+}
+
 export function createReferenceReviewSummary(items = []) {
   return items.reduce((summary, item) => {
     const status = item.userDecision?.status || 'pending'
@@ -487,6 +493,17 @@ function normalizeDepthPath(value, maxItems, maxLength) {
   let end = normalized.length
   while (end > 0 && !normalized[end - 1]) end -= 1
   return normalized.slice(0, end)
+}
+
+function sanitizePreviewHierarchyDepthPath(value) {
+  return normalizeDepthPath(value, 8, 160).filter((segment) => segment && !isPreviewHierarchyMetadata(segment))
+}
+
+function isPreviewHierarchyMetadata(value) {
+  const text = normalizeText(value, 160)
+  if (!text) return true
+  if (/^https?:\/\//i.test(text) || /^\/[A-Za-z0-9._~:/?#[\]@!$&'*+;=%{}-]+/.test(text)) return true
+  return /^(page|type|id|url|uri|href|link|path|route|o|x|y|n|yes|no|true|false|on|off|사용|미사용|노출|비노출|모바일|pc|desktop|admin|관리자|비고|설명)$/i.test(text)
 }
 
 function normalizeText(value, maxLength) {
